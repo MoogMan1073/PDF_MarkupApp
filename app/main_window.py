@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QToolBar, QFileDialog, QMessageBox, QDockWidget,
@@ -39,14 +39,26 @@ class TextEditDialog(QDialog):
         lay = QVBoxLayout(self)
         self.edit = QPlainTextEdit(ann.text or "")
         self.edit.setMinimumSize(320, 120)
+        self.edit.installEventFilter(self)  # Ctrl/Shift+Enter -> OK
         lay.addWidget(self.edit)
         self.todo = QCheckBox("Flag as TODO")
         self.todo.setChecked(ann.is_todo)
         lay.addWidget(self.todo)
+        hint = QLabel("Ctrl+Enter or Shift+Enter to save · Esc to cancel")
+        hint.setStyleSheet("color: gray; font-size: 11px;")
+        lay.addWidget(hint)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
+
+    def eventFilter(self, obj, event):
+        if obj is self.edit and event.type() == QEvent.KeyPress:
+            if (event.key() in (Qt.Key_Return, Qt.Key_Enter)
+                    and (event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier))):
+                self.accept()
+                return True
+        return super().eventFilter(obj, event)
 
     def values(self):
         return self.edit.toPlainText(), self.todo.isChecked()
@@ -318,7 +330,7 @@ class MainWindow(QMainWindow):
             (T.TOOL_SELECT, "Select"), (T.TOOL_HIGHLIGHT, "Highlight"),
             (T.TOOL_PEN, "Pen"), (T.TOOL_ERASER, "Eraser"),
             (T.TOOL_COMMENT, "Comment"), (T.TOOL_TEXTBOX, "Text box"),
-            (T.TOOL_RECT, "Rect"), (T.TOOL_ARROW, "Arrow"),
+            (T.TOOL_RECT, "Rectangle"), (T.TOOL_ARROW, "Arrow"),
         ]
         for tool, label in tool_defs:
             act = QAction(label, self, checkable=True)

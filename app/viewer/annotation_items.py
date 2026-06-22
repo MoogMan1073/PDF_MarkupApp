@@ -71,6 +71,18 @@ class _BaseMixin:
                                             self._press_snap, after, "Move"))
             self._press_snap = None
 
+    def contextMenuEvent(self, event):
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu()
+        show_act = menu.addAction("Show comment contents") if self.ann.is_comment_like else None
+        del_act = menu.addAction("Delete")
+        chosen = menu.exec(event.screenPos())
+        if chosen is not None and chosen == show_act:
+            self.view.show_comment_contents(self.ann)
+        elif chosen is not None and chosen == del_act:
+            self.view.request_delete_annotation(self.ann)
+        event.accept()
+
     # subclasses override
     def write_geometry_to_model(self):
         pass

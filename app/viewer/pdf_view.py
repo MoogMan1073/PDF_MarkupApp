@@ -201,7 +201,18 @@ class PdfView(QGraphicsView):
             self.setCursor(Qt.OpenHandCursor)
         elif event.key() == Qt.Key_Delete:
             self.delete_selected()
+        elif event.key() == Qt.Key_Escape:
+            self.cancel_action()
         super().keyPressEvent(event)
+
+    def cancel_action(self):
+        """Abort an in-progress draw/erase and drop any preview."""
+        if self._draft is not None:
+            self._draft = None
+            self._clear_preview()
+        if self._erasing:
+            self._end_erase()
+        self._scene.clearSelection()
 
     def keyReleaseEvent(self, event):
         if event.key() == Qt.Key_Space:
@@ -433,6 +444,22 @@ class PdfView(QGraphicsView):
             ann = getattr(it, "ann", None)
             if ann is not None:
                 self.push_command(RemoveAnnotationCommand(self, ann, "Delete"))
+
+    def request_delete_annotation(self, ann: Annotation):
+        """Confirm, then delete a mark from the canvas (undoable)."""
+        from PySide6.QtWidgets import QMessageBox
+        resp = QMessageBox.question(
+            self, "Delete", f"Delete this {ann.kind}?\n\n{ann.snippet(80)}",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if resp == QMessageBox.Yes:
+            self.push_command(RemoveAnnotationCommand(self, ann, "Delete"))
+
+    def show_comment_contents(self, ann: Annotation):
+        from PySide6.QtWidgets import QMessageBox
+        when = (ann.created or "")[:16].replace("T", " ")
+        meta = " · ".join(p for p in (ann.author, when) if p)
+        QMessageBox.information(self, "Comment contents",
+                                f"{meta}\n\n{ann.text or '(no text)'}")
 
     # -- store sync ----------------------------------------------------------
 

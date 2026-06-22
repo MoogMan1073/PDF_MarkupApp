@@ -113,26 +113,41 @@ def to_markdown(raw: str) -> str:
 
 
 class _NodeItem(QGraphicsEllipseItem):
-    """Clickable page node in the graph view."""
+    """Clickable, hover-aware page node in the graph view."""
 
     R = 9.0
+    DEFAULT = QColor(40, 120, 220)
+    HOVER = QColor(232, 145, 30)      # the node being hovered
+    NEIGHBOR = QColor(40, 170, 90)    # nodes linked to the hovered one
 
-    def __init__(self, name, on_click):
+    def __init__(self, name, graph, text_color):
         super().__init__(-self.R, -self.R, 2 * self.R, 2 * self.R)
         self.name = name
-        self._on_click = on_click
-        self.setBrush(QBrush(QColor(40, 120, 220)))
+        self._graph = graph
+        self.setBrush(QBrush(self.DEFAULT))
         self.setPen(QPen(QColor("white"), 1))
         self.setZValue(2)
         self.setCursor(Qt.PointingHandCursor)
-        label = QGraphicsSimpleTextItem(name, self)
-        label.setBrush(QBrush(QColor(40, 40, 40)))
-        br = label.boundingRect()
-        label.setPos(-br.width() / 2, self.R + 2)
+        self.setAcceptHoverEvents(True)
+        self.label = QGraphicsSimpleTextItem(name, self)
+        self.label.setBrush(QBrush(text_color))
+        br = self.label.boundingRect()
+        self.label.setPos(-br.width() / 2, self.R + 2)
+
+    def set_fill(self, color):
+        self.setBrush(QBrush(color))
 
     def mousePressEvent(self, event):
-        self._on_click(self.name)
+        self._graph.on_click(self.name)
         event.accept()
+
+    def hoverEnterEvent(self, event):
+        self._graph.set_hover(self.name)
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._graph.clear_hover()
+        super().hoverLeaveEvent(event)
 
 
 class HelpWindow(QMainWindow):
@@ -174,9 +189,12 @@ class HelpWindow(QMainWindow):
         self.view = QTextBrowser()
         self.view.setOpenLinks(False)
         self.view.setOpenExternalLinks(False)
+        self.view.setMinimumWidth(380)
         self.view.anchorClicked.connect(self._on_anchor)
         split.addWidget(self.view)
+        split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
+        split.setSizes([260, 780])  # ensure the reading pane is populated
 
         if self.pages:
             self.load_page("Home" if "Home" in self.pages else sorted(self.pages)[0])
@@ -242,34 +260,89 @@ class HelpWindow(QMainWindow):
 
 
 class _GraphView(QGraphicsView):
-    """Simple circular-layout graph of pages and their [[links]]."""
+    """Circular-layout graph of pages and their [[links]].
+
+    Theme-aware (readable in light or dark mode), zoomable with Ctrl+wheel, and
+    hovering a node highlights its linked neighbours.
+    """
+
+    EDGE = QColor(140, 140, 140)
+    EDGE_HI = QColor(232, 145, 30)
 
     def __init__(self, pages: dict, on_click):
         super().__init__()
-        from PySide6.QtGui import QPainter
+        from PySide6.QtGui import QPainter, QPalette
         self.setRenderHint(QPainter.Antialiasing)
+        self.on_click = on_click
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setDragMode(QGraphicsView.ScrollHandDrag)
+
+        pal = self.palette()
+        self.setBackgroundBrush(pal.base())              # match the OS theme
+        text_color = pal.color(QPalette.WindowText)      # contrasts the base
+
         scene = QGraphicsScene(self)
         self.setScene(scene)
         names = sorted(pages)
         n = max(1, len(names))
         radius = 30 + 22 * n
-        pos = {}
-        for i, name in enumerate(names):
-            ang = 2 * math.pi * i / n
-            pos[name] = QPointF(radius * math.cos(ang), radius * math.sin(ang))
+        pos = {name: QPointF(radius * math.cos(2 * math.pi * i / n),
+                             radius * math.sin(2 * math.pi * i / n))
+               for i, name in enumerate(names)}
 
-        edge_pen = QPen(QColor(180, 180, 180), 0)
+        # edges (undirected) + adjacency
+        self._edges = []           # (a, b, lineItem)
+        self._adj = {nm: set() for nm in names}
         seen = set()
         for name in names:
             for tgt in pages[name]["links"]:
-                if tgt in pos and (tgt, name) not in seen:
+                if tgt in pos and (name, tgt) not in seen and (tgt, name) not in seen:
                     seen.add((name, tgt))
-                    scene.addLine(pos[name].x(), pos[name].y(),
-                                  pos[tgt].x(), pos[tgt].y(), edge_pen)
+                    line = scene.addLine(pos[name].x(), pos[name].y(),
+                                         pos[tgt].x(), pos[tgt].y(),
+                                         QPen(self.EDGE, 0))
+                    line.setZValue(0)
+                    self._edges.append((name, tgt, line))
+                    self._adj[name].add(tgt)
+                    self._adj[tgt].add(name)
+
+        self._nodes = {}
         for name in names:
-            node = _NodeItem(name, on_click)
+            node = _NodeItem(name, self, text_color)
             node.setPos(pos[name])
             scene.addItem(node)
+            self._nodes[name] = node
+
         margin = 80
         scene.setSceneRect(scene.itemsBoundingRect().adjusted(-margin, -margin, margin, margin))
-        self.setDragMode(QGraphicsView.ScrollHandDrag)
+
+    # -- hover highlighting --------------------------------------------------
+
+    def set_hover(self, name):
+        neighbors = self._adj.get(name, set())
+        for nm, node in self._nodes.items():
+            if nm == name:
+                node.set_fill(_NodeItem.HOVER)
+            elif nm in neighbors:
+                node.set_fill(_NodeItem.NEIGHBOR)
+            else:
+                node.set_fill(_NodeItem.DEFAULT)
+        for a, b, line in self._edges:
+            on = name in (a, b)
+            line.setPen(QPen(self.EDGE_HI if on else self.EDGE, 2 if on else 0))
+
+    def clear_hover(self):
+        for node in self._nodes.values():
+            node.set_fill(_NodeItem.DEFAULT)
+        for _a, _b, line in self._edges:
+            line.setPen(QPen(self.EDGE, 0))
+
+    # -- zoom ----------------------------------------------------------------
+
+    def wheelEvent(self, event):
+        if event.modifiers() & Qt.ControlModifier:
+            factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
+            self.scale(factor, factor)
+            event.accept()
+        else:
+            super().wheelEvent(event)

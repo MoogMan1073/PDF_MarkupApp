@@ -25,12 +25,15 @@ The list updates live as you add or edit marks.
 
 ## Delete a comment
 
-Three ways — each asks you to confirm first, and each is undoable
+From the list — each asks you to confirm first, and each is undoable
 ([[Undo and Redo]]):
 
 1. **Right-click** a row ▸ **Delete comment**.
 2. Select a row and press **Delete**.
 3. Select a row and click the **🗑** button.
+
+You can also **right-click the comment bubble on the page** for **Delete** or
+**Show comment contents** (see [[Markup Tools]]).
 
 ## Ignored (SHX / AutoCAD junk)
 

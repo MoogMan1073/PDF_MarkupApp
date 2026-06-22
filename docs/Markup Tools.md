@@ -40,7 +40,15 @@ switches you to the Select tool with that mark selected, so you can adjust it.
 ## Live preview
 
 While you drag, the shape previews in place; when you release, it stays exactly
-as previewed and remains fully editable.
+as previewed and remains fully editable. Press **Esc** to cancel a mark while
+you're drawing it.
+
+## Right-click a mark on the page
+
+Right-click any mark on the page for a quick menu: **Delete** (with confirm),
+and for comments/text boxes, **Show comment contents**. When typing a comment
+or text box, **Ctrl+Enter** or **Shift+Enter** saves it (same as OK), and
+**Esc** cancels.
 
 ## Shapes vs. portability
 
