@@ -123,6 +123,10 @@ def load_pdf_annotations(
     out: list = []
     for pno in range(doc.page_count):
         page = doc[pno]
+        # PDF annotation geometry is in unrotated user space; rotate it into the
+        # viewer's (visual) space so it lines up on rotated pages. Identity when
+        # the page isn't rotated.
+        rotm = page.rotation_matrix
         for annot in page.annots() or []:
             try:
                 tname = annot.type[1]
@@ -132,7 +136,7 @@ def load_pdf_annotations(
             if kind is None:
                 continue
             info = annot.info or {}
-            rect = annot.rect
+            rect = annot.rect * rotm
             colors = annot.colors or {}
             ann = Annotation(
                 page=pno,
@@ -154,9 +158,9 @@ def load_pdf_annotations(
                     pts = []
                     for stroke in verts:
                         if isinstance(stroke, (list, tuple)) and stroke and isinstance(stroke[0], (list, tuple)):
-                            pts.extend((float(p[0]), float(p[1])) for p in stroke)
+                            pts.extend(tuple(fitz.Point(p[0], p[1]) * rotm) for p in stroke)
                         else:
-                            pts.append((float(stroke[0]), float(stroke[1])))
+                            pts.append(tuple(fitz.Point(stroke[0], stroke[1]) * rotm))
                     ann.points = pts
                 except Exception:
                     pass
@@ -202,8 +206,17 @@ def write_annotations_to_pdf(doc: "fitz.Document", annotations: Iterable[Annotat
         if ann.page < 0 or ann.page >= doc.page_count:
             continue
         page = doc[ann.page]
+        # Our model coordinates are in the *rotated* (visual) page space - the
+        # same space the viewer renders and get_text() reports. PDF annotations,
+        # however, live in unrotated user space, so transform by the page's
+        # derotation matrix (identity when the page isn't rotated). FreeText also
+        # needs the page rotation applied so the text reads upright.
+        derot = page.derotation_matrix
+        prot = page.rotation
         x0, y0, x1, y1 = ann.rect
-        rect = fitz.Rect(x0, y0, x1, y1)
+        rect = fitz.Rect(x0, y0, x1, y1) * derot
+        p0 = fitz.Point(x0, y0) * derot
+        p1 = fitz.Point(x1, y1) * derot
         annot = None
         try:
             if ann.kind == KIND_HIGHLIGHT:
@@ -214,29 +227,29 @@ def write_annotations_to_pdf(doc: "fitz.Document", annotations: Iterable[Annotat
                 except Exception:
                     pass
             elif ann.kind == KIND_PEN and ann.points:
-                annot = page.add_ink_annot([[(float(px), float(py)) for px, py in ann.points]])
+                stroke = [tuple(fitz.Point(px, py) * derot) for px, py in ann.points]
+                annot = page.add_ink_annot([stroke])
                 annot.set_colors(stroke=ann.color)
                 annot.set_border(width=ann.width)
             elif ann.kind == KIND_COMMENT:
-                annot = page.add_text_annot(fitz.Point(x0, y0), ann.text or "",
-                                            icon="Comment")
+                annot = page.add_text_annot(p0, ann.text or "", icon="Comment")
                 # an explicit popup makes the note open as a genuine comment in
                 # Adobe / Chrome / other PDF viewers
                 try:
-                    annot.set_popup(fitz.Rect(x0 + 20, y0, x0 + 220, y0 + 90))
+                    annot.set_popup(fitz.Rect(x0 + 20, y0, x0 + 220, y0 + 90) * derot)
                 except Exception:
                     pass
             elif ann.kind == KIND_TEXTBOX:
                 annot = page.add_freetext_annot(
                     rect, ann.text or "", fontsize=ann.font_size,
-                    text_color=ann.color,
+                    text_color=ann.color, rotate=prot,
                 )
             elif ann.kind == KIND_RECT:
                 annot = page.add_rect_annot(rect)
                 annot.set_colors(stroke=ann.color)
                 annot.set_border(width=ann.width)
             elif ann.kind == KIND_ARROW:
-                annot = page.add_line_annot(fitz.Point(x0, y0), fitz.Point(x1, y1))
+                annot = page.add_line_annot(p0, p1)
                 annot.set_colors(stroke=ann.color)
                 annot.set_border(width=ann.width)
                 try:

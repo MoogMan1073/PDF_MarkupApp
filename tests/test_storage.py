@@ -103,6 +103,44 @@ class TestStorage(unittest.TestCase):
         self.assertEqual(len(doc2.store.all()), len(self.anns))
         doc2.close()
 
+    def test_rotated_page_export_roundtrip(self):
+        """Markup on a rotated page must export to the right place and
+        round-trip back to the same (visual) coordinates."""
+        from app.model.annotations import KIND_RECT, KIND_PEN
+        rot_src = os.path.join(self.tmp, "rot.pdf")
+        d = fitz.open()
+        pg = d.new_page(width=792, height=1224)   # portrait
+        pg.set_rotation(270)                       # -> visual rect 1224 x 792
+        d.save(rot_src)
+        d.close()
+
+        chk = fitz.open(rot_src)
+        self.assertEqual(chk[0].rotation, 270)
+        self.assertAlmostEqual(chk[0].rect.width, 1224, delta=1)
+        chk.close()
+
+        rect_v = (100.0, 120.0, 300.0, 180.0)      # visual-space coords
+        pts_v = [(150.0, 400.0), (180.0, 430.0)]
+        anns = [
+            Annotation(page=0, kind=KIND_RECT, rect=rect_v, color=(1, 0, 0), width=1),
+            Annotation(page=0, kind=KIND_PEN, points=pts_v, color=(0, 0, 1), width=1),
+        ]
+        d = fitz.open(rot_src)
+        write_annotations_to_pdf(d, anns)
+        mp = marked_pdf_path(rot_src)
+        d.save(mp)
+        d.close()
+
+        loaded = load_pdf_annotations(fitz.open(mp), DEFAULT_IGNORE_PATTERNS)
+        rect = [a for a in loaded if a.kind == KIND_RECT][0].rect
+        for got, want in zip(rect, rect_v):
+            self.assertAlmostEqual(got, want, delta=2.0)  # delta covers border width
+        pen = [a for a in loaded if a.kind == KIND_PEN][0].points
+        self.assertEqual(len(pen), len(pts_v))
+        for (gx, gy), (wx, wy) in zip(pen, pts_v):
+            self.assertAlmostEqual(gx, wx, delta=1.0)
+            self.assertAlmostEqual(gy, wy, delta=1.0)
+
     def test_pdf_date_parse(self):
         iso = pdf_date_to_iso("D:20260619204609Z")
         self.assertTrue(iso.startswith("2026-06-"))
