@@ -18,15 +18,67 @@ from typing import Optional
 DEFAULT_MODEL = "claude-opus-4-8"
 
 
-def available() -> bool:
-    """True when the SDK is importable and an API key is present."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        return False
+def resolve_key(explicit: Optional[str] = None) -> str:
+    """Return the API key to use: an explicit key wins, else the env var."""
+    key = (explicit or "").strip()
+    if key:
+        return key
+    return (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+
+
+def sdk_installed() -> bool:
     try:
         import anthropic  # noqa: F401
         return True
     except Exception:
         return False
+
+
+def available(api_key: Optional[str] = None) -> bool:
+    """True when the SDK is importable and an API key is present."""
+    return sdk_installed() and bool(resolve_key(api_key))
+
+
+def status(api_key: Optional[str] = None) -> tuple:
+    """Quick, network-free status: ``(state, message)``.
+
+    state is one of: "no_sdk", "missing", "present".  Use :func:`validate_key`
+    for an authoritative (network) check.
+    """
+    if not sdk_installed():
+        return ("no_sdk", "anthropic SDK not installed (pip install anthropic)")
+    key = resolve_key(api_key)
+    if not key:
+        return ("missing", "No API key set")
+    if not key.startswith("sk-"):
+        return ("present", "Key set (format looks unusual)")
+    return ("present", "Key set (not yet verified)")
+
+
+def validate_key(api_key: Optional[str] = None, model: str = DEFAULT_MODEL) -> tuple:
+    """Authoritative check via a minimal API call. Returns ``(valid, message)``.
+
+    Never raises; returns ``(False, reason)`` on any error.
+    """
+    if not sdk_installed():
+        return (False, "anthropic SDK not installed")
+    key = resolve_key(api_key)
+    if not key:
+        return (False, "No API key set")
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=key)
+        client.messages.create(
+            model=model, max_tokens=1,
+            messages=[{"role": "user", "content": "ping"}],
+        )
+        return (True, "Key is valid")
+    except Exception as e:
+        name = type(e).__name__
+        msg = str(e)
+        if "auth" in msg.lower() or "401" in msg or "AuthenticationError" in name:
+            return (False, "Invalid API key (authentication failed)")
+        return (False, f"Could not verify key: {name}")
 
 
 def _pixmap_to_png_b64(pix) -> str:
@@ -72,17 +124,19 @@ def _extract_json(text: str):
 def read_wire_region(pix, field_widths: tuple = (3, 2, 1),
                      zero_pad: bool = True,
                      model: str = DEFAULT_MODEL,
-                     max_tokens: int = 1024) -> list:
+                     max_tokens: int = 1024,
+                     api_key: Optional[str] = None) -> list:
     """Send a rendered region to Claude and return parsed wire dicts.
 
     ``pix`` is a :class:`fitz.Pixmap`.  Returns ``[]`` on any failure so callers
     can always fall back to Tesseract + rules.
     """
-    if not available():
+    key = resolve_key(api_key)
+    if not (sdk_installed() and key):
         return []
     try:
         import anthropic
-        client = anthropic.Anthropic()
+        client = anthropic.Anthropic(api_key=key)
         b64 = _pixmap_to_png_b64(pix)
         msg = client.messages.create(
             model=model,

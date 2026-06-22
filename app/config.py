@@ -50,6 +50,7 @@ DEFAULTS: dict = {
     "ai/enabled": False,
     "ai/region_size": 400,
     "ai/model": "claude-opus-4-8",
+    "ai/api_key": "",
 }
 
 
@@ -140,6 +141,10 @@ class AppConfig:
     @property
     def ai_model(self) -> str:
         return str(self.get("ai/model"))
+
+    @property
+    def ai_api_key(self) -> str:
+        return str(self.get("ai/api_key") or "")
 
     @property
     def ai_region_size(self) -> int:

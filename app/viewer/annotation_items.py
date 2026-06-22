@@ -7,13 +7,15 @@ truth; items sync geometry/style back to it and push undo commands on edit.
 
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import QRectF, QPointF, Qt
 from PySide6.QtGui import (
     QColor, QPen, QBrush, QPainterPath, QFont, QPolygonF, QPainterPathStroker,
 )
 from PySide6.QtWidgets import (
     QGraphicsItem, QGraphicsRectItem, QGraphicsPathItem, QGraphicsObject,
-    QStyle,
+    QGraphicsEllipseItem, QStyle,
 )
 
 from ..model.annotations import (
@@ -22,7 +24,11 @@ from ..model.annotations import (
 )
 from .command_stack import ModifyAnnotationCommand, capture
 
-HANDLE = 7.0  # handle size in points
+HANDLE = 7.0      # resize-grip size in points
+ROT_ARM = 22.0    # distance of the rotate grip above the top edge
+
+# annotation items draw above the page bitmap (which sits at z=1 in PageItem)
+ANNOT_Z = 10.0
 
 
 def qcolor(rgb, alpha=255) -> QColor:
@@ -79,14 +85,18 @@ class _BaseMixin:
 class _HandleItem(QGraphicsRectItem):
     """A small resize grip living on a resizable parent."""
 
+    _CURSORS = {
+        "nw": Qt.SizeFDiagCursor, "se": Qt.SizeFDiagCursor,
+        "ne": Qt.SizeBDiagCursor, "sw": Qt.SizeBDiagCursor,
+    }
+
     def __init__(self, parent, role):
         super().__init__(-HANDLE / 2, -HANDLE / 2, HANDLE, HANDLE, parent)
         self.role = role  # 'nw','ne','sw','se'
         self.setBrush(QBrush(QColor(30, 120, 230)))
         self.setPen(QPen(QColor("white"), 0))
-        self.setFlag(QGraphicsItem.ItemIgnoresTransformations, False)
-        self.setCursor(Qt.SizeFDiagCursor)
-        self.setZValue(50)
+        self.setCursor(self._CURSORS.get(role, Qt.SizeFDiagCursor))
+        self.setZValue(60)
         self.setVisible(False)
 
     def mousePressEvent(self, event):
@@ -102,14 +112,41 @@ class _HandleItem(QGraphicsRectItem):
         event.accept()
 
 
+class _RotateHandle(QGraphicsEllipseItem):
+    """A round grip above the top edge that rotates the parent (Word-style)."""
+
+    def __init__(self, parent):
+        super().__init__(-HANDLE / 2, -HANDLE / 2, HANDLE, HANDLE, parent)
+        self.setBrush(QBrush(QColor(40, 170, 90)))
+        self.setPen(QPen(QColor("white"), 0))
+        self.setCursor(Qt.CrossCursor)
+        self.setZValue(60)
+        self.setVisible(False)
+
+    def mousePressEvent(self, event):
+        self.parentItem()._begin_rotate()
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        self.parentItem()._rotate_to(event.scenePos())
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self.parentItem()._end_rotate()
+        event.accept()
+
+
 class ResizableRectItem(_BaseMixin, QGraphicsRectItem):
-    """Base for highlight / textbox / rect marks with corner handles."""
+    """Base for highlight / textbox / rect marks with corner + rotate handles."""
 
     def __init__(self, ann: Annotation, view):
         super().__init__()
         self.init_base(ann, view)
+        self.setZValue(ANNOT_Z)
         self._handles = {r: _HandleItem(self, r) for r in ("nw", "ne", "sw", "se")}
+        self._rotate_handle = _RotateHandle(self)
         self._resize_snap = None
+        self._rotate_snap = None
         self.sync_from_model()
 
     # geometry --------------------------------------------------------------
@@ -117,8 +154,11 @@ class ResizableRectItem(_BaseMixin, QGraphicsRectItem):
     def sync_from_model(self):
         x0, y0, x1, y1 = self.ann.rect
         w, h = abs(x1 - x0), abs(y1 - y0)
+        self.setRotation(0)
         self.setPos(min(x0, x1), min(y0, y1))
         self.setRect(0, 0, max(w, 1.0), max(h, 1.0))
+        self.setTransformOriginPoint(self.rect().center())
+        self.setRotation(self.ann.rotation)
         self._place_handles()
         self.update()
 
@@ -126,6 +166,7 @@ class ResizableRectItem(_BaseMixin, QGraphicsRectItem):
         p = self.pos()
         r = self.rect()
         self.ann.rect = (p.x(), p.y(), p.x() + r.width(), p.y() + r.height())
+        self.ann.rotation = self.rotation()
 
     def _place_handles(self):
         r = self.rect()
@@ -133,11 +174,14 @@ class ResizableRectItem(_BaseMixin, QGraphicsRectItem):
                "sw": r.bottomLeft(), "se": r.bottomRight()}
         for role, h in self._handles.items():
             h.setPos(pts[role])
+        self._rotate_handle.setPos(QPointF(r.center().x(), r.top() - ROT_ARM))
 
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemSelectedHasChanged:
+            vis = bool(value)
             for h in self._handles.values():
-                h.setVisible(bool(value))
+                h.setVisible(vis)
+            self._rotate_handle.setVisible(vis)
         return super().itemChange(change, value)
 
     # resize ----------------------------------------------------------------
@@ -161,6 +205,7 @@ class ResizableRectItem(_BaseMixin, QGraphicsRectItem):
         new_top_left = self.mapToParent(r.topLeft())
         self.setPos(new_top_left)
         self.setRect(0, 0, max(r.width(), 4.0), max(r.height(), 4.0))
+        self.setTransformOriginPoint(self.rect().center())
         self._place_handles()
 
     def _end_resize(self):
@@ -171,6 +216,28 @@ class ResizableRectItem(_BaseMixin, QGraphicsRectItem):
                 ModifyAnnotationCommand(self.view, self.ann,
                                         self._resize_snap, after, "Resize"))
         self._resize_snap = None
+        self.view.store.update(self.ann)
+
+    # rotate -----------------------------------------------------------------
+
+    def _begin_rotate(self):
+        self._rotate_snap = capture(self.ann)
+
+    def _rotate_to(self, scene_pos):
+        centre = self.mapToScene(self.rect().center())
+        dx = scene_pos.x() - centre.x()
+        dy = scene_pos.y() - centre.y()
+        angle = math.degrees(math.atan2(dy, dx)) + 90.0  # handle points "up"
+        self.setRotation(angle)
+
+    def _end_rotate(self):
+        self.write_geometry_to_model()
+        after = capture(self.ann)
+        if self._rotate_snap is not None and after != self._rotate_snap:
+            self.view.push_command(
+                ModifyAnnotationCommand(self.view, self.ann,
+                                        self._rotate_snap, after, "Rotate"))
+        self._rotate_snap = None
         self.view.store.update(self.ann)
 
 

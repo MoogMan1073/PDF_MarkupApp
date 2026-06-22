@@ -81,8 +81,11 @@ class WirePanel(QWidget):
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.cellDoubleClicked.connect(self._on_double)
         hdr = self.table.horizontalHeader()
-        hdr.setSectionResizeMode(QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(1, QHeaderView.Stretch)
+        hdr.setSectionResizeMode(QHeaderView.Interactive)  # user-resizable columns
+        hdr.setStretchLastSection(True)
+        for col, width in {0: 28, 1: 90, 2: 56, 3: 56, 4: 48,
+                           5: 100, 6: 44, 7: 56, 8: 64}.items():
+            self.table.setColumnWidth(col, width)
         self.table.setSortingEnabled(True)
         lay.addWidget(self.table, 1)
 

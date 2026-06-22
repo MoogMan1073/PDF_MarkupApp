@@ -12,14 +12,17 @@ from PySide6.QtWidgets import (
     QSpinBox, QLabel, QWidget, QDialogButtonBox, QDialog, QVBoxLayout,
     QHBoxLayout, QFormLayout, QLineEdit, QCheckBox, QComboBox, QPlainTextEdit,
     QColorDialog, QDoubleSpinBox, QPushButton, QGroupBox, QStatusBar,
+    QApplication,
 )
 
+from . import __app_name__, __version__, __copyright__
 from .config import AppConfig
 from .model.document import Document
 from .model.annotations import Annotation
 from .viewer.pdf_view import PdfView
 from .viewer import tools as T
-from .viewer.command_stack import ModifyAnnotationCommand, capture
+from .viewer.command_stack import ModifyAnnotationCommand, RemoveAnnotationCommand, capture
+from .extraction import claude_api
 from .panels.comment_panel import CommentPanel
 from .panels.todo_panel import TodoPanel
 from .panels.wire_panel import WirePanel
@@ -118,15 +121,33 @@ class SettingsDialog(QDialog):
         fa = QFormLayout(gb_a)
         self.ocr = QCheckBox("Enable OCR fallback (Tesseract)")
         self.ocr.setChecked(bool(config.get("ocr/enabled")))
-        self.ai = QCheckBox("Enable Claude vision assist (needs ANTHROPIC_API_KEY)")
+        self.ai = QCheckBox("Enable Claude vision assist")
         self.ai.setChecked(bool(config.get("ai/enabled")))
+        self.ai.toggled.connect(self._on_ai_toggled)
+        self.ai_key = QLineEdit(str(config.get("ai/api_key") or ""))
+        self.ai_key.setEchoMode(QLineEdit.Password)
+        self.ai_key.setPlaceholderText("sk-ant-…  (leave blank to use ANTHROPIC_API_KEY)")
+        self.ai_key.textChanged.connect(self._refresh_api_status)
+        self.ai_show = QCheckBox("Show")
+        self.ai_show.toggled.connect(
+            lambda v: self.ai_key.setEchoMode(QLineEdit.Normal if v else QLineEdit.Password))
+        key_row = QHBoxLayout(); key_row.addWidget(self.ai_key, 1); key_row.addWidget(self.ai_show)
+        key_wrap = QWidget(); key_wrap.setLayout(key_row)
+        self.ai_status = QLabel()
+        self.btn_check = QPushButton("Check API status")
+        self.btn_check.clicked.connect(self._check_api)
         self.ai_model = QLineEdit(str(config.get("ai/model")))
         self.ai_region = QSpinBox(); self.ai_region.setRange(100, 4000); self.ai_region.setValue(int(config.get("ai/region_size")))
         fa.addRow(self.ocr)
         fa.addRow(self.ai)
+        fa.addRow("API key:", key_wrap)
+        fa.addRow("", self.btn_check)
+        fa.addRow("Status:", self.ai_status)
         fa.addRow("AI model:", self.ai_model)
         fa.addRow("AI region size (px):", self.ai_region)
         lay.addWidget(gb_a)
+        self._on_ai_toggled(self.ai.isChecked())
+        self._refresh_api_status()
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
@@ -150,9 +171,37 @@ class SettingsDialog(QDialog):
         c.set_ignore_patterns([l.strip() for l in self.ignore.toPlainText().splitlines() if l.strip()])
         c.set("ocr/enabled", self.ocr.isChecked())
         c.set("ai/enabled", self.ai.isChecked())
+        c.set("ai/api_key", self.ai_key.text().strip())
         c.set("ai/model", self.ai_model.text())
         c.set("ai/region_size", self.ai_region.value())
         c.sync()
+
+    # -- AI assist helpers ---------------------------------------------------
+
+    def _on_ai_toggled(self, on: bool):
+        for w in (self.ai_key, self.ai_show, self.btn_check, self.ai_model, self.ai_region):
+            w.setEnabled(on)
+        self._refresh_api_status()
+
+    def _refresh_api_status(self):
+        if not self.ai.isChecked():
+            self.ai_status.setText("AI assist disabled")
+            self.ai_status.setStyleSheet("color: gray;")
+            return
+        state, msg = claude_api.status(self.ai_key.text())
+        color = {"present": "#1b7f3a", "missing": "#b8860b", "no_sdk": "#c0392b"}.get(state, "gray")
+        self.ai_status.setText(msg)
+        self.ai_status.setStyleSheet(f"color: {color};")
+
+    def _check_api(self):
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            ok, msg = claude_api.validate_key(
+                self.ai_key.text(), self.ai_model.text() or claude_api.DEFAULT_MODEL)
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.ai_status.setText(msg)
+        self.ai_status.setStyleSheet("color: #1b7f3a;" if ok else "color: #c0392b;")
 
 
 def _swatch(color: QColor) -> QIcon:
@@ -167,7 +216,7 @@ def _swatch(color: QColor) -> QIcon:
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("PDF Markup — Wire Number Extractor")
+        self.setWindowTitle(__app_name__)
         self.resize(1320, 880)
         self.config = AppConfig()
         self.document = None
@@ -177,6 +226,8 @@ class MainWindow(QMainWindow):
         self.view.requestCommentEdit.connect(self._edit_comment)
         self.view.requestTextEdit.connect(self._edit_textbox)
         self.view.pageChanged.connect(self._on_page_changed)
+        # synchronous prompt used when *creating* a new comment / text box
+        self.view.new_text_prompt = self._prompt_new_text
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self.view, "Viewer")
@@ -191,6 +242,7 @@ class MainWindow(QMainWindow):
         # comment dock
         self.comment_panel = CommentPanel()
         self.comment_panel.activated.connect(self._jump_to)
+        self.comment_panel.deleteRequested.connect(self._delete_annotation)
         dock = QDockWidget("Comments", self)
         dock.setWidget(self.comment_panel)
         dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
@@ -230,6 +282,19 @@ class MainWindow(QMainWindow):
         m_view.addAction("Zoom out", self.view.zoom_out, QKeySequence.ZoomOut)
         m_view.addSeparator()
         m_view.addAction("Toggle comment sidebar", lambda: self.comment_dock.setVisible(not self.comment_dock.isVisible()))
+
+        m_help = mb.addMenu("&Help")
+        m_help.addAction("About " + __app_name__, self._show_about)
+
+    def _show_about(self):
+        QMessageBox.about(
+            self, "About " + __app_name__,
+            f"<h3>{__app_name__}</h3>"
+            f"<p>Version {__version__}</p>"
+            f"<p>PDF markup &amp; wire-number extraction for AutoCAD "
+            f"Electrical drawing sets.</p>"
+            f"<p>{__copyright__}</p>",
+        )
 
     def _build_toolbar(self):
         tb = QToolBar("Tools")
@@ -386,6 +451,22 @@ class MainWindow(QMainWindow):
                 self.view.rebuild_all_items()
 
     # -- edit hooks ----------------------------------------------------------
+
+    def _prompt_new_text(self, ann: Annotation, is_textbox: bool):
+        """Synchronous prompt for a *new* comment/text box.
+
+        Returns ``(accepted, text, todo)``; a cancel returns ``accepted=False``
+        so the view discards the unplaced mark (never added to the document).
+        """
+        dlg = TextEditDialog(ann, self, is_textbox=is_textbox)
+        if dlg.exec() == QDialog.Accepted:
+            text, todo = dlg.values()
+            return True, text, todo
+        return False, "", False
+
+    def _delete_annotation(self, ann: Annotation):
+        """Delete a mark (already user-confirmed) via the undo stack."""
+        self.view.push_command(RemoveAnnotationCommand(self.view, ann, "Delete comment"))
 
     def _edit_comment(self, ann: Annotation):
         self._edit_text(ann, is_textbox=False)

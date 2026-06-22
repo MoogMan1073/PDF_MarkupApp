@@ -107,6 +107,32 @@ class TestStorage(unittest.TestCase):
         iso = pdf_date_to_iso("D:20260619204609Z")
         self.assertTrue(iso.startswith("2026-06-"))
 
+    def test_comment_exports_genuine_popup(self):
+        doc = fitz.open(self.src)
+        write_annotations_to_pdf(doc, [self.anns[2]])  # the comment
+        mp = marked_pdf_path(self.src)
+        doc.save(mp)
+        doc.close()
+        d = fitz.open(mp)
+        notes = [a for a in d[0].annots() if a.type[1] == "Text"]
+        self.assertTrue(notes)
+        self.assertEqual(notes[0].info.get("content"), "needs review")
+        self.assertTrue(notes[0].has_popup)
+
+    def test_rotation_persists_via_sidecar(self):
+        from app.model.annotations import KIND_RECT
+        doc = Document(self.src)
+        doc.load()
+        doc.store.add(Annotation(page=0, kind=KIND_RECT, rect=(10, 10, 90, 60),
+                                 color=(0, 0, 1), rotation=42.0, author="Eli"))
+        doc.save()
+        doc.close()
+        doc2 = Document(self.src)
+        doc2.load()
+        rects = [a for a in doc2.store.all() if a.kind == KIND_RECT]
+        self.assertEqual(rects[0].rotation, 42.0)
+        doc2.close()
+
 
 if __name__ == "__main__":
     unittest.main()

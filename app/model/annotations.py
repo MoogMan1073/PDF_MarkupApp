@@ -48,6 +48,7 @@ class Annotation:
     bold: bool = False
     italic: bool = False
     opacity: float = 0.4                         # highlights
+    rotation: float = 0.0                        # degrees, clockwise, about centre
 
     # app-only state (synced to the SQLite sidecar, not the PDF)
     is_todo: bool = False

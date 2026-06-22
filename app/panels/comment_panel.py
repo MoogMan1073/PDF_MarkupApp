@@ -8,9 +8,10 @@ row asks the viewer to scroll to and flash the mark.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QComboBox, QLabel,
-    QTreeWidget, QTreeWidgetItem, QCheckBox,
+    QTreeWidget, QTreeWidgetItem, QCheckBox, QPushButton, QMenu, QMessageBox,
 )
 
 from ..model.annotations import (
@@ -28,6 +29,7 @@ SORTS = ["Page", "Commenter", "Datetime", "Type"]
 class CommentPanel(QWidget):
     activated = Signal(object)       # Annotation
     todoToggled = Signal(object)     # Annotation
+    deleteRequested = Signal(object)  # Annotation (already user-confirmed)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -68,6 +70,12 @@ class CommentPanel(QWidget):
         row2.addWidget(self.sort_by, 1)
         row2.addWidget(self.sort_desc)
         row2.addWidget(self.todo_only)
+        self.btn_delete = QPushButton("🗑")
+        self.btn_delete.setToolTip("Delete selected comment (Del)")
+        self.btn_delete.setFixedWidth(34)
+        self.btn_delete.setEnabled(False)
+        self.btn_delete.clicked.connect(self._delete_selected)
+        row2.addWidget(self.btn_delete)
         lay.addLayout(row2)
 
         self.tree = QTreeWidget()
@@ -76,10 +84,18 @@ class CommentPanel(QWidget):
         self.tree.setRootIsDecorated(False)
         self.tree.setAlternatingRowColors(True)
         self.tree.itemClicked.connect(self._on_click)
+        self.tree.itemSelectionChanged.connect(self._update_delete_enabled)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._show_context_menu)
         self.tree.setColumnWidth(0, 26)
         self.tree.setColumnWidth(1, 220)
         self.tree.setColumnWidth(2, 32)
         lay.addWidget(self.tree, 1)
+
+        # Delete key (scoped to the list)
+        sc = QShortcut(QKeySequence.Delete, self.tree)
+        sc.setContext(Qt.WidgetShortcut)
+        sc.activated.connect(self._delete_selected)
 
         self.count_label = QLabel("")
         lay.addWidget(self.count_label)
@@ -165,3 +181,33 @@ class CommentPanel(QWidget):
         ann = item.data(0, Qt.UserRole)
         if ann is not None:
             self.activated.emit(ann)
+
+    def _selected_annotation(self):
+        items = self.tree.selectedItems()
+        if not items:
+            return None
+        return items[0].data(0, Qt.UserRole)
+
+    def _update_delete_enabled(self):
+        self.btn_delete.setEnabled(self._selected_annotation() is not None)
+
+    def _show_context_menu(self, pos):
+        item = self.tree.itemAt(pos)
+        if item is None:
+            return
+        item.setSelected(True)
+        menu = QMenu(self)
+        act = menu.addAction("Delete comment")
+        if menu.exec(self.tree.viewport().mapToGlobal(pos)) == act:
+            self._delete_selected()
+
+    def _delete_selected(self):
+        ann = self._selected_annotation()
+        if ann is None:
+            return
+        resp = QMessageBox.question(
+            self, "Delete comment",
+            f"Delete this {ann.kind}?\n\n{ann.snippet(80)}",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if resp == QMessageBox.Yes:
+            self.deleteRequested.emit(ann)

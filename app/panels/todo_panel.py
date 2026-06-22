@@ -30,6 +30,8 @@ class TodoPanel(QWidget):
         self.store = None
         self.config = None
         self._loading = False
+        self._sort_col = None                  # None -> natural (order, page)
+        self._sort_order = Qt.AscendingOrder
         self._build_ui()
 
     def _build_ui(self):
@@ -65,6 +67,11 @@ class TodoPanel(QWidget):
         self.tree.itemDoubleClicked.connect(self._on_double)
         self.tree.setColumnWidth(0, 44)
         self.tree.setColumnWidth(1, 320)
+        # clickable headers sort items within each group (grouping stays primary)
+        hdr = self.tree.header()
+        hdr.setSectionsClickable(True)
+        hdr.setSortIndicatorShown(True)
+        hdr.sectionClicked.connect(self._on_header_clicked)
         lay.addWidget(self.tree, 1)
 
         self.count_label = QLabel("")
@@ -80,6 +87,36 @@ class TodoPanel(QWidget):
 
     def _group_mode(self):
         return [GROUP_SHEET, GROUP_COMMENTER, GROUP_NONE][self.group_by.currentIndex()]
+
+    # column -> sort key over an Annotation
+    _SORT_KEYS = {
+        0: lambda a: (a.todo_done,),
+        1: lambda a: ((a.text or "").lower(),),
+        2: lambda a: (a.page,),
+        3: lambda a: ((a.author or "").lower(),),
+        4: lambda a: (a.created,),
+        5: lambda a: (",".join(a.tags).lower(),),
+    }
+
+    def _on_header_clicked(self, col):
+        if col == self._sort_col:
+            self._sort_order = (Qt.DescendingOrder if self._sort_order == Qt.AscendingOrder
+                                else Qt.AscendingOrder)
+        else:
+            self._sort_col = col
+            self._sort_order = Qt.AscendingOrder
+        self.tree.header().setSortIndicator(self._sort_col, self._sort_order)
+        self.refresh()
+
+    def _sort_within_group(self, items):
+        """Apply the active column sort to one group's items (grouping is primary)."""
+        if self._sort_col is None:
+            return items
+        key = self._SORT_KEYS.get(self._sort_col)
+        if key is None:
+            return items
+        return sorted(items, key=key,
+                      reverse=self._sort_order == Qt.DescendingOrder)
 
     def _todos(self):
         if self.store is None:
@@ -126,7 +163,7 @@ class TodoPanel(QWidget):
                 self.tree.addTopLevelItem(node)
                 node.setExpanded(True)
                 parent = node
-            for a in groups[k]:
+            for a in self._sort_within_group(groups[k]):
                 self._make_row(parent, a)
 
         self.count_label.setText(

@@ -1,4 +1,4 @@
-# PDF Markup + Wire-Number Extractor
+# DSI Redline
 
 A lightweight, fast desktop app for reviewing AutoCAD Electrical drawing sets
 (industrial-controls prints). It feels like the Chrome PDF viewer — clean
@@ -7,6 +7,8 @@ comment/TODO workflow, and a **wire-number extraction & export engine**.
 
 Built with Python + PySide6 + PyMuPDF. Fully functional offline; AI is optional.
 
+_© DSI Innovations, LLC 2026_
+
 ---
 
 ## Features
@@ -14,9 +16,10 @@ Built with Python + PySide6 + PyMuPDF. Fully functional offline; AI is optional.
 - **Viewer** — open a PDF, continuous vertical scroll with page shadows, Ctrl+scroll
   zoom, fit-width / fit-page, space/middle-drag pan, page navigation. Pages render
   lazily and re-render crisper as you zoom in.
-- **Markup tools** — select/move/resize, highlight, freehand pen, eraser, sticky-note
-  comments, on-page text boxes, plus rectangle & arrow shapes. Full undo/redo
-  (`Ctrl+Z` / `Ctrl+Shift+Z`). Every mark records its author and timestamp.
+- **Markup tools** — select/move/**resize/rotate** (Word-style handles), highlight,
+  freehand pen, eraser, sticky-note comments, on-page text boxes, plus rectangle &
+  arrow shapes. Shapes preview live while you drag and stay editable afterward. Full
+  undo/redo (`Ctrl+Z` / `Ctrl+Shift+Z`). Every mark records its author and timestamp.
 - **Hybrid storage** — marks are saved as standard PDF annotations into a
   `*.marked.pdf` copy (the original is **never** overwritten), while app-only state
   (TODO status, tags, wire cache) lives in a `*.markup.db` SQLite sidecar. Existing
@@ -25,10 +28,12 @@ Built with Python + PySide6 + PyMuPDF. Fully functional offline; AI is optional.
   comments are hidden (not deleted) and excluded from counts. Toggle "Show ignored"
   to reveal them. The pattern list is editable in Settings.
 - **Comment sidebar** — dockable, filterable, sortable list of all comments; click to
-  scroll to and flash the mark.
+  scroll to and flash the mark. Delete a comment via right-click, the `Del` key, or the
+  🗑 button — always with a confirmation prompt, and always undoable.
 - **TODO tab** — flag any comment/text box as a TODO; check off, edit inline, group by
-  sheet/commenter, and export to **Markdown** (GitHub task list) or **DOCX** (table
-  with ☐/☑ glyphs).
+  sheet/commenter, **click any column header to sort within groups** (with an ↑/↓
+  indicator), and export to **Markdown** (GitHub task list) or **DOCX** (table with
+  ☐/☑ glyphs).
 - **Wire Numbers tab** — extract, classify, spot-check and export wire numbers.
 - **Wire export** — `.xlsx` / `.csv`, single-file (`~sheet~` separators, labels-only)
   or one-file-per-sheet (full columns), configurable labels-per-wire, and multiple
@@ -84,7 +89,9 @@ layer (which is all that's needed for vector AutoCAD plots).
 ### Claude AI assist (optional — opt-in)
 
 For OCR'ing/disambiguating wire numbers on scanned regions you can enable Claude
-vision in Settings. Set an API key first:
+vision in **Settings ▸ OCR & AI assist**. Paste your API key directly into the
+**API key** field (stored in the app config) and click **Check API status** to verify
+it's valid; alternatively set the environment variable:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -121,7 +128,8 @@ python main.py drawings.pdf   # or open a file directly
 
 Your name (commenter), wire field widths & zero-padding, full-label regex override,
 labels-per-wire, the SHX/junk ignore-pattern list, "treat all comments as TODO",
-OCR/AI toggles, and export defaults — all persisted between sessions.
+OCR/AI toggles, the **Claude API key + live status check**, and export defaults — all
+persisted between sessions. **Help ▸ About** shows the app name, version and copyright.
 
 ---
 

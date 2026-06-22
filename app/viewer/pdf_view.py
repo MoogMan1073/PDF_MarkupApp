@@ -11,7 +11,7 @@ from typing import Optional
 
 from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QTimer
 from PySide6.QtGui import QPainter, QColor, QBrush, QKeySequence, QShortcut
-from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QInputDialog, QApplication
+from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsItem
 
 from ..model.annotations import (
     Annotation, AnnotationStore,
@@ -62,6 +62,9 @@ class PdfView(QGraphicsView):
         self._draft = None
         self._draft_page = None
         self._draft_start = None
+        # synchronous prompt for *new* comment/text-box text, set by the window.
+        # signature: prompt(ann, is_textbox) -> (accepted: bool, text, todo)
+        self.new_text_prompt = None
 
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
@@ -265,9 +268,14 @@ class PdfView(QGraphicsView):
 
         if tool == T.TOOL_COMMENT:
             ann = Annotation(page=pno, kind=KIND_COMMENT, rect=(lx, ly, lx + 18, ly + 18),
-                             author=author)
+                             author=author, is_todo=self._default_todo())
+            if self.new_text_prompt is not None:
+                ok, text, todo = self.new_text_prompt(ann, False)
+                if not ok:
+                    return True  # cancelled -> never added to the document
+                ann.text = text
+                ann.is_todo = todo
             self._commit_new(ann)
-            self.requestCommentEdit.emit(ann)
             return True
         if tool == T.TOOL_PEN:
             self._draft = Annotation(page=pno, kind=KIND_PEN, points=[(lx, ly)],
@@ -304,41 +312,61 @@ class PdfView(QGraphicsView):
         self._refresh_preview()
 
     def _refresh_preview(self):
-        # cheap live preview: rebuild the draft item
-        prev = self._item_by_ann.get("__draft__")
-        if prev is not None:
-            self._scene.removeItem(prev)
+        # cheap live preview: rebuild the draft item (drawn above the page)
+        self._clear_preview()
         item = make_item(self._draft, self)
         if item is not None:
             _, page = self._draft_page
             item.setParentItem(page)
+            item.setZValue(12)
             item.setOpacity(0.7)
             self._item_by_ann["__draft__"] = item
+
+    def _clear_preview(self):
+        prev = self._item_by_ann.pop("__draft__", None)
+        if prev is not None:
+            self._scene.removeItem(prev)
 
     def _finish_draft(self):
         draft = self._draft
         self._draft = None
-        prev = self._item_by_ann.pop("__draft__", None)
-        if prev is not None:
-            self._scene.removeItem(prev)
         if draft is None:
+            self._clear_preview()
             return
         # discard degenerate marks
-        if draft.kind == KIND_PEN and len(draft.points) < 2:
-            return
+        degenerate = draft.kind == KIND_PEN and len(draft.points) < 2
         if draft.kind in (KIND_HIGHLIGHT, KIND_RECT, KIND_ARROW, KIND_TEXTBOX):
             x0, y0, x1, y1 = draft.rect
             if abs(x1 - x0) < 3 and abs(y1 - y0) < 3:
-                return
-            draft.rect = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)) \
-                if draft.kind != KIND_ARROW else draft.rect
-        self._commit_new(draft)
+                degenerate = True
+            elif draft.kind != KIND_ARROW:
+                draft.rect = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+        if degenerate:
+            self._clear_preview()
+            return
+
+        # text boxes: prompt for text *before* committing (keep the live
+        # preview visible meanwhile); a cancel discards the box entirely.
         if draft.kind == KIND_TEXTBOX:
-            self.requestTextEdit.emit(draft)
+            draft.is_todo = self._default_todo()
+            ok, text, todo = (True, "", draft.is_todo)
+            if self.new_text_prompt is not None:
+                ok, text, todo = self.new_text_prompt(draft, True)
+            self._clear_preview()
+            if not ok:
+                return
+            draft.text = text
+            draft.is_todo = todo
+            self._commit_new(draft)
+            return
+
+        self._clear_preview()
+        self._commit_new(draft)
+
+    def _default_todo(self) -> bool:
+        return bool(self.config and getattr(self.config, "treat_all_as_todo", False))
 
     def _commit_new(self, ann: Annotation):
-        if ann.is_comment_like and self.config and getattr(self.config, "treat_all_as_todo", False):
-            ann.is_todo = True
         self.push_command(AddAnnotationCommand(self, ann, f"Add {ann.kind}"))
 
     # -- erasing -------------------------------------------------------------
@@ -379,6 +407,10 @@ class PdfView(QGraphicsView):
         if item is None:
             return
         item.setParentItem(self._page_items[ann.page])
+        item.setZValue(10)  # draw marks above the page bitmap (z=1)
+        select = self.tool.is_select()
+        item.setFlag(QGraphicsItem.ItemIsMovable, select)
+        item.setFlag(QGraphicsItem.ItemIsSelectable, select)
         self._item_by_ann[ann.id] = item
 
     def _remove_item_for(self, ann: Annotation):

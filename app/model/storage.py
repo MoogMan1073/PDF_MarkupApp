@@ -218,7 +218,14 @@ def write_annotations_to_pdf(doc: "fitz.Document", annotations: Iterable[Annotat
                 annot.set_colors(stroke=ann.color)
                 annot.set_border(width=ann.width)
             elif ann.kind == KIND_COMMENT:
-                annot = page.add_text_annot(fitz.Point(x0, y0), ann.text or "")
+                annot = page.add_text_annot(fitz.Point(x0, y0), ann.text or "",
+                                            icon="Comment")
+                # an explicit popup makes the note open as a genuine comment in
+                # Adobe / Chrome / other PDF viewers
+                try:
+                    annot.set_popup(fitz.Rect(x0 + 20, y0, x0 + 220, y0 + 90))
+                except Exception:
+                    pass
             elif ann.kind == KIND_TEXTBOX:
                 annot = page.add_freetext_annot(
                     rect, ann.text or "", fontsize=ann.font_size,

@@ -52,6 +52,7 @@ def _snapshot(ann: Annotation) -> dict:
         "italic": ann.italic,
         "text": ann.text,
         "opacity": ann.opacity,
+        "rotation": ann.rotation,
     }
 
 
@@ -65,6 +66,7 @@ def _restore(ann: Annotation, snap: dict) -> None:
     ann.italic = snap["italic"]
     ann.text = snap["text"]
     ann.opacity = snap["opacity"]
+    ann.rotation = snap.get("rotation", 0.0)
 
 
 class ModifyAnnotationCommand(QUndoCommand):
