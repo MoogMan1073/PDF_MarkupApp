@@ -16,7 +16,8 @@ records **who** made it (your name from [[Settings]]) and **when**.
 - **Eraser** — removes whole marks. See [[Eraser]].
 - **Comment** — drops a sticky-note bubble and prompts for text. See [[Comments Sidebar]].
 - **Text box** — type text that renders directly on the page. The dashed border
-  matches the text color. Double-click to edit.
+  matches the text color. **Double-click to edit** the text *and* its font —
+  size, color, **bold** and *italic* can all be changed after the fact.
 - **Rectangle** and **Arrow** — shapes with color + width.
 
 Color, pen width, font size, **B**old and *I*talic apply to the active tool.

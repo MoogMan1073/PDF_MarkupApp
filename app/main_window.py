@@ -35,12 +35,30 @@ class TextEditDialog(QDialog):
     def __init__(self, ann: Annotation, parent=None, is_textbox=False):
         super().__init__(parent)
         self.ann = ann
+        self.is_textbox = is_textbox
+        self._font_color = tuple(ann.color)
         self.setWindowTitle("Edit text box" if is_textbox else "Edit comment")
         lay = QVBoxLayout(self)
         self.edit = QPlainTextEdit(ann.text or "")
         self.edit.setMinimumSize(320, 120)
         self.edit.installEventFilter(self)  # Ctrl/Shift+Enter -> OK
         lay.addWidget(self.edit)
+
+        # font styling — only meaningful for on-page text boxes
+        if is_textbox:
+            frow = QHBoxLayout()
+            self.size_spin = QSpinBox(); self.size_spin.setRange(4, 96)
+            self.size_spin.setValue(int(ann.font_size))
+            self.bold_cb = QCheckBox("B"); self.bold_cb.setChecked(ann.bold)
+            self.italic_cb = QCheckBox("I"); self.italic_cb.setChecked(ann.italic)
+            self.color_btn = QPushButton("Font color")
+            self.color_btn.clicked.connect(self._pick_color)
+            self._update_color_swatch()
+            frow.addWidget(QLabel("Size:")); frow.addWidget(self.size_spin)
+            frow.addWidget(self.bold_cb); frow.addWidget(self.italic_cb)
+            frow.addWidget(self.color_btn); frow.addStretch(1)
+            lay.addLayout(frow)
+
         self.todo = QCheckBox("Flag as TODO")
         self.todo.setChecked(ann.is_todo)
         lay.addWidget(self.todo)
@@ -52,6 +70,20 @@ class TextEditDialog(QDialog):
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
 
+    def _pick_color(self):
+        rgb = self._font_color
+        col = QColorDialog.getColor(
+            QColor(int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255)), self,
+            "Font color")
+        if col.isValid():
+            self._font_color = (col.redF(), col.greenF(), col.blueF())
+            self._update_color_swatch()
+
+    def _update_color_swatch(self):
+        self.color_btn.setIcon(_swatch(QColor(
+            int(self._font_color[0] * 255), int(self._font_color[1] * 255),
+            int(self._font_color[2] * 255))))
+
     def eventFilter(self, obj, event):
         if obj is self.edit and event.type() == QEvent.KeyPress:
             if (event.key() in (Qt.Key_Return, Qt.Key_Enter)
@@ -62,6 +94,26 @@ class TextEditDialog(QDialog):
 
     def values(self):
         return self.edit.toPlainText(), self.todo.isChecked()
+
+    def font_values(self):
+        """Font styling for a text box, or ``None`` for a comment."""
+        if not self.is_textbox:
+            return None
+        return {
+            "font_size": float(self.size_spin.value()),
+            "bold": self.bold_cb.isChecked(),
+            "italic": self.italic_cb.isChecked(),
+            "color": tuple(self._font_color),
+        }
+
+
+def _apply_font(ann: Annotation, fv) -> None:
+    if not fv:
+        return
+    ann.font_size = fv["font_size"]
+    ann.bold = fv["bold"]
+    ann.italic = fv["italic"]
+    ann.color = tuple(fv["color"])
 
 
 # --- settings dialog --------------------------------------------------------
@@ -459,7 +511,7 @@ class MainWindow(QMainWindow):
         self.wire_panel.set_document(doc, self.config)
         self.page_spin.setRange(1, max(1, doc.page_count))
         self.page_total.setText(f" / {doc.page_count}")
-        self.setWindowTitle(f"PDF Markup — {os.path.basename(path)}")
+        self.setWindowTitle(f"{__app_name__} — {os.path.basename(path)}")
         self._update_actions_enabled(True)
         self.statusBar().showMessage(
             f"Opened {os.path.basename(path)} ({doc.page_count} pages, "
@@ -509,6 +561,7 @@ class MainWindow(QMainWindow):
         dlg = TextEditDialog(ann, self, is_textbox=is_textbox)
         if dlg.exec() == QDialog.Accepted:
             text, todo = dlg.values()
+            _apply_font(ann, dlg.font_values())
             return True, text, todo
         return False, "", False
 
@@ -530,6 +583,7 @@ class MainWindow(QMainWindow):
             text, todo = dlg.values()
             ann.text = text
             ann.is_todo = todo
+            _apply_font(ann, dlg.font_values())  # font size/color/bold/italic
             after = capture(ann)
             if after != before:
                 self.view.push_command(
