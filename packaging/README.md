@@ -8,7 +8,8 @@ This folder builds a Windows **executable** and an **installer**.
 | `installer.iss` | Inno Setup script → a `Setup.exe` installer |
 | `build_windows.bat` | One-shot local build helper |
 | `requirements-build.txt` | Build-only deps (PyInstaller) |
-| `icon.ico` / `icon.png` | App icon |
+| `../app/assets/app.ico` | Brand app icon (exe, installer, shortcut, window/taskbar) |
+| `icons/` | Full brand icon source set (dark + light themes, all sizes) |
 | `../.github/workflows/build-windows.yml` | CI that builds both on every tag / manual run |
 
 ## Easiest: let CI build it
@@ -43,7 +44,8 @@ For a single portable `.exe` (slower to start, no installer):
 
 ```bat
 pyinstaller --onefile --windowed --name "DSI Redline" ^
-  --add-data "docs;docs" --icon packaging\icon.ico main.py
+  --add-data "docs;docs" --add-data "app/assets;app/assets" ^
+  --icon app\assets\app.ico main.py
 ```
 
 ## Notes

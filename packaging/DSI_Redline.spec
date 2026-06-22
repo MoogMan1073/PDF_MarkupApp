@@ -10,8 +10,11 @@ import os
 
 ROOT = os.path.dirname(os.path.abspath(SPECPATH))  # repo root (packaging/..)
 
-# Bundle the user-manual vault next to the app so it ships with every build.
-datas = [(os.path.join(ROOT, "docs"), "docs")]
+# Bundle the user-manual vault and app assets (icon) so they ship with every build.
+datas = [
+    (os.path.join(ROOT, "docs"), "docs"),
+    (os.path.join(ROOT, "app", "assets"), os.path.join("app", "assets")),
+]
 
 # Optionally bundle the Anthropic SDK (AI assist) only when it's installed,
 # so builds without it still succeed and the app degrades gracefully.
@@ -23,7 +26,7 @@ try:
 except Exception:
     pass
 
-icon_path = os.path.join(SPECPATH, "icon.ico")
+icon_path = os.path.join(ROOT, "app", "assets", "app.ico")  # brand icon
 
 a = Analysis(
     [os.path.join(ROOT, "main.py")],

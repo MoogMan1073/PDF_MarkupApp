@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QApplication,
 )
 
-from . import __app_name__, __version__, __copyright__
+from . import __app_name__, __version__, __copyright__, app_icon
 from .config import AppConfig
 from .model.document import Document
 from .model.annotations import Annotation
@@ -229,6 +229,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(__app_name__)
+        self.setWindowIcon(app_icon())
         self.resize(1320, 880)
         self.config = AppConfig()
         self.document = None

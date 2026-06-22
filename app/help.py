@@ -172,6 +172,11 @@ class HelpWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("DSI Redline — User Manual")
+        try:
+            from . import app_icon
+            self.setWindowIcon(app_icon())
+        except Exception:
+            pass
         self.resize(1040, 720)
         self.pages = load_vault(vault_dir())
         self._history = []
