@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import re
+import sys
 from pathlib import Path
 from urllib.parse import quote, unquote
 
@@ -27,11 +28,26 @@ _FM_TAGS_RE = re.compile(r"tags:\s*\[([^\]]*)\]")
 
 
 def vault_dir() -> Path:
-    """Locate the docs vault (ships alongside the app)."""
-    here = Path(__file__).resolve().parent.parent / "docs"
-    if here.is_dir():
-        return here
-    return Path.cwd() / "docs"
+    """Locate the docs vault, working both from source and a frozen build.
+
+    PyInstaller bundles ``docs/`` next to the app, so check the frozen
+    locations (``sys._MEIPASS`` and the executable folder) before the
+    source-tree path.
+    """
+    candidates = []
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidates.append(Path(meipass) / "docs")
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates.append(exe_dir / "docs")
+        candidates.append(exe_dir / "_internal" / "docs")
+    candidates.append(Path(__file__).resolve().parent.parent / "docs")
+    candidates.append(Path.cwd() / "docs")
+    for c in candidates:
+        if c.is_dir():
+            return c
+    return candidates[0]
 
 
 def _strip_frontmatter(text: str) -> str:

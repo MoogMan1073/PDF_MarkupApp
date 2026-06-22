@@ -12,6 +12,7 @@ import math
 from PySide6.QtCore import QRectF, QPointF, Qt
 from PySide6.QtGui import (
     QColor, QPen, QBrush, QPainterPath, QFont, QPolygonF, QPainterPathStroker,
+    QTransform,
 )
 from PySide6.QtWidgets import (
     QGraphicsItem, QGraphicsRectItem, QGraphicsPathItem, QGraphicsObject,
@@ -112,7 +113,7 @@ class _HandleItem(QGraphicsRectItem):
         self.setVisible(False)
 
     def mousePressEvent(self, event):
-        self.parentItem()._begin_resize()
+        self.parentItem()._begin_resize(self.role)
         event.accept()
 
     def mouseMoveEvent(self, event):
@@ -198,26 +199,47 @@ class ResizableRectItem(_BaseMixin, QGraphicsRectItem):
 
     # resize ----------------------------------------------------------------
 
-    def _begin_resize(self):
+    _OPPOSITE = {"nw": "se", "se": "nw", "ne": "sw", "sw": "ne"}
+
+    def _corner(self, role):
+        r = self.rect()
+        return {"nw": r.topLeft(), "ne": r.topRight(),
+                "sw": r.bottomLeft(), "se": r.bottomRight()}[role]
+
+    def _begin_resize(self, role):
         self._resize_snap = capture(self.ann)
+        # the corner opposite the dragged one stays fixed in page space,
+        # even while the mark is rotated
+        self._resize_anchor = self.mapToParent(self._corner(self._OPPOSITE[role]))
 
     def _resize_to(self, role, scene_pos):
-        local = self.mapFromScene(scene_pos)
-        r = self.rect()
-        if role == "nw":
-            r.setTopLeft(local)
-        elif role == "ne":
-            r.setTopRight(local)
-        elif role == "sw":
-            r.setBottomLeft(local)
-        elif role == "se":
-            r.setBottomRight(local)
-        r = r.normalized()
-        # keep position anchored: convert to absolute coords
-        new_top_left = self.mapToParent(r.topLeft())
-        self.setPos(new_top_left)
-        self.setRect(0, 0, max(r.width(), 4.0), max(r.height(), 4.0))
-        self.setTransformOriginPoint(self.rect().center())
+        theta = self.rotation()
+        anchor_parent = self._resize_anchor
+        anchor_local = self._corner(self._OPPOSITE[role])      # current local frame
+        mouse_local = self.mapFromScene(scene_pos)             # rotation inverted
+
+        dirx = 1.0 if mouse_local.x() >= anchor_local.x() else -1.0
+        diry = 1.0 if mouse_local.y() >= anchor_local.y() else -1.0
+        w = max(4.0, abs(mouse_local.x() - anchor_local.x()))
+        h = max(4.0, abs(mouse_local.y() - anchor_local.y()))
+
+        far = QPointF(anchor_local.x() + dirx * w, anchor_local.y() + diry * h)
+        new_rect = QRectF(anchor_local, far).normalized()
+        tl = new_rect.topLeft()
+        center = QPointF(w / 2.0, h / 2.0)                     # new rect's centre
+        anchor_new = QPointF(anchor_local.x() - tl.x(), anchor_local.y() - tl.y())
+
+        rot = QTransform()
+        rot.rotate(theta)
+        rv = rot.map(QPointF(anchor_new.x() - center.x(), anchor_new.y() - center.y()))
+        # solve mapToParent(anchor_new) == anchor_parent for the new position
+        pos = QPointF(anchor_parent.x() - center.x() - rv.x(),
+                      anchor_parent.y() - center.y() - rv.y())
+
+        self.setRect(0, 0, w, h)
+        self.setTransformOriginPoint(center)
+        self.setRotation(theta)
+        self.setPos(pos)
         self._place_handles()
 
     def _end_resize(self):

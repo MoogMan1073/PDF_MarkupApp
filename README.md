@@ -153,6 +153,16 @@ docs/                        User manual (Obsidian-style markdown vault)
 tests/                       Unit tests for extraction/export/storage/docs
 ```
 
+## Building a Windows executable
+
+A one-folder Windows app and an installer are produced by PyInstaller + Inno
+Setup. The simplest path is CI: push a `v*` tag (or run **Actions ▸ Build
+Windows**) and download the **portable** and **installer** artifacts. To build
+locally on Windows, run `packaging\build_windows.bat` then compile
+`packaging\installer.iss` with Inno Setup. The `docs/` manual is bundled with
+the app so **Help ▸ User Manual** works on every machine. Full details in
+[`packaging/README.md`](packaging/README.md).
+
 ## Tests
 
 ```bash
