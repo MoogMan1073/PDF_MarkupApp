@@ -189,7 +189,7 @@ class HelpWindow(QMainWindow):
         self.setCentralWidget(split)
 
         self.nav = QTabWidget()
-        self.nav.setMaximumWidth(300)
+        self.nav.setMinimumWidth(180)
         self.page_list = QListWidget(); self.page_list.addItems(sorted(self.pages))
         self.page_list.itemClicked.connect(lambda it: self.load_page(it.text()))
         self.tag_list = QListWidget()
@@ -211,12 +211,18 @@ class HelpWindow(QMainWindow):
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
         split.setSizes([260, 780])  # ensure the reading pane is populated
+        self._split = split
 
         if self.pages:
             self.load_page("Home" if "Home" in self.pages else sorted(self.pages)[0])
         else:
             self.view.setMarkdown("# User manual not found\n\nThe `docs/` folder "
                                   "was not found next to the application.")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # the left pane may be dragged out, but never past half the window
+        self.nav.setMaximumWidth(max(220, self.width() // 2))
 
     # -- rendering -----------------------------------------------------------
 
@@ -276,10 +282,11 @@ class HelpWindow(QMainWindow):
 
 
 class _GraphView(QGraphicsView):
-    """Circular-layout graph of pages and their [[links]].
+    """Force-directed graph of pages and their [[links]].
 
-    Theme-aware (readable in light or dark mode), zoomable with Ctrl+wheel, and
-    hovering a node highlights its linked neighbours.
+    Connected pages cluster together (so the layout reads like an Obsidian graph
+    rather than a rigid ring). Theme-aware, zoomable with Ctrl+wheel, fits the
+    pane as it's resized, and hovering a node highlights its linked neighbours.
     """
 
     EDGE = QColor(140, 140, 140)
@@ -300,27 +307,27 @@ class _GraphView(QGraphicsView):
         scene = QGraphicsScene(self)
         self.setScene(scene)
         names = sorted(pages)
-        n = max(1, len(names))
-        radius = 30 + 22 * n
-        pos = {name: QPointF(radius * math.cos(2 * math.pi * i / n),
-                             radius * math.sin(2 * math.pi * i / n))
-               for i, name in enumerate(names)}
 
-        # edges (undirected) + adjacency
-        self._edges = []           # (a, b, lineItem)
+        # adjacency + undirected edge list (names only)
         self._adj = {nm: set() for nm in names}
+        edge_pairs = []
         seen = set()
         for name in names:
             for tgt in pages[name]["links"]:
-                if tgt in pos and (name, tgt) not in seen and (tgt, name) not in seen:
+                if tgt in self._adj and (name, tgt) not in seen and (tgt, name) not in seen:
                     seen.add((name, tgt))
-                    line = scene.addLine(pos[name].x(), pos[name].y(),
-                                         pos[tgt].x(), pos[tgt].y(),
-                                         QPen(self.EDGE, 0))
-                    line.setZValue(0)
-                    self._edges.append((name, tgt, line))
+                    edge_pairs.append((name, tgt))
                     self._adj[name].add(tgt)
                     self._adj[tgt].add(name)
+
+        pos = self._force_layout(names, self._adj)
+
+        self._edges = []           # (a, b, lineItem)
+        for a, b in edge_pairs:
+            line = scene.addLine(pos[a].x(), pos[a].y(), pos[b].x(), pos[b].y(),
+                                 QPen(self.EDGE, 0))
+            line.setZValue(0)
+            self._edges.append((a, b, line))
 
         self._nodes = {}
         for name in names:
@@ -329,8 +336,64 @@ class _GraphView(QGraphicsView):
             scene.addItem(node)
             self._nodes[name] = node
 
-        margin = 80
+        margin = 60
         scene.setSceneRect(scene.itemsBoundingRect().adjusted(-margin, -margin, margin, margin))
+
+    # -- layout --------------------------------------------------------------
+
+    @staticmethod
+    def _force_layout(names, adj, iterations=160):
+        """Deterministic Fruchterman-Reingold layout (connected nodes cluster)."""
+        n = len(names)
+        if n == 0:
+            return {}
+        if n == 1:
+            return {names[0]: QPointF(0, 0)}
+        # deterministic seed: a tight circle, then relax
+        pos = {nm: [120 * math.cos(2 * math.pi * i / n),
+                    120 * math.sin(2 * math.pi * i / n)]
+               for i, nm in enumerate(names)}
+        k = math.sqrt((640.0 * 640.0) / n)      # ideal edge length
+        temp = 180.0
+        for _ in range(iterations):
+            disp = {nm: [0.0, 0.0] for nm in names}
+            for i in range(n):
+                for j in range(i + 1, n):
+                    u, v = names[i], names[j]
+                    dx = pos[u][0] - pos[v][0]
+                    dy = pos[u][1] - pos[v][1]
+                    dist = math.hypot(dx, dy) or 0.01
+                    rep = (k * k) / dist
+                    ux, uy = dx / dist, dy / dist
+                    disp[u][0] += ux * rep; disp[u][1] += uy * rep
+                    disp[v][0] -= ux * rep; disp[v][1] -= uy * rep
+            for u in names:
+                for v in adj[u]:
+                    if u < v:
+                        dx = pos[u][0] - pos[v][0]
+                        dy = pos[u][1] - pos[v][1]
+                        dist = math.hypot(dx, dy) or 0.01
+                        att = (dist * dist) / k
+                        ux, uy = dx / dist, dy / dist
+                        disp[u][0] -= ux * att; disp[u][1] -= uy * att
+                        disp[v][0] += ux * att; disp[v][1] += uy * att
+            for nm in names:
+                dx, dy = disp[nm]
+                d = math.hypot(dx, dy) or 0.01
+                step = min(d, temp)
+                pos[nm][0] += dx / d * step
+                pos[nm][1] += dy / d * step
+            temp = max(2.0, temp * 0.95)
+        return {nm: QPointF(p[0], p[1]) for nm, p in pos.items()}
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit()
+
+    def _fit(self):
+        rect = self.scene().itemsBoundingRect().adjusted(-40, -40, 40, 40)
+        if not rect.isEmpty():
+            self.fitInView(rect, Qt.KeepAspectRatio)
 
     # -- hover highlighting --------------------------------------------------
 
