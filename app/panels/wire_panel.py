@@ -70,6 +70,13 @@ class WirePanel(QWidget):
         filt.addWidget(self.show_fixed)
         filt.addWidget(self.show_jumpers)
         filt.addWidget(self.search, 1)
+        self.btn_check_all = QPushButton("Check all")
+        self.btn_check_all.setToolTip("Include every visible row in the export")
+        self.btn_check_all.clicked.connect(lambda: self._set_all_visible(True))
+        self.btn_uncheck_all = QPushButton("Uncheck all")
+        self.btn_uncheck_all.clicked.connect(lambda: self._set_all_visible(False))
+        filt.addWidget(self.btn_check_all)
+        filt.addWidget(self.btn_uncheck_all)
         lay.addLayout(filt)
 
         # table
@@ -77,6 +84,7 @@ class WirePanel(QWidget):
         self.table.setHorizontalHeaderLabels(_COLS)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)  # shift/ctrl
         self.table.setAlternatingRowColors(True)
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.cellDoubleClicked.connect(self._on_double)
@@ -204,8 +212,34 @@ class WirePanel(QWidget):
         if item.column() != 0:
             return
         w = item.data(Qt.UserRole)
-        if w is not None:
-            w.included = item.checkState() == Qt.Checked
+        if w is None:
+            return
+        checked = item.checkState() == Qt.Checked
+        w.included = checked
+        # group toggle: if this row is part of a multi-row selection
+        # (shift/ctrl+click), apply the same state to every selected row
+        sel_rows = {ix.row() for ix in self.table.selectionModel().selectedRows()}
+        if item.row() in sel_rows and len(sel_rows) > 1:
+            self._apply_check_to_rows(sel_rows, checked)
+
+    def _apply_check_to_rows(self, rows, checked):
+        self.table.blockSignals(True)
+        try:
+            state = Qt.Checked if checked else Qt.Unchecked
+            for r in rows:
+                cell = self.table.item(r, 0)
+                if cell is None:
+                    continue
+                cell.setCheckState(state)
+                wn = cell.data(Qt.UserRole)
+                if wn is not None:
+                    wn.included = checked
+        finally:
+            self.table.blockSignals(False)
+
+    def _set_all_visible(self, checked):
+        rows = [r for r in range(self.table.rowCount()) if not self.table.isRowHidden(r)]
+        self._apply_check_to_rows(rows, checked)
 
     def _on_double(self, row, _col):
         w = self.table.item(row, 0).data(Qt.UserRole)

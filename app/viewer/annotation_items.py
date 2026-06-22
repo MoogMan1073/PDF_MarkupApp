@@ -277,7 +277,8 @@ class TextBoxItem(ResizableRectItem):
         painter.drawText(self.rect().adjusted(2, 2, -2, -2),
                          Qt.TextWordWrap | Qt.AlignLeft | Qt.AlignTop,
                          self.ann.text or "")
-        border = QColor(120, 120, 120, 120) if not self.isSelected() else QColor(30, 120, 230)
+        # dashed border matches the text colour (blue only while selected)
+        border = QColor(30, 120, 230) if self.isSelected() else qcolor(self.ann.color)
         painter.setPen(QPen(border, 0, Qt.DashLine))
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(self.rect())
@@ -344,36 +345,63 @@ class PenItem(_BaseMixin, QGraphicsPathItem):
 # --- arrow ------------------------------------------------------------------
 
 
-class ArrowItem(_BaseMixin, QGraphicsPathItem):
+class ArrowItem(ResizableRectItem):
+    """An arrow drawn across its bounding box, reusing the rect resize/rotate
+    handles so it manipulates exactly like a rectangle.
+
+    The model stores the two *endpoints* (start -> end, un-normalised) in
+    ``ann.rect``; orientation is recovered from the sign of the drag so resizing
+    the box keeps the arrow pointing the same way.
+    """
+
     def __init__(self, ann: Annotation, view):
-        super().__init__()
-        self.init_base(ann, view)
-        self.sync_from_model()
+        # fractions (0/1) locating start & end on the bounding box corners
+        self._sx = self._sy = 0.0
+        self._ex = self._ey = 1.0
+        super().__init__(ann, view)
 
     def sync_from_model(self):
-        import math
         x0, y0, x1, y1 = self.ann.rect
-        path = QPainterPath()
-        path.moveTo(x0, y0)
-        path.lineTo(x1, y1)
-        ang = math.atan2(y1 - y0, x1 - x0)
-        ah = 10.0
-        for da in (math.radians(150), math.radians(-150)):
-            path.moveTo(x1, y1)
-            path.lineTo(x1 + ah * math.cos(ang + da), y1 + ah * math.sin(ang + da))
-        self.setPath(path)
-        pen = QPen(qcolor(self.ann.color), self.ann.width)
-        pen.setCapStyle(Qt.RoundCap)
-        self.setPen(pen)
-        self.setPos(0, 0)
+        self._sx, self._ex = (0.0, 1.0) if x1 >= x0 else (1.0, 0.0)
+        self._sy, self._ey = (0.0, 1.0) if y1 >= y0 else (1.0, 0.0)
+        super().sync_from_model()
+
+    def _arrow_points(self):
+        r = self.rect()
+        start = QPointF(r.x() + self._sx * r.width(), r.y() + self._sy * r.height())
+        end = QPointF(r.x() + self._ex * r.width(), r.y() + self._ey * r.height())
+        return start, end
+
+    def boundingRect(self):
+        # pad so the arrowhead (drawn past the box corner) is not clipped
+        return self.rect().adjusted(-16, -16, 16, 16)
 
     def write_geometry_to_model(self):
-        dx, dy = self.pos().x(), self.pos().y()
-        if dx or dy:
-            x0, y0, x1, y1 = self.ann.rect
-            self.ann.rect = (x0 + dx, y0 + dy, x1 + dx, y1 + dy)
-            self.setPos(0, 0)
-            self.sync_from_model()
+        start, end = self._arrow_points()
+        p = self.pos()
+        self.ann.rect = (p.x() + start.x(), p.y() + start.y(),
+                         p.x() + end.x(), p.y() + end.y())
+        self.ann.rotation = self.rotation()
+
+    def paint(self, painter, option, widget=None):
+        option.state &= ~QStyle.State_Selected
+        start, end = self._arrow_points()
+        pen = QPen(qcolor(self.ann.color), self.ann.width)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawLine(start, end)
+        ang = math.atan2(end.y() - start.y(), end.x() - start.x())
+        ah = max(8.0, self.ann.width * 4)
+        for da in (math.radians(150), math.radians(-150)):
+            painter.drawLine(
+                end, QPointF(end.x() + ah * math.cos(ang + da),
+                             end.y() + ah * math.sin(ang + da)))
+        if self.isSelected():
+            painter.setPen(QPen(QColor(30, 120, 230), 0, Qt.DashLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(self.rect())
 
 
 # --- comment (sticky note bubble) ------------------------------------------

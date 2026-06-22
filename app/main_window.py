@@ -226,8 +226,11 @@ class MainWindow(QMainWindow):
         self.view.requestCommentEdit.connect(self._edit_comment)
         self.view.requestTextEdit.connect(self._edit_textbox)
         self.view.pageChanged.connect(self._on_page_changed)
+        self.view.requestTool.connect(self._activate_tool)
         # synchronous prompt used when *creating* a new comment / text box
         self.view.new_text_prompt = self._prompt_new_text
+        # synchronous prompt when a drawing tool clicks an existing mark
+        self.view.existing_mark_prompt = self._prompt_existing_mark
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self.view, "Viewer")
@@ -284,7 +287,15 @@ class MainWindow(QMainWindow):
         m_view.addAction("Toggle comment sidebar", lambda: self.comment_dock.setVisible(not self.comment_dock.isVisible()))
 
         m_help = mb.addMenu("&Help")
+        m_help.addAction("User Manual", self._show_help, QKeySequence.HelpContents)
         m_help.addAction("About " + __app_name__, self._show_about)
+
+    def _show_help(self):
+        from .help import HelpWindow
+        # keep a reference so the window isn't garbage-collected
+        self._help_window = HelpWindow(self)
+        self._help_window.show()
+        self._help_window.raise_()
 
     def _show_about(self):
         QMessageBox.about(
@@ -364,6 +375,30 @@ class MainWindow(QMainWindow):
             it.setFlag(QGraphicsItem.ItemIsMovable, select)
             it.setFlag(QGraphicsItem.ItemIsSelectable, select)
         self._update_color_btn()
+
+    def _activate_tool(self, tool):
+        """Programmatically switch tools and reflect it in the toolbar."""
+        for act in self.tool_group.actions():
+            if act.data() == tool:
+                act.setChecked(True)
+        self._set_tool(tool)
+
+    def _prompt_existing_mark(self, ann):
+        """Drawing tool clicked an existing mark: edit / draw-new / cancel."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Existing mark")
+        box.setText("You clicked an existing mark.")
+        box.setInformativeText("Edit this mark, or draw a new one here?")
+        edit_btn = box.addButton("Edit existing", QMessageBox.AcceptRole)
+        new_btn = box.addButton("Draw new", QMessageBox.ActionRole)
+        box.addButton(QMessageBox.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is edit_btn:
+            return "edit"
+        if clicked is new_btn:
+            return "new"
+        return "cancel"
 
     def _active_color_attr(self):
         t = self.view.tool.current

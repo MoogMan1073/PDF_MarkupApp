@@ -32,6 +32,8 @@ class TodoPanel(QWidget):
         self._loading = False
         self._sort_col = None                  # None -> natural (order, page)
         self._sort_order = Qt.AscendingOrder
+        self._done_width_user = None           # honoured if the user resizes col 0
+        self._setting_done_width = False
         self._build_ui()
 
     def _build_ui(self):
@@ -72,6 +74,7 @@ class TodoPanel(QWidget):
         hdr.setSectionsClickable(True)
         hdr.setSortIndicatorShown(True)
         hdr.sectionClicked.connect(self._on_header_clicked)
+        hdr.sectionResized.connect(self._on_section_resized)
         lay.addWidget(self.tree, 1)
 
         self.count_label = QLabel("")
@@ -169,7 +172,27 @@ class TodoPanel(QWidget):
         self.count_label.setText(
             f"{sum(len(v) for v in groups.values())} TODO(s), "
             f"{sum(1 for a in todos if a.todo_done)} done")
+        self._adjust_done_width([k for k in order if k is not None])
         self._loading = False
+
+    # -- "Done" column auto-width (fits group names) -------------------------
+
+    def _on_section_resized(self, idx, _old, new):
+        if idx == 0 and not self._setting_done_width:
+            self._done_width_user = new  # remember a manual adjustment
+
+    def _adjust_done_width(self, group_names):
+        from PySide6.QtGui import QFontMetrics
+        if group_names:
+            fm = QFontMetrics(self.tree.font())
+            text_w = max(fm.horizontalAdvance(str(n)) for n in group_names)
+            min_w = text_w + self.tree.indentation() + 28
+        else:
+            min_w = 44  # checkbox-only width when not grouping
+        target = max(int(min_w), self._done_width_user or 0)
+        self._setting_done_width = True
+        self.tree.setColumnWidth(0, target)
+        self._setting_done_width = False
 
     def _make_row(self, parent, a: Annotation):
         it = QTreeWidgetItem(["", a.text or a.snippet(), str(a.page + 1),

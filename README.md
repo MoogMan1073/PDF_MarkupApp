@@ -38,6 +38,9 @@ _© DSI Innovations, LLC 2026_
 - **Wire export** — `.xlsx` / `.csv`, single-file (`~sheet~` separators, labels-only)
   or one-file-per-sheet (full columns), configurable labels-per-wire, and multiple
   sort/filter modes.
+- **Built-in user manual** — **Help ▸ User Manual** opens a read-only, Obsidian-style
+  vault (the `docs/` folder) with a page list, clickable `#tags`, `[[wikilinks]]` and
+  a graph view. The docs ship next to the app so they travel with every install.
 
 ---
 
@@ -140,12 +143,14 @@ main.py                      QApplication entry
 app/
   main_window.py             Window: Viewer | TODO | Wire Numbers, toolbar, Settings
   config.py                  Persisted settings (QSettings) + defaults
+  help.py                    In-app user-manual (vault) reader
   viewer/                    Continuous-scroll canvas, annotation items, tools, undo
   model/                     Document, annotation model, PDF+SQLite storage
   panels/                    Comment sidebar, TODO tab, Wire Numbers tab
   extraction/                Text extraction, OCR, wire parser/classifier, Claude assist
   export/                    TODO (md/docx) and wire (xlsx/csv) exporters
-tests/                       Unit tests for the extraction/export/storage core
+docs/                        User manual (Obsidian-style markdown vault)
+tests/                       Unit tests for extraction/export/storage/docs
 ```
 
 ## Tests

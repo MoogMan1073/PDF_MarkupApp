@@ -33,6 +33,7 @@ class PdfView(QGraphicsView):
     requestCommentEdit = Signal(object)   # Annotation
     requestTextEdit = Signal(object)      # Annotation
     annotationActivated = Signal(object)  # Annotation (from a panel jump)
+    requestTool = Signal(str)             # ask the window to switch tools
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -62,9 +63,14 @@ class PdfView(QGraphicsView):
         self._draft = None
         self._draft_page = None
         self._draft_start = None
+        self._erasing = False
+        self._erase_macro_open = False
         # synchronous prompt for *new* comment/text-box text, set by the window.
         # signature: prompt(ann, is_textbox) -> (accepted: bool, text, todo)
         self.new_text_prompt = None
+        # prompt when a drawing tool clicks an existing mark, set by the window.
+        # signature: prompt(ann) -> "edit" | "new" | "cancel"
+        self.existing_mark_prompt = None
 
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
@@ -235,6 +241,10 @@ class PdfView(QGraphicsView):
                 int(self.verticalScrollBar().value() - delta.y()))
             event.accept()
             return
+        if self._erasing and (event.buttons() & Qt.LeftButton):
+            self._erase_at(self.mapToScene(event.position().toPoint()))
+            event.accept()
+            return
         if self._draft is not None:
             scene_pt = self.mapToScene(event.position().toPoint())
             self._update_draft(scene_pt)
@@ -248,6 +258,10 @@ class PdfView(QGraphicsView):
             self.setCursor(Qt.OpenHandCursor if self._space_down else Qt.ArrowCursor)
             event.accept()
             return
+        if self._erasing:
+            self._end_erase()
+            event.accept()
+            return
         if self._draft is not None:
             self._finish_draft()
             event.accept()
@@ -255,6 +269,14 @@ class PdfView(QGraphicsView):
         super().mouseReleaseEvent(event)
 
     # -- draft creation ------------------------------------------------------
+
+    def _annotation_item_at(self, scene_pt: QPointF):
+        """Return the topmost existing annotation item under a scene point."""
+        for it in self._scene.items(scene_pt):
+            ann = getattr(it, "ann", None)
+            if ann is not None:
+                return it
+        return None
 
     def _begin_draft(self, scene_pt: QPointF) -> bool:
         pno, page = self._page_at_scene(scene_pt)
@@ -265,6 +287,21 @@ class PdfView(QGraphicsView):
         self._draft_start = (lx, ly)
         author = self.config.your_name if self.config else ""
         tool = self.tool.current
+
+        # Clicking an existing mark with a drawing tool: ask edit vs draw-new.
+        if tool != T.TOOL_ERASER:
+            existing = self._annotation_item_at(scene_pt)
+            if existing is not None:
+                choice = "new"
+                if self.existing_mark_prompt is not None:
+                    choice = self.existing_mark_prompt(existing.ann)
+                if choice == "cancel":
+                    return True
+                if choice == "edit":
+                    self.requestTool.emit(T.TOOL_SELECT)
+                    existing.setSelected(True)
+                    return True
+                # choice == "new": fall through and draw a new mark
 
         if tool == T.TOOL_COMMENT:
             ann = Annotation(page=pno, kind=KIND_COMMENT, rect=(lx, ly, lx + 18, ly + 18),
@@ -295,6 +332,8 @@ class PdfView(QGraphicsView):
                                      opacity=self.tool.highlight_opacity)
             return True
         if tool == T.TOOL_ERASER:
+            self._erasing = True
+            self._erase_macro_open = False
             self._erase_at(scene_pt)
             return True
         return False
@@ -372,12 +411,22 @@ class PdfView(QGraphicsView):
     # -- erasing -------------------------------------------------------------
 
     def _erase_at(self, scene_pt: QPointF):
-        items = self._scene.items(scene_pt)
-        for it in items:
-            ann = getattr(it, "ann", None)
-            if ann is not None:
-                self.push_command(RemoveAnnotationCommand(self, ann, "Erase"))
-                return
+        """Remove the whole mark under the point (live), grouping a drag into a
+        single undo step.  Removal is a true delete via the model, so erased
+        marks are dropped from the saved PDF/sidecar, not merely hidden."""
+        existing = self._annotation_item_at(scene_pt)
+        if existing is None:
+            return
+        if not self._erase_macro_open:
+            self.undo_stack.beginMacro("Erase")
+            self._erase_macro_open = True
+        self.push_command(RemoveAnnotationCommand(self, existing.ann, "Erase"))
+
+    def _end_erase(self):
+        self._erasing = False
+        if self._erase_macro_open:
+            self.undo_stack.endMacro()
+            self._erase_macro_open = False
 
     def delete_selected(self):
         for it in list(self._scene.selectedItems()):
