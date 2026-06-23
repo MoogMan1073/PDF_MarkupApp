@@ -30,6 +30,34 @@ _TYPE_COLORS = {
     TYPE_FIXED: "#b8860b",
     TYPE_JUMPER: "#8a8a8a",
 }
+# table columns that should sort numerically (Label, Sheet, Rung, Idx, Pg, Count)
+_NUMERIC_COLS = {1, 2, 3, 4, 6, 7}
+
+
+class _SortItem(QTableWidgetItem):
+    """Table item that sorts by a numeric key when one is present, so columns
+    like Sheet order 2, 100, 110 (not the string order 100, 110, 2)."""
+
+    def __init__(self, text, key=None):
+        super().__init__(text)
+        self._key = key
+
+    def __lt__(self, other):
+        a = getattr(self, "_key", None)
+        b = getattr(other, "_key", None)
+        if a is not None and b is not None:
+            try:
+                return a < b
+            except TypeError:
+                pass
+        return super().__lt__(other)
+
+
+def _num_key(v):
+    try:
+        return int(v)
+    except (ValueError, TypeError):
+        return None
 
 
 class _ExtractWorker(QThread):
@@ -370,16 +398,11 @@ class WirePanel(QWidget):
                     str(w.page + 1), str(w.count), w.source,
                     "mismatch" if FLAG_SHEET_MISMATCH in w.flags else ""]
             for c, v in enumerate(vals, start=1):
-                it = QTableWidgetItem(v)
+                key = _num_key(v) if c in _NUMERIC_COLS else None
+                it = _SortItem(v, key)
                 if c == 5:  # type col
                     from PySide6.QtGui import QColor
                     it.setForeground(QColor(_TYPE_COLORS.get(w.wire_type, "#000")))
-                # numeric sort for sheet/rung/idx/page/count
-                if c in (2, 3, 4, 6, 7):
-                    try:
-                        it.setData(Qt.EditRole, int(v))
-                    except (ValueError, TypeError):
-                        pass
                 self.table.setItem(r, c, it)
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.setSortingEnabled(True)
