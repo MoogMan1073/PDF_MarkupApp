@@ -161,3 +161,69 @@ def read_wire_region(pix, field_widths: tuple = (3, 2, 1),
         return _extract_json("".join(parts))
     except Exception:
         return []
+
+
+def _vision_call(images, instruction, model=DEFAULT_MODEL, max_tokens=4096,
+                 api_key=None) -> str:
+    """Low-level: send one or more pixmaps + an instruction, return the text
+    reply (or '' on any failure)."""
+    key = resolve_key(api_key)
+    if not (sdk_installed() and key):
+        return ""
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=key)
+        content = []
+        for pix in images:
+            content.append({"type": "image", "source": {
+                "type": "base64", "media_type": "image/png",
+                "data": _pixmap_to_png_b64(pix)}})
+        content.append({"type": "text", "text": instruction})
+        msg = client.messages.create(
+            model=model, max_tokens=max_tokens,
+            messages=[{"role": "user", "content": content}])
+        return "".join(b.text for b in msg.content
+                       if getattr(b, "type", None) == "text").strip()
+    except Exception:
+        return ""
+
+
+def read_text_region(pix, model: str = DEFAULT_MODEL, api_key: Optional[str] = None) -> str:
+    """Read the plain text shown in an image region (e.g. a title-block cell).
+
+    Used as a last-resort fallback for the sheet-number wizard on scanned pages.
+    Returns '' on failure.
+    """
+    return _vision_call(
+        [pix],
+        "Transcribe exactly the text shown in this image, on one line. "
+        "If it is a sheet/drawing number, return just that value. No prose.",
+        model=model, api_key=api_key, max_tokens=256)
+
+
+# default prompt for the crop -> TAG/DESCRIPTION table (mirrors the legacy
+# ChatGPT prompt the user kept in their old tool)
+TAG_PROMPT = (
+    "Each image is a cropped label from an engineering drawing. For EACH image, "
+    "produce a TAG (an abbreviated identifier with no spaces or special "
+    "characters - underscores allowed) and a DESCRIPTION (the full readable "
+    "text). Return ONLY a JSON array of objects "
+    '{"tag": str, "description": str} in image order. No prose, no fences.'
+)
+
+
+def tag_descriptions(pixmaps, extra_prompt: str = "", model: str = DEFAULT_MODEL,
+                     api_key: Optional[str] = None) -> list:
+    """Crop images -> rows of ``{tag, description}`` via Claude vision.
+
+    Returns ``[]`` on failure so the caller can fall back to plain PNG export.
+    """
+    prompt = TAG_PROMPT + (("\n\n" + extra_prompt) if extra_prompt else "")
+    text = _vision_call(list(pixmaps), prompt, model=model, api_key=api_key)
+    rows = _extract_json(text)
+    out = []
+    for r in rows if isinstance(rows, list) else []:
+        if isinstance(r, dict):
+            out.append({"tag": str(r.get("tag", "")).strip(),
+                        "description": str(r.get("description", "")).strip()})
+    return out

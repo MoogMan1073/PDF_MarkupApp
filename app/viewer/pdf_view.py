@@ -34,6 +34,7 @@ class PdfView(QGraphicsView):
     requestTextEdit = Signal(object)      # Annotation
     annotationActivated = Signal(object)  # Annotation (from a panel jump)
     requestTool = Signal(str)             # ask the window to switch tools
+    regionPicked = Signal(int, object)    # page_index, QRectF (page points)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -71,6 +72,11 @@ class PdfView(QGraphicsView):
         # prompt when a drawing tool clicks an existing mark, set by the window.
         # signature: prompt(ann) -> "edit" | "new" | "cancel"
         self.existing_mark_prompt = None
+        # region-pick mode (for the sheet-number / crop wizards)
+        self._region_pick = False
+        self._region_item = None
+        self._region_page = None
+        self._region_start = None
 
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
@@ -206,7 +212,9 @@ class PdfView(QGraphicsView):
         super().keyPressEvent(event)
 
     def cancel_action(self):
-        """Abort an in-progress draw/erase and drop any preview."""
+        """Abort an in-progress draw/erase/region-pick and drop any preview."""
+        if self._region_pick or self._region_item is not None:
+            self.cancel_region_pick()
         if self._draft is not None:
             self._draft = None
             self._clear_preview()
@@ -226,6 +234,61 @@ class PdfView(QGraphicsView):
                 return i, item
         return None, None
 
+    # -- region pick (wizards) ----------------------------------------------
+
+    def start_region_pick(self):
+        """Enter a mode where the next left-drag selects a rectangular region
+        (emitted via ``regionPicked``) instead of creating a mark.  Panning and
+        scrolling stay available for navigation."""
+        self._region_pick = True
+        self.viewport().setCursor(Qt.CrossCursor)
+
+    def cancel_region_pick(self):
+        self._region_pick = False
+        self.viewport().unsetCursor()
+        if self._region_item is not None:
+            self._scene.removeItem(self._region_item)
+            self._region_item = None
+        self._region_page = None
+        self._region_start = None
+
+    def _region_begin(self, scene_pt):
+        from PySide6.QtWidgets import QGraphicsRectItem
+        from PySide6.QtGui import QPen, QColor
+        pno, page = self._page_at_scene(scene_pt)
+        if page is None:
+            return False
+        self._region_page = (pno, page)
+        self._region_start = (scene_pt.x() - page.pos().x(), scene_pt.y() - page.pos().y())
+        self._region_item = QGraphicsRectItem(page)
+        self._region_item.setZValue(60)
+        pen = QPen(QColor(30, 120, 230), 0, Qt.DashLine)
+        self._region_item.setPen(pen)
+        from PySide6.QtGui import QBrush
+        self._region_item.setBrush(QBrush(QColor(30, 120, 230, 40)))
+        return True
+
+    def _region_update(self, scene_pt):
+        if self._region_item is None:
+            return
+        _, page = self._region_page
+        lx, ly = scene_pt.x() - page.pos().x(), scene_pt.y() - page.pos().y()
+        sx, sy = self._region_start
+        self._region_item.setRect(min(sx, lx), min(sy, ly), abs(lx - sx), abs(ly - sy))
+
+    def _region_finish(self):
+        from PySide6.QtCore import QRectF
+        if self._region_item is None:
+            return
+        r = self._region_item.rect()
+        pno = self._region_page[0]
+        self._scene.removeItem(self._region_item)
+        self._region_item = None
+        self._region_pick = False
+        self.viewport().unsetCursor()
+        if r.width() >= 4 and r.height() >= 4:
+            self.regionPicked.emit(pno, QRectF(r))
+
     def mousePressEvent(self, event):
         # pan with middle button or space-drag
         if event.button() == Qt.MiddleButton or (self._space_down and event.button() == Qt.LeftButton):
@@ -234,6 +297,12 @@ class PdfView(QGraphicsView):
             self.setCursor(Qt.ClosedHandCursor)
             event.accept()
             return
+
+        if self._region_pick and event.button() == Qt.LeftButton:
+            scene_pt = self.mapToScene(event.position().toPoint())
+            if self._region_begin(scene_pt):
+                event.accept()
+                return
 
         if event.button() == Qt.LeftButton and not self.tool.is_select():
             scene_pt = self.mapToScene(event.position().toPoint())
@@ -252,6 +321,10 @@ class PdfView(QGraphicsView):
                 int(self.verticalScrollBar().value() - delta.y()))
             event.accept()
             return
+        if self._region_item is not None and (event.buttons() & Qt.LeftButton):
+            self._region_update(self.mapToScene(event.position().toPoint()))
+            event.accept()
+            return
         if self._erasing and (event.buttons() & Qt.LeftButton):
             self._erase_at(self.mapToScene(event.position().toPoint()))
             event.accept()
@@ -267,6 +340,10 @@ class PdfView(QGraphicsView):
         if self._panning:
             self._panning = False
             self.setCursor(Qt.OpenHandCursor if self._space_down else Qt.ArrowCursor)
+            event.accept()
+            return
+        if self._region_item is not None:
+            self._region_finish()
             event.accept()
             return
         if self._erasing:

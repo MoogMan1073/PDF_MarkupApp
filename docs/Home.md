@@ -21,6 +21,7 @@ to see related pages.
 - [[TODO]] — turn comments into a checkable task list
 - [[Wire Numbers]] — extract and classify wire labels
 - [[Wire Export]] — produce label files for the printer
+- [[PDF Tools]] — split, combine, insert, swap, delete, rotate, convert, crop
 
 ## Reference
 

@@ -16,13 +16,17 @@ datas = [
     (os.path.join(ROOT, "app", "assets"), os.path.join("app", "assets")),
 ]
 
-# Optionally bundle the Anthropic SDK (AI assist) only when it's installed,
-# so builds without it still succeed and the app degrades gracefully.
+# Optionally bundle heavier optional deps only when installed, so builds without
+# them still succeed and the app degrades gracefully.
 hiddenimports = []
 try:
-    import anthropic  # noqa: F401
     from PyInstaller.utils.hooks import collect_submodules
-    hiddenimports += collect_submodules("anthropic")
+    for _opt in ("anthropic", "pdf2docx"):
+        try:
+            __import__(_opt)
+            hiddenimports += collect_submodules(_opt)
+        except Exception:
+            pass
 except Exception:
     pass
 

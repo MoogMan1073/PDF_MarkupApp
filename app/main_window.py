@@ -26,6 +26,8 @@ from .extraction import claude_api
 from .panels.comment_panel import CommentPanel
 from .panels.todo_panel import TodoPanel
 from .panels.wire_panel import WirePanel
+from .panels.tools_panel import ToolsPanel
+from .panels.nav_panel import NavPanel
 
 
 # --- comment / textbox text editor -----------------------------------------
@@ -309,13 +311,24 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.view, "Viewer")
         self.todo_panel = TodoPanel()
         self.wire_panel = WirePanel()
+        self.tools_panel = ToolsPanel(self)
         self.tabs.addTab(self.todo_panel, "TODO")
         self.tabs.addTab(self.wire_panel, "Wire Numbers")
+        self.tabs.addTab(self.tools_panel, "PDF Tools")
         self.setCentralWidget(self.tabs)
 
         self.todo_panel.activated.connect(self._jump_to)
 
         self._progress("Building the comment & TODO panels…", 85)
+        # navigation dock (pages + bookmarks) on the left
+        self.nav_panel = NavPanel()
+        self.nav_panel.pageActivated.connect(self.view.go_to_page)
+        nav_dock = QDockWidget("Navigation", self)
+        nav_dock.setWidget(self.nav_panel)
+        nav_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        self.addDockWidget(Qt.LeftDockWidgetArea, nav_dock)
+        self.nav_dock = nav_dock
+
         # comment dock
         self.comment_panel = CommentPanel()
         self.comment_panel.activated.connect(self._jump_to)
@@ -360,6 +373,20 @@ class MainWindow(QMainWindow):
         m_view.addAction("Zoom out", self.view.zoom_out, QKeySequence.ZoomOut)
         m_view.addSeparator()
         m_view.addAction("Toggle comment sidebar", lambda: self.comment_dock.setVisible(not self.comment_dock.isVisible()))
+        m_view.addAction("Toggle navigation panel", lambda: self.nav_dock.setVisible(not self.nav_dock.isVisible()))
+
+        m_tools = mb.addMenu("&Tools")
+        m_tools.addAction("Split into pages…", lambda: self.tools_panel.open_split_pages())
+        m_tools.addAction("Split by sheet number… (wizard)", lambda: self.tools_panel.start_sheet_wizard())
+        m_tools.addSeparator()
+        m_tools.addAction("Combine PDFs…", lambda: self.tools_panel.open_combine())
+        m_tools.addAction("Insert PDF…", lambda: self.tools_panel.open_insert())
+        m_tools.addAction("Swap a page…", lambda: self.tools_panel.open_swap())
+        m_tools.addAction("Delete pages…", lambda: self.tools_panel.open_delete())
+        m_tools.addAction("Rotate…", lambda: self.tools_panel.open_rotate())
+        m_tools.addSeparator()
+        m_tools.addAction("PDF → Word…", lambda: self.tools_panel.open_convert())
+        m_tools.addAction("Crop / extract… (wizard)", lambda: self.tools_panel.start_crop_wizard())
 
         m_help = mb.addMenu("&Help")
         m_help.addAction("User Manual", self._show_help, QKeySequence.HelpContents)
@@ -519,6 +546,7 @@ class MainWindow(QMainWindow):
         self.comment_panel.set_store(doc.store, self.config)
         self.todo_panel.set_store(doc.store, self.config)
         self.wire_panel.set_document(doc, self.config)
+        self.nav_panel.set_document(doc)
         self.page_spin.setRange(1, max(1, doc.page_count))
         self.page_total.setText(f" / {doc.page_count}")
         self.setWindowTitle(f"{__app_name__} — {os.path.basename(path)}")
