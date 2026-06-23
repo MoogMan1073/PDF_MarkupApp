@@ -35,6 +35,7 @@ class PdfView(QGraphicsView):
     annotationActivated = Signal(object)  # Annotation (from a panel jump)
     requestTool = Signal(str)             # ask the window to switch tools
     regionPicked = Signal(int, object)    # page_index, QRectF (page points)
+    requestOpen = Signal(str)             # a PDF was dropped onto the canvas
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -46,6 +47,7 @@ class PdfView(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
         self.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+        self.setAcceptDrops(True)         # open a dropped PDF
 
         self.document = None
         self.store: Optional[AnnotationStore] = None
@@ -200,6 +202,37 @@ class PdfView(QGraphicsView):
             event.accept()
         else:
             super().wheelEvent(event)
+
+    # -- drag & drop (open a dropped PDF) ------------------------------------
+
+    @staticmethod
+    def _dropped_pdf(event) -> str:
+        md = event.mimeData()
+        if md is not None and md.hasUrls():
+            for u in md.urls():
+                if u.isLocalFile() and u.toLocalFile().lower().endswith(".pdf"):
+                    return u.toLocalFile()
+        return ""
+
+    def dragEnterEvent(self, event):
+        if self._dropped_pdf(event):
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if self._dropped_pdf(event):
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        path = self._dropped_pdf(event)
+        if path:
+            self.requestOpen.emit(path)
+            event.acceptProposedAction()
+        else:
+            super().dropEvent(event)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Space:

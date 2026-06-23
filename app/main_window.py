@@ -302,6 +302,7 @@ class MainWindow(QMainWindow):
         self.view.requestTextEdit.connect(self._edit_textbox)
         self.view.pageChanged.connect(self._on_page_changed)
         self.view.requestTool.connect(self._activate_tool)
+        self.view.requestOpen.connect(self.load_document)   # drag/drop a PDF
         # synchronous prompt used when *creating* a new comment / text box
         self.view.new_text_prompt = self._prompt_new_text
         # synchronous prompt when a drawing tool clicks an existing mark
