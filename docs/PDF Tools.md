@@ -4,19 +4,46 @@ tags: [tools, pdf, basics]
 
 # PDF Tools
 
-The **PDF Tools** tab (and the **Tools** menu) bundle common PDF-set chores.
-Every operation runs in the background with a progress bar and never overwrites
-your input — you always choose an output file or folder.
+The **PDF Tools** tab is a visual workspace (inspired by iLovePDF): a **file
+bar** across the top, an **operation rail** on the left, a **thumbnail grid** of
+every page in the centre, and a per-operation **options panel** on the right.
+The **Tools** menu jumps straight to any operation. Every operation runs in the
+background with a progress bar and never overwrites your input — you always
+choose an output file or folder.
 
-## Organize
+## Load a PDF
 
-- **Split into pages** — one file per page, named by page number.
+**Drag a PDF onto the workspace** (or click **Open PDF…**) to load it. When you
+open a drawing in the [[Viewer]], the tools workspace adopts it automatically,
+so the thumbnails are ready the moment you switch tabs.
+
+## Pick pages visually
+
+The four page operations are driven by **clicking page thumbnails** instead of
+typing page numbers:
+
+- **Click** a thumbnail to select it; **Shift-click** for a run; **Ctrl-click**
+  to add/remove individual pages. **Select all** / **Clear** are one click away.
+- The selection stays two-way synced with the **Pages** box, so you can still
+  type a spec like `1,3,5-7` and watch the thumbnails light up (orange border).
+
+Operations:
+
+- **Extract pages** — pull the selected pages into a new PDF, either **merged
+  into one file** or **one file per page**.
+- **Split into ranges** — define page ranges (type *from*/*to* and **Add range**,
+  or **From selection**); each range becomes its own PDF, or **merge all ranges**
+  into one.
+- **Delete pages** — select the pages to remove; the rest are saved to a new PDF.
+- **Rotate** — select pages (none selected = all) and turn them with **↺ / ↻**;
+  the thumbnails preview the rotation live before you **Apply**.
+
+## Combine & arrange (multiple files)
+
 - **Combine PDFs** — merge several PDFs into one; add files and **drag to
   reorder**, or add a whole folder (sorted by the number in each filename).
 - **Insert PDF** — drop one PDF into another before a chosen page.
 - **Swap a page** — replace a single page with a one-page PDF.
-- **Delete pages** — remove pages by range, e.g. `1,3,5-7`.
-- **Rotate** — rotate all pages, or a subset (`2,4-6`), by 90/180/270°.
 
 ## Sheet-number split (wizard)
 

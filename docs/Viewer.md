@@ -7,6 +7,12 @@ tags: [viewer]
 The Viewer renders every page in one continuous vertical scroll, like the
 Chrome PDF viewer. Pages render lazily and sharpen as you zoom in.
 
+## Open a PDF
+
+Use **File ▸ Open PDF…**, pass a file on the command line, or simply **drag a
+PDF from your file manager and drop it onto the window** — it opens straight
+into the Viewer.
+
 ## Navigate
 
 | Action | How |

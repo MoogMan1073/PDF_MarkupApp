@@ -26,7 +26,7 @@ from .extraction import claude_api
 from .panels.comment_panel import CommentPanel
 from .panels.todo_panel import TodoPanel
 from .panels.wire_panel import WirePanel
-from .panels.tools_panel import ToolsPanel
+from .panels.tools_panel import ToolsPanel, pdf_path_from_mime
 from .panels.nav_panel import NavPanel
 
 
@@ -291,6 +291,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(__app_name__)
         self.setWindowIcon(app_icon())
         self.resize(1320, 880)
+        self.setAcceptDrops(True)   # drop a PDF anywhere to open it
         self.config = AppConfig()
         self.document = None
 
@@ -376,14 +377,16 @@ class MainWindow(QMainWindow):
         m_view.addAction("Toggle navigation panel", lambda: self.nav_dock.setVisible(not self.nav_dock.isVisible()))
 
         m_tools = mb.addMenu("&Tools")
-        m_tools.addAction("Split into pages…", lambda: self.tools_panel.open_split_pages())
+        m_tools.addAction("Extract pages (visual)…", lambda: self.tools_panel.show_operation("extract"))
+        m_tools.addAction("Split into ranges…", lambda: self.tools_panel.show_operation("split"))
+        m_tools.addAction("Delete pages (visual)…", lambda: self.tools_panel.show_operation("delete"))
+        m_tools.addAction("Rotate pages (visual)…", lambda: self.tools_panel.show_operation("rotate"))
+        m_tools.addSeparator()
         m_tools.addAction("Split by sheet number… (wizard)", lambda: self.tools_panel.start_sheet_wizard())
         m_tools.addSeparator()
         m_tools.addAction("Combine PDFs…", lambda: self.tools_panel.open_combine())
         m_tools.addAction("Insert PDF…", lambda: self.tools_panel.open_insert())
         m_tools.addAction("Swap a page…", lambda: self.tools_panel.open_swap())
-        m_tools.addAction("Delete pages…", lambda: self.tools_panel.open_delete())
-        m_tools.addAction("Rotate…", lambda: self.tools_panel.open_rotate())
         m_tools.addSeparator()
         m_tools.addAction("PDF → Word…", lambda: self.tools_panel.open_convert())
         m_tools.addAction("Crop / extract… (wizard)", lambda: self.tools_panel.start_crop_wizard())
@@ -529,6 +532,25 @@ class MainWindow(QMainWindow):
         if path:
             self.load_document(path)
 
+    # -- drag & drop (open a dropped PDF in the viewer) ----------------------
+
+    def dragEnterEvent(self, event):
+        if pdf_path_from_mime(event.mimeData()):
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event):
+        if pdf_path_from_mime(event.mimeData()):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        # if the drop is over the PDF Tools tab, let that panel handle it
+        if self.tabs.currentWidget() is self.tools_panel:
+            return
+        path = pdf_path_from_mime(event.mimeData())
+        if path:
+            self.load_document(path)
+            event.acceptProposedAction()
+
     def load_document(self, path):
         if self.document is not None:
             try:
@@ -547,6 +569,7 @@ class MainWindow(QMainWindow):
         self.todo_panel.set_store(doc.store, self.config)
         self.wire_panel.set_document(doc, self.config)
         self.nav_panel.set_document(doc)
+        self.tools_panel.set_default_pdf(path)
         self.page_spin.setRange(1, max(1, doc.page_count))
         self.page_total.setText(f" / {doc.page_count}")
         self.setWindowTitle(f"{__app_name__} — {os.path.basename(path)}")
@@ -656,6 +679,10 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         try:
             self.wire_panel.shutdown()   # stop any running extraction thread
+        except Exception:
+            pass
+        try:
+            self.tools_panel.grid.close_doc()
         except Exception:
             pass
         if self.document is not None:

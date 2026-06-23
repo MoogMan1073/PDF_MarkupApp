@@ -29,6 +29,13 @@ class TestParsers(unittest.TestCase):
         self.assertEqual(parse_page_ranges("3-1"), [0, 1, 2])           # reversed
         self.assertEqual(parse_page_ranges("1,2,9", max_page=5), [0, 1])  # clamp
 
+    def test_pages_to_spec(self):
+        self.assertEqual(ops.pages_to_spec([0, 2, 4, 5, 6]), "1,3,5-7")
+        self.assertEqual(ops.pages_to_spec([]), "")
+        self.assertEqual(ops.pages_to_spec([3, 3, 1, 2]), "2-4")  # dedupe + merge
+        # round-trips with parse_page_ranges
+        self.assertEqual(parse_page_ranges(ops.pages_to_spec([0, 1, 4])), [0, 1, 4])
+
     def test_sheet_from_text(self):
         self.assertEqual(sheet_from_text("SHEET 300 OF 420", SHEET_EXACT), "SHEET 300 OF 420")
         self.assertEqual(sheet_from_text("SHEET 300 OF 420", SHEET_FIRST_NUMBER), "300")
@@ -102,6 +109,59 @@ class TestPdfOps(unittest.TestCase):
         pngs = ops.crop_regions_to_png(self.src, os.path.join(self.tmp, "cr"),
                                        {0: [(410, 735, 600, 760)]})
         self.assertTrue(pngs and os.path.exists(pngs[0]))
+
+    def test_extract_pages_merge(self):
+        out = os.path.join(self.tmp, "picked.pdf")
+        res = ops.extract_pages(self.src, out, [0, 2, 4], merge=True)
+        self.assertEqual(res, [out])
+        self.assertEqual(fitz.open(out).page_count, 3)
+
+    def test_extract_pages_dedupes_and_orders(self):
+        out = os.path.join(self.tmp, "picked2.pdf")
+        ops.extract_pages(self.src, out, [4, 4, 0], merge=True)
+        d = fitz.open(out)
+        # page order preserved as given (4 then 0), duplicates removed
+        self.assertEqual(d.page_count, 2)
+        self.assertIn("BODY 5", d[0].get_text())
+        self.assertIn("BODY 1", d[1].get_text())
+
+    def test_extract_pages_separate_files(self):
+        outdir = os.path.join(self.tmp, "ex")
+        res = ops.extract_pages(self.src, outdir, [1, 3], merge=False)
+        self.assertEqual(len(res), 2)
+        self.assertTrue(all(fitz.open(p).page_count == 1 for p in res))
+
+    def test_extract_pages_empty_raises(self):
+        with self.assertRaises(ValueError):
+            ops.extract_pages(self.src, os.path.join(self.tmp, "z.pdf"), [])
+
+    def test_split_ranges_files(self):
+        outdir = os.path.join(self.tmp, "rg")
+        res = ops.split_ranges(self.src, outdir, [(0, 1), (2, 4)], merge=False)
+        self.assertEqual(len(res), 2)
+        counts = sorted(fitz.open(p).page_count for p in res)
+        self.assertEqual(counts, [2, 3])
+
+    def test_split_ranges_merge(self):
+        out = os.path.join(self.tmp, "merged.pdf")
+        res = ops.split_ranges(self.src, out, [(0, 0), (3, 4)], merge=True)
+        self.assertEqual(res, [out])
+        self.assertEqual(fitz.open(out).page_count, 3)
+
+    def test_rotate_pdf_map(self):
+        out = os.path.join(self.tmp, "rmap.pdf")
+        ops.rotate_pdf_map(self.src, out, {0: 90, 2: 270})
+        d = fitz.open(out)
+        self.assertEqual(d[0].rotation, 90)
+        self.assertEqual(d[1].rotation, 0)
+        self.assertEqual(d[2].rotation, 270)
+
+    def test_rotate_pdf_map_adds_to_existing(self):
+        rot = os.path.join(self.tmp, "pre.pdf")
+        d = fitz.open(); p = d.new_page(); p.set_rotation(90); d.save(rot); d.close()
+        out = os.path.join(self.tmp, "pre2.pdf")
+        ops.rotate_pdf_map(rot, out, {0: 90})
+        self.assertEqual(fitz.open(out)[0].rotation, 180)
 
     def test_rotated_page_region_extraction(self):
         # box drawn in the viewer's visual coords must read correctly on a

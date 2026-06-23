@@ -38,10 +38,13 @@ _© DSI Innovations, LLC 2026_
 - **Wire export** — `.xlsx` / `.csv`, single-file (`~sheet~` separators, labels-only)
   or one-file-per-sheet (full columns), configurable labels-per-wire, and multiple
   sort/filter modes.
-- **PDF tools** — a **PDF Tools** tab (and Tools menu) to split, combine, insert,
-  swap, delete, rotate, convert to Word, and crop regions to PNG — plus a guided
+- **PDF tools** — an iLovePDF-style **PDF Tools** workspace (thumbnail grid +
+  operation rail) where you **pick pages by clicking thumbnails** to extract,
+  split into ranges, delete, or rotate (with a live rotation preview) — plus
+  combine, insert, swap, convert to Word, and crop regions to PNG. A guided
   **sheet-number split** wizard (box the title-block number; works on rotated and
-  scanned sets) and an optional Claude-powered crop → TAG/DESCRIPTION table.
+  scanned sets) and an optional Claude-powered crop → TAG/DESCRIPTION table round
+  it out. **Drag a PDF onto the window** to open it in the viewer or the tools.
 - **Navigation dock** — page thumbnails + PDF bookmarks for jumping around a set.
 - **Built-in user manual** — **Help ▸ User Manual** opens a read-only, Obsidian-style
   vault (the `docs/` folder) with a page list, clickable `#tags`, `[[wikilinks]]` and

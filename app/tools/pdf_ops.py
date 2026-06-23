@@ -55,6 +55,27 @@ def parse_page_ranges(spec: str, max_page: Optional[int] = None) -> list:
     return pages
 
 
+def pages_to_spec(pages) -> str:
+    """Compact a list of 0-based page indices into a 1-based spec ("1,3,5-7").
+
+    The inverse of :func:`parse_page_ranges`; used to keep a visual selection
+    and its page-spec text box in sync.
+    """
+    nums = sorted({int(p) + 1 for p in pages if int(p) >= 0})
+    if not nums:
+        return ""
+    parts = []
+    start = prev = nums[0]
+    for n in nums[1:]:
+        if n == prev + 1:
+            prev = n
+            continue
+        parts.append(str(start) if start == prev else f"{start}-{prev}")
+        start = prev = n
+    parts.append(str(start) if start == prev else f"{start}-{prev}")
+    return ",".join(parts)
+
+
 # --- sheet-number parsing ---------------------------------------------------
 
 
@@ -219,6 +240,124 @@ def split_pdf(src: str, out_dir: str, naming: str = "page",
         doc.close()
 
 
+# --- extract / range split (visual page selection) --------------------------
+
+
+def extract_pages(src: str, out: str, pages, merge: bool = True,
+                  progress: Optional[Callable] = None,
+                  cancel: Optional[Callable] = None) -> list:
+    """Pull a chosen set of pages out of a PDF.
+
+    ``pages`` is an iterable of 0-based page indices (order preserved, de-duped).
+    With ``merge=True`` they are written into a single PDF at ``out`` (a file
+    path).  With ``merge=False`` ``out`` is a folder and each page is written to
+    its own ``<base>-pageNN.pdf``.  Returns the list of written paths.
+    """
+    seen = set()
+    ordered = []
+    for p in pages:
+        p = int(p)
+        if p not in seen:
+            seen.add(p)
+            ordered.append(p)
+    if not ordered:
+        raise ValueError("No pages selected.")
+    doc = fitz.open(src)
+    try:
+        n = doc.page_count
+        ordered = [p for p in ordered if 0 <= p < n]
+        if not ordered:
+            raise ValueError("No valid pages selected.")
+        base = _base_name(src)
+        width = max(2, len(str(n)))
+        total = len(ordered)
+        if merge:
+            picked = fitz.open()
+            for i, p in enumerate(ordered):
+                if cancel is not None and cancel():
+                    break
+                if progress is not None:
+                    progress(i + 1, total)
+                picked.insert_pdf(doc, from_page=p, to_page=p)
+            picked.save(out)
+            picked.close()
+            return [out]
+        os.makedirs(out, exist_ok=True)
+        written: list = []
+        for i, p in enumerate(ordered):
+            if cancel is not None and cancel():
+                break
+            if progress is not None:
+                progress(i + 1, total)
+            one = fitz.open()
+            one.insert_pdf(doc, from_page=p, to_page=p)
+            path = os.path.join(out, f"{base}-page{(p + 1):0{width}d}.pdf")
+            one.save(path)
+            one.close()
+            written.append(path)
+        return written
+    finally:
+        doc.close()
+
+
+def split_ranges(src: str, out: str, ranges, merge: bool = False,
+                 progress: Optional[Callable] = None,
+                 cancel: Optional[Callable] = None) -> list:
+    """Split a PDF into the given page ranges.
+
+    ``ranges`` is an iterable of ``(start, end)`` 0-based inclusive tuples.  Each
+    range becomes one file ``<base>-range<a>-<b>.pdf`` in the ``out`` folder;
+    with ``merge=True`` every range is concatenated into the single PDF ``out``
+    (a file path).  Returns the written paths.
+    """
+    norm = []
+    for a, b in ranges:
+        a, b = int(a), int(b)
+        if a > b:
+            a, b = b, a
+        norm.append((a, b))
+    if not norm:
+        raise ValueError("No ranges defined.")
+    doc = fitz.open(src)
+    try:
+        n = doc.page_count
+        norm = [(max(0, a), min(n - 1, b)) for a, b in norm if a < n and b >= 0]
+        if not norm:
+            raise ValueError("No valid ranges.")
+        base = _base_name(src)
+        width = max(2, len(str(n)))
+        total = len(norm)
+        if merge:
+            merged = fitz.open()
+            for i, (a, b) in enumerate(norm):
+                if cancel is not None and cancel():
+                    break
+                if progress is not None:
+                    progress(i + 1, total)
+                merged.insert_pdf(doc, from_page=a, to_page=b)
+            merged.save(out)
+            merged.close()
+            return [out]
+        os.makedirs(out, exist_ok=True)
+        written: list = []
+        for i, (a, b) in enumerate(norm):
+            if cancel is not None and cancel():
+                break
+            if progress is not None:
+                progress(i + 1, total)
+            part = fitz.open()
+            part.insert_pdf(doc, from_page=a, to_page=b)
+            name = (f"{base}-range{(a + 1):0{width}d}-{(b + 1):0{width}d}.pdf"
+                    if b > a else f"{base}-page{(a + 1):0{width}d}.pdf")
+            path = os.path.join(out, name)
+            part.save(path)
+            part.close()
+            written.append(path)
+        return written
+    finally:
+        doc.close()
+
+
 # --- combine ----------------------------------------------------------------
 
 
@@ -320,6 +459,33 @@ def rotate_pdf(src: str, out_path: str, angle: int, pages=None) -> str:
             if 0 <= i < doc.page_count:
                 p = doc[i]
                 p.set_rotation((p.rotation + int(angle)) % 360)
+        doc.save(out_path)
+        return out_path
+    finally:
+        doc.close()
+
+
+def rotate_pdf_map(src: str, out_path: str, page_angles: dict,
+                   progress: Optional[Callable] = None,
+                   cancel: Optional[Callable] = None) -> str:
+    """Rotate pages by individual deltas.
+
+    ``page_angles`` maps a 0-based page index to a delta (added to the page's
+    current rotation).  Pages absent from the map are left untouched.  Used by
+    the visual rotate tool, where each page can carry its own ↺/↻ preview.
+    """
+    doc = fitz.open(src)
+    try:
+        items = [(int(i), int(a)) for i, a in page_angles.items()
+                 if a and 0 <= int(i) < doc.page_count]
+        total = max(1, len(items))
+        for done, (i, a) in enumerate(items, 1):
+            if cancel is not None and cancel():
+                break
+            if progress is not None:
+                progress(done, total)
+            p = doc[i]
+            p.set_rotation((p.rotation + a) % 360)
         doc.save(out_path)
         return out_path
     finally:
