@@ -80,6 +80,26 @@ class PdfView(QGraphicsView):
         self._region_page = None
         self._region_start = None
 
+        # text selection (Chrome-style) in Select mode
+        self._text_selecting = False
+        self._text_sel_page = None       # (pno, page_item)
+        self._text_sel_start = None      # (lx, ly) in page points
+        self._text_words = []            # cached words for the page being selected
+        self._text_sel_items = []        # highlight QGraphicsRectItems
+        self._selected_text = ""
+
+        # in-document search (Ctrl+F)
+        self._search_bar = None
+        self._search_matches = []        # [(pno, fitz.Rect)]
+        self._search_index = -1
+        self._search_items = []          # highlight QGraphicsRectItems
+
+        # Ctrl+C copies the current text selection (only when the view has focus)
+        copy_sc = QShortcut(QKeySequence.Copy, self)
+        copy_sc.setContext(Qt.WidgetWithChildrenShortcut)
+        copy_sc.activated.connect(self.copy_selection)
+        self._copy_sc = copy_sc
+
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
         self._render_timer.setInterval(60)
@@ -106,6 +126,15 @@ class PdfView(QGraphicsView):
         self._page_items = []
         self._item_by_ann = {}
         self.undo_stack.clear()
+        # scene.clear() destroyed any selection/search overlays — reset trackers
+        self._text_sel_items = []
+        self._selected_text = ""
+        self._text_selecting = False
+        self._search_items = []
+        self._search_matches = []
+        self._search_index = -1
+        if self._search_bar is not None:
+            self._search_bar.hide()
 
         top = 0.0
         max_w = 0.0
@@ -246,6 +275,9 @@ class PdfView(QGraphicsView):
 
     def cancel_action(self):
         """Abort an in-progress draw/erase/region-pick and drop any preview."""
+        if self._search_bar is not None and self._search_bar.isVisible():
+            self.hide_search()
+            return
         if self._region_pick or self._region_item is not None:
             self.cancel_region_pick()
         if self._draft is not None:
@@ -253,6 +285,7 @@ class PdfView(QGraphicsView):
             self._clear_preview()
         if self._erasing:
             self._end_erase()
+        self._clear_text_selection()
         self._scene.clearSelection()
 
     def keyReleaseEvent(self, event):
@@ -342,6 +375,22 @@ class PdfView(QGraphicsView):
             if self._begin_draft(scene_pt):
                 event.accept()
                 return
+
+        # Select tool: drag on empty page area selects text (Chrome-style);
+        # clicking an existing mark falls through to Qt for move/select.
+        if event.button() == Qt.LeftButton and self.tool.is_select():
+            scene_pt = self.mapToScene(event.position().toPoint())
+            if self._annotation_item_at(scene_pt) is None:
+                pno, page = self._page_at_scene(scene_pt)
+                if page is not None:
+                    self._scene.clearSelection()
+                    lx = scene_pt.x() - page.pos().x()
+                    ly = scene_pt.y() - page.pos().y()
+                    self._begin_text_selection(pno, page, lx, ly)
+                    event.accept()
+                    return
+            else:
+                self._clear_text_selection()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -352,6 +401,13 @@ class PdfView(QGraphicsView):
                 int(self.horizontalScrollBar().value() - delta.x()))
             self.verticalScrollBar().setValue(
                 int(self.verticalScrollBar().value() - delta.y()))
+            event.accept()
+            return
+        if self._text_selecting and (event.buttons() & Qt.LeftButton):
+            scene_pt = self.mapToScene(event.position().toPoint())
+            _, page = self._text_sel_page
+            lx, ly = scene_pt.x() - page.pos().x(), scene_pt.y() - page.pos().y()
+            self._update_text_selection(lx, ly)
             event.accept()
             return
         if self._region_item is not None and (event.buttons() & Qt.LeftButton):
@@ -373,6 +429,10 @@ class PdfView(QGraphicsView):
         if self._panning:
             self._panning = False
             self.setCursor(Qt.OpenHandCursor if self._space_down else Qt.ArrowCursor)
+            event.accept()
+            return
+        if self._text_selecting:
+            self._text_selecting = False   # keep the highlight + copied text
             event.accept()
             return
         if self._region_item is not None:
@@ -640,3 +700,202 @@ class PdfView(QGraphicsView):
             item.setSelected(True)
             self._flash_item = item
             QTimer.singleShot(700, lambda: item.setSelected(False) if item else None)
+
+    # -- text selection (Chrome-style, in Select mode) ----------------------
+
+    def _begin_text_selection(self, pno, page, lx, ly):
+        self._clear_text_selection()
+        self._text_selecting = True
+        self._text_sel_page = (pno, page)
+        self._text_sel_start = (lx, ly)
+        try:
+            self._text_words = self.document.fitz_doc[pno].get_text("words")
+        except Exception:
+            self._text_words = []
+
+    @staticmethod
+    def _word_index_at(words, lx, ly):
+        """Index of the word under (lx, ly), else the nearest word; -1 if none."""
+        if not words:
+            return -1
+        for i, w in enumerate(words):
+            if w[0] <= lx <= w[2] and w[1] <= ly <= w[3]:
+                return i
+        best, bi = None, -1
+        for i, w in enumerate(words):
+            cx, cy = (w[0] + w[2]) / 2, (w[1] + w[3]) / 2
+            d = (cx - lx) ** 2 + (cy - ly) ** 2
+            if best is None or d < best:
+                best, bi = d, i
+        return bi
+
+    def _update_text_selection(self, lx, ly):
+        words = self._text_words
+        if not words or self._text_sel_start is None:
+            return
+        sx, sy = self._text_sel_start
+        i0 = self._word_index_at(words, sx, sy)
+        i1 = self._word_index_at(words, lx, ly)
+        if i0 < 0 or i1 < 0:
+            return
+        lo, hi = (i0, i1) if i0 <= i1 else (i1, i0)
+        selected = words[lo:hi + 1]
+        self._draw_text_selection(selected)
+        self._selected_text = _words_to_text(selected)
+
+    def _draw_text_selection(self, selected):
+        from PySide6.QtWidgets import QGraphicsRectItem
+        from PySide6.QtGui import QPen
+        self._remove_sel_items()
+        _, page = self._text_sel_page
+        brush = QBrush(QColor(70, 130, 230, 80))
+        for w in selected:
+            r = QGraphicsRectItem(w[0], w[1], w[2] - w[0], w[3] - w[1], page)
+            r.setBrush(brush)
+            r.setPen(QPen(Qt.NoPen))
+            r.setZValue(5)  # above the page bitmap (1), below marks (10)
+            self._text_sel_items.append(r)
+
+    def _remove_sel_items(self):
+        for it in self._text_sel_items:
+            self._scene.removeItem(it)
+        self._text_sel_items = []
+
+    def _clear_text_selection(self):
+        self._remove_sel_items()
+        self._selected_text = ""
+        self._text_selecting = False
+        self._text_sel_page = None
+        self._text_sel_start = None
+
+    def copy_selection(self):
+        """Copy the current text selection to the clipboard (Ctrl+C)."""
+        if self._selected_text:
+            from PySide6.QtWidgets import QApplication
+            QApplication.clipboard().setText(self._selected_text)
+            self.selectionInfo.emit(f"Copied {len(self._selected_text)} characters")
+
+    # -- in-document search (Ctrl+F) ----------------------------------------
+
+    def show_search(self):
+        if self._search_bar is None:
+            from .search_bar import SearchBar
+            self._search_bar = SearchBar(self.viewport())
+            self._search_bar.queryChanged.connect(self.run_search)
+            self._search_bar.nextRequested.connect(self.search_next)
+            self._search_bar.prevRequested.connect(self.search_prev)
+            self._search_bar.closed.connect(self.hide_search)
+        self._position_search_bar()
+        self._search_bar.show()
+        self._search_bar.raise_()
+        self._search_bar.focus_input()
+
+    def hide_search(self):
+        self._clear_search_highlights()
+        self._search_matches = []
+        self._search_index = -1
+        if self._search_bar is not None:
+            self._search_bar.hide()
+        self.setFocus()
+
+    def _position_search_bar(self):
+        if self._search_bar is None:
+            return
+        bw = self._search_bar.width()
+        self._search_bar.move(max(8, self.viewport().width() - bw - 16), 12)
+
+    def run_search(self, query):
+        self._clear_search_highlights()
+        self._search_matches = []
+        self._search_index = -1
+        q = (query or "").strip()
+        if q and self.document is not None:
+            for pno in range(self.document.page_count):
+                try:
+                    rects = self.document.fitz_doc[pno].search_for(q)
+                except Exception:
+                    rects = []
+                for r in rects:
+                    self._search_matches.append((pno, r))
+        if self._search_matches:
+            self._draw_search_highlights()
+            self._search_index = 0
+            self._focus_current_match()
+        self._update_search_count()
+
+    def search_next(self):
+        if not self._search_matches:
+            return
+        self._search_index = (self._search_index + 1) % len(self._search_matches)
+        self._focus_current_match()
+        self._update_search_count()
+
+    def search_prev(self):
+        if not self._search_matches:
+            return
+        self._search_index = (self._search_index - 1) % len(self._search_matches)
+        self._focus_current_match()
+        self._update_search_count()
+
+    def _draw_search_highlights(self):
+        from PySide6.QtWidgets import QGraphicsRectItem
+        from PySide6.QtGui import QPen
+        self._clear_search_highlights()
+        for pno, r in self._search_matches:
+            if pno < 0 or pno >= len(self._page_items):
+                self._search_items.append(None)
+                continue
+            page = self._page_items[pno]
+            item = QGraphicsRectItem(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0, page)
+            item.setBrush(QBrush(QColor(255, 213, 0, 90)))
+            item.setPen(QPen(Qt.NoPen))
+            item.setZValue(6)
+            self._search_items.append(item)
+
+    def _clear_search_highlights(self):
+        for it in self._search_items:
+            if it is not None:
+                self._scene.removeItem(it)
+        self._search_items = []
+
+    def _focus_current_match(self):
+        if not (0 <= self._search_index < len(self._search_matches)):
+            return
+        cur = QBrush(QColor(232, 119, 46, 170))   # orange accent
+        other = QBrush(QColor(255, 213, 0, 90))    # yellow
+        for i, it in enumerate(self._search_items):
+            if it is not None:
+                it.setBrush(cur if i == self._search_index else other)
+        pno, r = self._search_matches[self._search_index]
+        if 0 <= pno < len(self._page_items):
+            page = self._page_items[pno]
+            self.centerOn(page.pos().x() + (r.x0 + r.x1) / 2,
+                          page.scene_top() + (r.y0 + r.y1) / 2)
+            self._render_timer.start()
+
+    def _update_search_count(self):
+        if self._search_bar is not None:
+            n = len(self._search_matches)
+            i = self._search_index + 1 if n else 0
+            self._search_bar.set_count(i, n)
+
+    # -- keep the floating search bar pinned on resize ----------------------
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._search_bar is not None and self._search_bar.isVisible():
+            self._position_search_bar()
+
+
+def _words_to_text(words) -> str:
+    """Join selected ``get_text('words')`` tuples back into text, preserving
+    line breaks (words are (x0,y0,x1,y1, text, block, line, word_no))."""
+    lines = {}
+    order = []
+    for w in words:
+        key = (w[5], w[6])
+        if key not in lines:
+            lines[key] = []
+            order.append(key)
+        lines[key].append(w[4])
+    return "\n".join(" ".join(lines[k]) for k in order)

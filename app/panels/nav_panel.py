@@ -39,10 +39,13 @@ class NavPanel(QWidget):
         self.tabs = QTabWidget()
 
         self.pages = QListWidget()
+        self.pages.setViewMode(QListWidget.IconMode)
         self.pages.setIconSize(QSize(self.THUMB_W, int(self.THUMB_W * 1.3)))
         self.pages.setMovement(QListWidget.Static)
         self.pages.setResizeMode(QListWidget.Adjust)
-        self.pages.setSpacing(4)
+        self.pages.setWordWrap(False)
+        self.pages.setUniformItemSizes(True)
+        self.pages.setSpacing(8)
         self.pages.itemClicked.connect(self._on_page_clicked)
         self.pages.verticalScrollBar().valueChanged.connect(
             lambda *_: QTimer.singleShot(0, self._render_visible_thumbs))
@@ -69,9 +72,10 @@ class NavPanel(QWidget):
         if self.document is None:
             return
         for i in range(self.document.page_count):
-            it = QListWidgetItem(f"  Page {i + 1}")
+            it = QListWidgetItem(str(i + 1))
             it.setData(Qt.UserRole, i)
-            it.setSizeHint(QSize(self.THUMB_W + 16, int(self.THUMB_W * 1.3) + 8))
+            it.setTextAlignment(Qt.AlignHCenter | Qt.AlignBottom)
+            it.setSizeHint(QSize(self.THUMB_W + 20, int(self.THUMB_W * 1.3) + 26))
             self.pages.addItem(it)
 
     def _build_bookmarks(self):

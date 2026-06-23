@@ -374,8 +374,16 @@ class MainWindow(QMainWindow):
         m_view.addAction("Zoom in", self.view.zoom_in, QKeySequence.ZoomIn)
         m_view.addAction("Zoom out", self.view.zoom_out, QKeySequence.ZoomOut)
         m_view.addSeparator()
-        m_view.addAction("Toggle comment sidebar", lambda: self.comment_dock.setVisible(not self.comment_dock.isVisible()))
-        m_view.addAction("Toggle navigation panel", lambda: self.nav_dock.setVisible(not self.nav_dock.isVisible()))
+        m_view.addAction("Find…", self.view.show_search, QKeySequence.Find)
+        m_view.addSeparator()
+        act_cmt = m_view.addAction(
+            "Toggle comment sidebar",
+            lambda: self.comment_dock.setVisible(not self.comment_dock.isVisible()))
+        act_cmt.setShortcut("F10")
+        act_nav = m_view.addAction(
+            "Toggle navigation panel",
+            lambda: self.nav_dock.setVisible(not self.nav_dock.isVisible()))
+        act_nav.setShortcut("F9")
 
         m_tools = mb.addMenu("&Tools")
         m_tools.addAction("Extract pages (visual)…", lambda: self.tools_panel.show_operation("extract"))
