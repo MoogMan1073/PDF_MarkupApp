@@ -85,21 +85,26 @@ def _pixmap_to_png_b64(pix) -> str:
     return base64.b64encode(pix.tobytes("png")).decode("ascii")
 
 
-def _build_prompt(field_widths: tuple, zero_pad: bool) -> str:
+def _build_prompt(field_widths: tuple, zero_pad: bool,
+                  img_w: int = 0, img_h: int = 0) -> str:
     sw, rw, ww = field_widths
+    total = sw + rw + ww
+    dims = (f"The image is {img_w}x{img_h} pixels. " if img_w and img_h else "")
     return (
-        "You are reading wire-number labels from a region of an AutoCAD "
-        "Electrical drawing. A wire number encodes, left to right: "
-        f"sheet ({sw} digits), rung ({rw} digits, "
-        f"{'zero-padded' if zero_pad else 'not zero-padded'}), and a 0-based "
-        f"wire index on the rung ({ww} digit). For example 432141 = sheet 432, "
-        "rung 14, wire index 1 (the second wire on that rung).\n\n"
-        "Return ONLY a JSON array. Each element: "
-        '{"label": str, "sheet": int|null, "rung": int|null, '
-        '"wire_index": int|null, "is_wire": bool, "confidence": 0..1, '
-        '"bbox": [x0,y0,x1,y1]}. '
-        "Set is_wire=false for terminal numbers, part numbers or other text. "
-        "No prose, no markdown fences."
+        "You are reading an electrical ladder/schematic drawing sheet. Find EVERY "
+        "wire-number label: the short numeric codes printed on or beside wire "
+        "segments to identify a conductor. Read them exactly as printed, even if "
+        "they don't all share the same length or format (sets vary).\n\n"
+        f"On many sets a wire number is {total} digits encoding, left to right: "
+        f"sheet ({sw} digits), rung ({rw} digits"
+        f"{', zero-padded' if zero_pad else ''}), and a 0-based wire index "
+        f"({ww} digit) - e.g. 432141 = sheet 432, rung 14, wire 1. Capture labels "
+        "that follow this AND ones that don't.\n\n"
+        f"{dims}Return ONLY a JSON array (no prose, no markdown fences). Each "
+        'element: {"label": str, "is_wire": bool, "confidence": 0..1, '
+        '"bbox": [x0,y0,x1,y1]} where bbox is in image pixels. Set is_wire=false '
+        "for device/part/terminal numbers, rung numbers, titles and notes - only "
+        "true for actual conductor/wire labels."
     )
 
 
@@ -124,7 +129,7 @@ def _extract_json(text: str):
 def read_wire_region(pix, field_widths: tuple = (3, 2, 1),
                      zero_pad: bool = True,
                      model: str = DEFAULT_MODEL,
-                     max_tokens: int = 1024,
+                     max_tokens: int = 4096,
                      api_key: Optional[str] = None) -> list:
     """Send a rendered region to Claude and return parsed wire dicts.
 
@@ -138,6 +143,8 @@ def read_wire_region(pix, field_widths: tuple = (3, 2, 1),
         import anthropic
         client = anthropic.Anthropic(api_key=key)
         b64 = _pixmap_to_png_b64(pix)
+        prompt = _build_prompt(field_widths, zero_pad,
+                               getattr(pix, "width", 0), getattr(pix, "height", 0))
         msg = client.messages.create(
             model=model,
             max_tokens=max_tokens,
@@ -146,7 +153,7 @@ def read_wire_region(pix, field_widths: tuple = (3, 2, 1),
                 "content": [
                     {"type": "image", "source": {
                         "type": "base64", "media_type": "image/png", "data": b64}},
-                    {"type": "text", "text": _build_prompt(field_widths, zero_pad)},
+                    {"type": "text", "text": prompt},
                 ],
             }],
         )

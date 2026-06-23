@@ -7,11 +7,11 @@ xlsx/csv exports in both per-sheet and single-file modes.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QThread
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QComboBox,
     QLineEdit, QSpinBox, QCheckBox, QTableWidget, QTableWidgetItem,
-    QFileDialog, QMessageBox, QHeaderView, QAbstractItemView,
+    QFileDialog, QMessageBox, QHeaderView, QAbstractItemView, QProgressBar,
 )
 
 from ..extraction.text_extract import collect_tokens
@@ -32,6 +32,78 @@ _TYPE_COLORS = {
 }
 
 
+class _ExtractWorker(QThread):
+    """Runs the (potentially slow, OCR/AI-heavy) extraction off the UI thread."""
+
+    progress = Signal(int, int, str)     # current page, total, message
+    done = Signal(list, dict)            # deduped wires, summary
+    failed = Signal(str)
+
+    def __init__(self, pdf_path, wire_config, ocr_enabled=False,
+                 ai_enabled=False, ai_key="", ai_model="claude-opus-4-8",
+                 ocr_zoom=3.0, parent=None):
+        super().__init__(parent)
+        self.pdf_path = pdf_path
+        self.cfg = wire_config
+        self.ocr_enabled = ocr_enabled
+        self.ai_enabled = ai_enabled
+        self.ai_key = ai_key
+        self.ai_model = ai_model
+        self.ocr_zoom = ocr_zoom
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        try:
+            import fitz
+            from ..extraction.text_extract import page_has_text
+            from ..extraction import ocr as _ocr, claude_api
+            doc = fitz.open(self.pdf_path)
+            try:
+                cfg = self.cfg
+                fw = ((cfg.sheet_width, cfg.rung_width, cfg.wire_width)
+                      if cfg is not None else (3, 2, 1))
+                zp = cfg.zero_pad if cfg is not None else True
+                ai_ok = self.ai_enabled and claude_api.available(self.ai_key)
+                ocr_ok = self.ocr_enabled and _ocr.available()
+
+                def on_progress(cur, total):
+                    if ai_ok:
+                        mode = " (AI)"
+                    elif ocr_ok:
+                        mode = " (OCR)"
+                    else:
+                        mode = ""
+                    self.progress.emit(cur, total, f"Scanning page {cur} of {total}…{mode}")
+
+                tokens = collect_tokens(
+                    doc, ocr_enabled=self.ocr_enabled, ocr_zoom=self.ocr_zoom,
+                    ai_enabled=self.ai_enabled, ai_key=self.ai_key,
+                    ai_model=self.ai_model, field_widths=fw, zero_pad=zp,
+                    progress=on_progress, should_cancel=lambda: self._cancel)
+                if self._cancel:
+                    self.failed.emit("__cancelled__")
+                    return
+                self.progress.emit(doc.page_count, doc.page_count,
+                                   "Parsing & classifying wire numbers…")
+                wires = dedupe(WireParser(self.cfg).parse(tokens))
+                scanned = sum(1 for i in range(doc.page_count)
+                              if not page_has_text(doc[i]))
+                summary = {
+                    "tokens": len(tokens),
+                    "scanned_pages": scanned,
+                    "ai_used": ai_ok,
+                    "ocr_used": ocr_ok,
+                }
+                self.done.emit(wires, summary)
+            finally:
+                doc.close()
+        except Exception as e:  # pragma: no cover - defensive
+            self.failed.emit(str(e))
+
+
 class WirePanel(QWidget):
     activated = Signal(object)
 
@@ -40,6 +112,7 @@ class WirePanel(QWidget):
         self.document = None
         self.config = None
         self.wires = []
+        self._worker = None
         self._build_ui()
 
     # -- ui ------------------------------------------------------------------
@@ -51,8 +124,16 @@ class WirePanel(QWidget):
         top = QHBoxLayout()
         self.btn_extract = QPushButton("Extract wire numbers")
         self.btn_extract.clicked.connect(self.extract)
+        self.extract_progress = QProgressBar()
+        self.extract_progress.setFixedWidth(220)
+        self.extract_progress.setVisible(False)
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.setVisible(False)
+        self.btn_cancel.clicked.connect(self._cancel_extract)
         self.status = QLabel("Open a PDF, then extract.")
         top.addWidget(self.btn_extract)
+        top.addWidget(self.extract_progress)
+        top.addWidget(self.btn_cancel)
         top.addWidget(self.status, 1)
         lay.addLayout(top)
 
@@ -120,6 +201,8 @@ class WirePanel(QWidget):
     # -- wiring --------------------------------------------------------------
 
     def set_document(self, document, config=None):
+        self._stop_worker()  # never let a stale extraction land on a new doc
+        self._end_extract()
         self.document = document
         self.config = config
         self.wires = list(getattr(document, "wires", []) or [])
@@ -136,30 +219,128 @@ class WirePanel(QWidget):
         if self.document is None:
             QMessageBox.information(self, "No document", "Open a PDF first.")
             return
+        if self._worker is not None and self._worker.isRunning():
+            return
         cfg = self.config.wire_config() if self.config else None
         ocr_enabled = bool(self.config and self.config.ocr_enabled)
-        self.status.setText("Extracting…")
+        ai_enabled = bool(self.config and self.config.ai_enabled)
+        ai_key = self.config.ai_api_key if self.config else ""
+        ai_model = self.config.ai_model if self.config else "claude-opus-4-8"
+
+        # Cost guard: if AI will run over scanned pages, confirm first.
+        if ai_enabled:
+            try:
+                from ..extraction import claude_api
+                from ..extraction.text_extract import page_has_text
+                if claude_api.available(ai_key):
+                    scanned = sum(1 for i in range(self.document.page_count)
+                                  if not page_has_text(self.document.fitz_doc[i]))
+                    if scanned > 0:
+                        resp = QMessageBox.question(
+                            self, "Use AI on scanned pages?",
+                            f"{scanned} page(s) have no text layer. Send them to "
+                            f"Claude ({ai_model}) to read wire numbers? This makes "
+                            f"one API call per page.",
+                            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+                        if resp != QMessageBox.Yes:
+                            return
+            except Exception:
+                pass
+
+        # show the progress UI and start the background worker
+        total = max(1, self.document.page_count)
+        self.extract_progress.setRange(0, total)
+        self.extract_progress.setValue(0)
+        self.extract_progress.setVisible(True)
+        self.btn_cancel.setVisible(True)
         self.btn_extract.setEnabled(False)
-        try:
-            tokens = collect_tokens(self.document.fitz_doc, ocr_enabled=ocr_enabled,
-                                    ocr_zoom=3.0)
-            parser = WireParser(cfg)
-            occurrences = parser.parse(tokens)
-            self.wires = dedupe(occurrences)
+        self.status.setText("Starting extraction…")
+
+        self._worker = _ExtractWorker(
+            self.document.path, cfg, ocr_enabled=ocr_enabled,
+            ai_enabled=ai_enabled, ai_key=ai_key, ai_model=ai_model, ocr_zoom=3.0)
+        self._worker.progress.connect(self._on_extract_progress)
+        self._worker.done.connect(self._on_extract_done)
+        self._worker.failed.connect(self._on_extract_failed)
+        self._worker.start()
+
+    def _cancel_extract(self):
+        if self._worker is not None and self._worker.isRunning():
+            self.btn_cancel.setEnabled(False)
+            self.status.setText("Cancelling…")
+            self._worker.cancel()
+
+    def _on_extract_progress(self, current, total, message):
+        self.extract_progress.setRange(0, total)
+        self.extract_progress.setValue(current)
+        self.status.setText(message)
+
+    def _on_extract_done(self, wires, summary):
+        self.wires = wires
+        if self.document is not None:
             self.document.set_wires(self.wires)
-            self._populate()
+        self._populate()
+        if self.wires:
             n_conf = sum(1 for w in self.wires if w.wire_type == TYPE_CONFORMING)
             n_fix = sum(1 for w in self.wires if w.wire_type == TYPE_FIXED)
             n_jmp = sum(1 for w in self.wires if w.wire_type == TYPE_JUMPER)
             self.status.setText(
                 f"{len(self.wires)} unique labels — "
                 f"{n_conf} conforming, {n_fix} fixed/OEM, {n_jmp} jumpers "
-                f"({len(tokens)} tokens scanned).")
-        except Exception as e:
-            QMessageBox.warning(self, "Extraction failed", str(e))
+                f"({summary.get('tokens', 0)} tokens scanned).")
+        else:
+            # explain *why* nothing was found, especially for scanned PDFs
+            scanned = summary.get("scanned_pages", 0)
+            if scanned and not summary.get("ai_used") and not summary.get("ocr_used"):
+                self.status.setText(
+                    f"No wire numbers found — {scanned} page(s) are scanned images "
+                    f"with no text. Enable Claude AI assist (or OCR) in Settings, "
+                    f"then extract again.")
+            elif summary.get("ai_used"):
+                self.status.setText(
+                    "No wire numbers found. The AI didn't return any labels — the "
+                    "scan may be low-resolution; also verify the API key/quota.")
+            else:
+                self.status.setText("No wire numbers found.")
+        self._end_extract()
+
+    def _on_extract_failed(self, message):
+        if message == "__cancelled__":
+            self.status.setText("Extraction cancelled.")
+        else:
+            QMessageBox.warning(self, "Extraction failed", message)
             self.status.setText("Extraction failed.")
-        finally:
-            self.btn_extract.setEnabled(True)
+        self._end_extract()
+
+    def _end_extract(self):
+        self.extract_progress.setVisible(False)
+        self.btn_cancel.setVisible(False)
+        self.btn_cancel.setEnabled(True)
+        self.btn_extract.setEnabled(True)
+        if self._worker is not None:
+            self._worker.wait(3000)
+            self._worker = None
+
+    def _stop_worker(self):
+        """Cancel a running extraction and wait for it to unwind (cancellation
+        is checked between pages, so this returns within ~one page)."""
+        w = self._worker
+        if w is None:
+            return
+        try:
+            w.progress.disconnect()
+            w.done.disconnect()
+            w.failed.disconnect()
+        except Exception:
+            pass
+        if w.isRunning():
+            w.cancel()
+            w.wait(30000)
+        self._worker = None
+
+    def shutdown(self):
+        """Called on app close so no extraction thread outlives the window."""
+        self._stop_worker()
 
     # -- table ---------------------------------------------------------------
 

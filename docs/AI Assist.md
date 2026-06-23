@@ -27,7 +27,19 @@ In [[Settings]] ▸ **OCR & AI assist**:
 
 The model defaults to `claude-opus-4-8` and is configurable.
 
-If the key is missing or invalid, extraction silently falls back to the text
-layer and [[OCR]] — nothing breaks.
+## How it's used in extraction
+
+When you run **Extract wire numbers** ([[Wire Numbers]]) on a set with **scanned
+pages**, each such page is rendered and sent to Claude to read its wire labels —
+**one API call per page**. DSI Redline asks you to confirm before doing this (so
+a 35-page scan doesn't surprise you with 35 calls). A progress bar shows each
+page and you can cancel anytime.
+
+AI is what makes **non-searchable** and **non-standard** drawings work: it reads
+labels even when they don't fit the configured format, returning them as
+fixed/OEM so nothing is lost.
+
+If the key is missing or invalid, extraction falls back to [[OCR]] (or the text
+layer) — nothing breaks.
 
 #ai

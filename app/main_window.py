@@ -621,6 +621,10 @@ class MainWindow(QMainWindow):
             a.setEnabled(on)
 
     def closeEvent(self, event):
+        try:
+            self.wire_panel.shutdown()   # stop any running extraction thread
+        except Exception:
+            pass
         if self.document is not None:
             try:
                 self.document.close()

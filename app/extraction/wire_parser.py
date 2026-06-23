@@ -215,6 +215,10 @@ class WireParser:
             return False
         if self.config.label_pattern().match(text):
             return True
+        # AI vision has already vetted the token as a wire label, so accept it
+        # even when it doesn't match the configured width (non-standard sets).
+        if token.source == SOURCE_AI and re.search(r"\d", text):
+            return True
         if self._layer_is_jumper(token.layer) or self._layer_is_wire(token.layer):
             # number-ish and not absurdly long
             if re.search(r"\d", text) and len(text) <= self.config.total_width + 4:
