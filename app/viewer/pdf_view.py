@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+import fitz
+
 from PySide6.QtCore import Qt, QRectF, QPointF, Signal, QTimer
 from PySide6.QtGui import QPainter, QColor, QBrush, QKeySequence, QShortcut
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsItem
@@ -708,10 +710,24 @@ class PdfView(QGraphicsView):
         self._text_selecting = True
         self._text_sel_page = (pno, page)
         self._text_sel_start = (lx, ly)
+        self._text_words = self._visual_words(pno)
+
+    def _visual_words(self, pno):
+        """Page words with bboxes mapped into the viewer's visual coordinate
+        system.  PyMuPDF returns word boxes in *unrotated* coords, but the page
+        bitmap (and mouse points) are in the rotated/visual system, so we apply
+        ``page.rotation_matrix`` to keep highlights aligned on rotated pages."""
         try:
-            self._text_words = self.document.fitz_doc[pno].get_text("words")
+            page = self.document.fitz_doc[pno]
+            rm = page.rotation_matrix
+            out = []
+            for w in page.get_text("words"):
+                r = fitz.Rect(w[0], w[1], w[2], w[3]) * rm
+                r.normalize()
+                out.append((r.x0, r.y0, r.x1, r.y1, w[4], w[5], w[6], w[7]))
+            return out
         except Exception:
-            self._text_words = []
+            return []
 
     @staticmethod
     def _word_index_at(words, lx, ly):
@@ -812,11 +828,15 @@ class PdfView(QGraphicsView):
         if q and self.document is not None:
             for pno in range(self.document.page_count):
                 try:
-                    rects = self.document.fitz_doc[pno].search_for(q)
+                    page = self.document.fitz_doc[pno]
+                    rm = page.rotation_matrix          # unrotated -> visual coords
+                    rects = page.search_for(q)
                 except Exception:
                     rects = []
                 for r in rects:
-                    self._search_matches.append((pno, r))
+                    vr = fitz.Rect(r) * rm
+                    vr.normalize()
+                    self._search_matches.append((pno, vr))
         if self._search_matches:
             self._draw_search_highlights()
             self._search_index = 0

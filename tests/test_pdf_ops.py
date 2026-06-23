@@ -164,21 +164,21 @@ class TestPdfOps(unittest.TestCase):
         self.assertEqual(fitz.open(out)[0].rotation, 180)
 
     def test_rotated_page_region_extraction(self):
-        # box drawn in the viewer's visual coords must read correctly on a
-        # rotated page (get_text clip uses visual coords)
+        # A box drawn in the viewer is in *visual* (rotated) coords; sheet
+        # extraction must derotate it for the text layer and still read the box.
         rot = os.path.join(self.tmp, "rot.pdf")
         d = fitz.open(); p = d.new_page(width=612, height=792)
         p.insert_text((420, 745), "300", fontsize=10)
         p.set_rotation(270)
         d.save(rot); d.close()
         d = fitz.open(rot)
-        # find the token's visual bbox, then read it back via a region
-        bbox = None
-        for w in d[0].get_text("words"):
-            if w[4] == "300":
-                bbox = (w[0], w[1], w[2], w[3])
+        # the word's unrotated bbox mapped into visual coords = what the viewer
+        # region-pick produces on a rotated page
+        bbox = next((w[:4] for w in d[0].get_text("words") if w[4] == "300"), None)
         self.assertIsNotNone(bbox)
-        reg = SheetRegion(0, 0, (bbox[0] - 2, bbox[1] - 2, bbox[2] + 2, bbox[3] + 2))
+        vis = fitz.Rect(*bbox) * d[0].rotation_matrix
+        vis.normalize()
+        reg = SheetRegion(0, 0, (vis.x0 - 2, vis.y0 - 2, vis.x1 + 2, vis.y1 + 2))
         res = ops.extract_sheet_numbers(d, [reg], mode=SHEET_EXACT)
         d.close()
         self.assertEqual(res[0], "300")

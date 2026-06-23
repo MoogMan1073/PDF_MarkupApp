@@ -127,6 +127,53 @@ class TestViewerFeatures(unittest.TestCase):
         self.assertIn("HELLO WORLD apple", text)
         self.assertIn("\n", text)
 
+    # -- rotated-page alignment (highlights must follow the visible image) ---
+
+    def _rotated_view(self, rot):
+        from app.model.document import Document
+        from app.viewer.pdf_view import PdfView
+        src = os.path.join(self.tmp, f"rot{rot}.pdf")
+        d = fitz.open(); p = d.new_page(width=612, height=792)
+        p.insert_text((100, 120), "TARGET", fontsize=14)
+        p.set_rotation(rot)
+        d.save(src); d.close()
+        doc = Document(src); doc.load()
+        view = PdfView(); view.set_document(doc, None); self.app.processEvents()
+        return doc, view
+
+    def _expected_visual(self, page):
+        w = next(x for x in page.get_text("words") if x[4] == "TARGET")
+        r = fitz.Rect(w[:4]) * page.rotation_matrix
+        r.normalize()
+        return r
+
+    def test_text_selection_visual_on_rotated_page(self):
+        for rot in (90, 270):
+            doc, view = self._rotated_view(rot)
+            try:
+                exp = self._expected_visual(doc.fitz_doc[0])
+                vw = next(w for w in view._visual_words(0) if w[4] == "TARGET")
+                self.assertAlmostEqual(vw[0], exp.x0, delta=1.0)
+                self.assertAlmostEqual(vw[1], exp.y0, delta=1.0)
+                # within the visible (rotated) page bounds
+                pr = doc.fitz_doc[0].rect
+                self.assertTrue(0 <= vw[0] <= pr.width and 0 <= vw[1] <= pr.height)
+            finally:
+                doc.close()
+
+    def test_search_visual_on_rotated_page(self):
+        for rot in (90, 270):
+            doc, view = self._rotated_view(rot)
+            try:
+                exp = self._expected_visual(doc.fitz_doc[0])
+                view.run_search("TARGET")
+                self.assertEqual(len(view._search_matches), 1)
+                _, mr = view._search_matches[0]
+                self.assertAlmostEqual(mr.x0, exp.x0, delta=1.0)
+                self.assertAlmostEqual(mr.y0, exp.y0, delta=1.0)
+            finally:
+                doc.close()
+
 
 if __name__ == "__main__":
     unittest.main()

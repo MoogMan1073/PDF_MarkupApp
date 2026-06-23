@@ -124,10 +124,12 @@ def extract_sheet_numbers(doc: "fitz.Document", regions: Iterable[SheetRegion],
                           cancel: Optional[Callable] = None) -> dict:
     """Read the sheet number from each page's assigned box.
 
-    Returns ``{page_index: sheet_string}`` ("" when nothing was read).  Uses the
-    page text layer first (``get_text`` with a clip rect, in the same visual
-    coordinates the viewer uses), then optional OCR / Claude vision for scanned
-    boxes.
+    Returns ``{page_index: sheet_string}`` ("" when nothing was read).  The box
+    ``rect`` is in the viewer's *visual* (rotated) coordinates.  PyMuPDF is
+    inconsistent across rotated pages: ``get_text(clip=...)`` expects *unrotated*
+    coords while ``get_pixmap(clip=...)`` expects *visual* ones — so we derotate
+    the rect for the text-layer read and keep the visual rect for the OCR / AI
+    (pixmap) fallbacks.  On unrotated pages both matrices are the identity.
     """
     regions = list(regions)
     out: dict = {}
@@ -141,17 +143,19 @@ def extract_sheet_numbers(doc: "fitz.Document", regions: Iterable[SheetRegion],
         if reg is None:
             out[i] = ""
             continue
-        rect = fitz.Rect(*reg.rect)
+        rect_vis = fitz.Rect(*reg.rect)          # visual coords (from the viewer)
         page = doc[i]
         text = ""
         try:
-            text = page.get_text("text", clip=rect).strip()
+            clip = rect_vis * page.derotation_matrix   # get_text wants unrotated
+            clip.normalize()
+            text = page.get_text("text", clip=clip).strip()
         except Exception:
             text = ""
         if not text and ocr:
-            text = _ocr_text_in_rect(page, rect)
+            text = _ocr_text_in_rect(page, rect_vis)   # get_pixmap wants visual
         if not text and ai:
-            text = _ai_text_in_rect(page, rect, ai_key, ai_model)
+            text = _ai_text_in_rect(page, rect_vis, ai_key, ai_model)
         out[i] = sheet_from_text(text, mode)
     return out
 
