@@ -50,7 +50,12 @@ class _SortItem(QTableWidgetItem):
                 return a < b
             except TypeError:
                 pass
-        return super().__lt__(other)
+        # explicit string fallback (the base operator< is unreliable for items
+        # not attached to a table)
+        try:
+            return self.text() < other.text()
+        except Exception:
+            return super().__lt__(other)
 
 
 def _num_key(v):
