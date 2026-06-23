@@ -201,14 +201,19 @@ class SettingsDialog(QDialog):
         self.btn_check = QPushButton("Check API status")
         self.btn_check.clicked.connect(self._check_api)
         self.ai_model = QLineEdit(str(config.get("ai/model")))
-        self.ai_region = QSpinBox(); self.ai_region.setRange(100, 4000); self.ai_region.setValue(int(config.get("ai/region_size")))
+        self.ai_tiles = QSpinBox(); self.ai_tiles.setRange(1, 4)
+        self.ai_tiles.setValue(int(config.get("ai/tiles")))
+        self.ai_tiles.setToolTip(
+            "Split each scanned page into an N×N grid of tiles, each read at full "
+            "resolution so small wire numbers survive. Higher = more accurate but "
+            "more API calls per page (N×N). 1 = whole page.")
         fa.addRow(self.ocr)
         fa.addRow(self.ai)
         fa.addRow("API key:", key_wrap)
         fa.addRow("", self.btn_check)
         fa.addRow("Status:", self.ai_status)
         fa.addRow("AI model:", self.ai_model)
-        fa.addRow("AI region size (px):", self.ai_region)
+        fa.addRow("AI tiling (N×N, calls/page = N²):", self.ai_tiles)
         lay.addWidget(gb_a)
         self._on_ai_toggled(self.ai.isChecked())
         self._refresh_api_status()
@@ -237,13 +242,13 @@ class SettingsDialog(QDialog):
         c.set("ai/enabled", self.ai.isChecked())
         c.set("ai/api_key", self.ai_key.text().strip())
         c.set("ai/model", self.ai_model.text())
-        c.set("ai/region_size", self.ai_region.value())
+        c.set("ai/tiles", self.ai_tiles.value())
         c.sync()
 
     # -- AI assist helpers ---------------------------------------------------
 
     def _on_ai_toggled(self, on: bool):
-        for w in (self.ai_key, self.ai_show, self.btn_check, self.ai_model, self.ai_region):
+        for w in (self.ai_key, self.ai_show, self.btn_check, self.ai_model, self.ai_tiles):
             w.setEnabled(on)
         self._refresh_api_status()
 

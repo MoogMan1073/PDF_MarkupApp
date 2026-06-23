@@ -37,13 +37,36 @@ class TestAIExtraction(unittest.TestCase):
             {"label": "432141", "is_wire": True, "confidence": 0.9, "bbox": [50, 20, 90, 30]},
             {"label": "CR12", "is_wire": False},  # device -> ignored
         ]
-        toks = te.collect_tokens(self.doc, ai_enabled=True, ai_key="sk-x")
+        toks = te.collect_tokens(self.doc, ai_enabled=True, ai_key="sk-x", ai_tiles=1)
         self.assertEqual({t.source for t in toks}, {SOURCE_AI})
         self.assertEqual(len(toks), 2)
         wires = dedupe(WireParser(WireConfig()).parse(toks))
         by_label = {w.label: w.wire_type for w in wires}
         self.assertEqual(by_label.get("11800"), TYPE_FIXED)       # non-standard kept
         self.assertEqual(by_label.get("432141"), TYPE_CONFORMING)
+
+    def test_tiling_makes_n_squared_calls_and_maps_coords(self):
+        capi.available = lambda key=None: True
+        calls = []
+
+        def fake(pix, **k):
+            calls.append((pix.width, pix.height))
+            return [{"label": "300050", "is_wire": True, "confidence": 0.9,
+                     "bbox": [20, 15, 60, 35]}]
+        capi.read_wire_region = fake
+
+        page = self.doc[0]
+        toks = te.ai_page(page, 0, tiles=2, api_key="sk", model="m")
+        self.assertEqual(len(calls), 4)                    # 2x2 tiles
+        # tokens land in distinct quadrants (page coords differ)
+        xs = sorted({round(t.x) for t in toks})
+        ys = sorted({round(t.y) for t in toks})
+        self.assertEqual(len(xs), 2)
+        self.assertEqual(len(ys), 2)
+        # each tile renders at higher effective resolution than a single page call
+        calls.clear()
+        te.ai_page(page, 0, tiles=1, api_key="sk", model="m")
+        self.assertEqual(len(calls), 1)
 
     def test_ai_token_is_candidate_regardless_of_format(self):
         p = WireParser(WireConfig())

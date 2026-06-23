@@ -41,7 +41,7 @@ class _ExtractWorker(QThread):
 
     def __init__(self, pdf_path, wire_config, ocr_enabled=False,
                  ai_enabled=False, ai_key="", ai_model="claude-opus-4-8",
-                 ocr_zoom=3.0, parent=None):
+                 ai_tiles=2, ocr_zoom=3.0, parent=None):
         super().__init__(parent)
         self.pdf_path = pdf_path
         self.cfg = wire_config
@@ -49,6 +49,7 @@ class _ExtractWorker(QThread):
         self.ai_enabled = ai_enabled
         self.ai_key = ai_key
         self.ai_model = ai_model
+        self.ai_tiles = max(1, int(ai_tiles))
         self.ocr_zoom = ocr_zoom
         self._cancel = False
 
@@ -69,19 +70,21 @@ class _ExtractWorker(QThread):
                 ai_ok = self.ai_enabled and claude_api.available(self.ai_key)
                 ocr_ok = self.ocr_enabled and _ocr.available()
 
+                mode = " (AI)" if ai_ok else (" (OCR)" if ocr_ok else "")
+
                 def on_progress(cur, total):
-                    if ai_ok:
-                        mode = " (AI)"
-                    elif ocr_ok:
-                        mode = " (OCR)"
-                    else:
-                        mode = ""
                     self.progress.emit(cur, total, f"Scanning page {cur} of {total}…{mode}")
+
+                def on_tile(cur, total, td, tt):
+                    self.progress.emit(
+                        cur, total,
+                        f"Scanning page {cur} of {total} — AI tile {td}/{tt}…")
 
                 tokens = collect_tokens(
                     doc, ocr_enabled=self.ocr_enabled, ocr_zoom=self.ocr_zoom,
                     ai_enabled=self.ai_enabled, ai_key=self.ai_key,
                     ai_model=self.ai_model, field_widths=fw, zero_pad=zp,
+                    ai_tiles=self.ai_tiles, ai_tile_progress=on_tile,
                     progress=on_progress, should_cancel=lambda: self._cancel)
                 if self._cancel:
                     self.failed.emit("__cancelled__")
@@ -226,8 +229,10 @@ class WirePanel(QWidget):
         ai_enabled = bool(self.config and self.config.ai_enabled)
         ai_key = self.config.ai_api_key if self.config else ""
         ai_model = self.config.ai_model if self.config else "claude-opus-4-8"
+        ai_tiles = self.config.ai_tiles if self.config else 2
 
-        # Cost guard: if AI will run over scanned pages, confirm first.
+        # Cost guard: if AI will run over scanned pages, confirm first (each page
+        # makes tiles x tiles API calls).
         if ai_enabled:
             try:
                 from ..extraction import claude_api
@@ -236,11 +241,15 @@ class WirePanel(QWidget):
                     scanned = sum(1 for i in range(self.document.page_count)
                                   if not page_has_text(self.document.fitz_doc[i]))
                     if scanned > 0:
+                        calls = scanned * ai_tiles * ai_tiles
+                        grid = (f"{ai_tiles}×{ai_tiles} tiles each"
+                                if ai_tiles > 1 else "whole page")
                         resp = QMessageBox.question(
                             self, "Use AI on scanned pages?",
-                            f"{scanned} page(s) have no text layer. Send them to "
-                            f"Claude ({ai_model}) to read wire numbers? This makes "
-                            f"one API call per page.",
+                            f"{scanned} page(s) have no text layer. Read them with "
+                            f"Claude ({ai_model}), {grid}?\n\n"
+                            f"That's about {calls} API call(s). "
+                            f"Adjust 'AI tiling' in Settings to trade accuracy for cost.",
                             QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
                         if resp != QMessageBox.Yes:
                             return
@@ -258,7 +267,8 @@ class WirePanel(QWidget):
 
         self._worker = _ExtractWorker(
             self.document.path, cfg, ocr_enabled=ocr_enabled,
-            ai_enabled=ai_enabled, ai_key=ai_key, ai_model=ai_model, ocr_zoom=3.0)
+            ai_enabled=ai_enabled, ai_key=ai_key, ai_model=ai_model,
+            ai_tiles=ai_tiles, ocr_zoom=3.0)
         self._worker.progress.connect(self._on_extract_progress)
         self._worker.done.connect(self._on_extract_done)
         self._worker.failed.connect(self._on_extract_failed)

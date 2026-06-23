@@ -48,7 +48,7 @@ DEFAULTS: dict = {
     # ocr / ai
     "ocr/enabled": False,
     "ai/enabled": False,
-    "ai/region_size": 400,
+    "ai/tiles": 2,          # NxN tiles per scanned page (1 = whole page)
     "ai/model": "claude-opus-4-8",
     "ai/api_key": "",
 }
@@ -147,5 +147,5 @@ class AppConfig:
         return str(self.get("ai/api_key") or "")
 
     @property
-    def ai_region_size(self) -> int:
-        return int(self.get("ai/region_size"))
+    def ai_tiles(self) -> int:
+        return max(1, min(4, int(self.get("ai/tiles"))))

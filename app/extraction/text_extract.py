@@ -139,53 +139,108 @@ def extract_document_tokens(doc: "fitz.Document") -> list:
     return tokens
 
 
-def ai_page(page: "fitz.Page", page_index: int, field_widths=(3, 2, 1),
-            zero_pad: bool = True, model: str = "claude-opus-4-8",
-            api_key: str = "", zoom: float = 2.0) -> list:
-    """Read wire-number labels from a scanned page using Claude vision.
+# Aim each rendered tile at roughly this long-edge (px) - close to the size
+# Claude works best with, so small wire numbers survive instead of being
+# down-scaled away on a full-page render.
+AI_TILE_TARGET_PX = 1500.0
+AI_TILE_OVERLAP = 0.06          # tile overlap fraction (so boundary labels are read)
 
-    Renders the page, asks Claude for every wire-number label (and its bbox),
-    and returns word-level :class:`Token` objects tagged ``source='ai'``.
-    Returns an empty list on any failure so the caller can fall back.
-    """
-    from . import claude_api
+
+def _ai_results_to_tokens(results, page_index, origin_x, origin_y, zoom):
+    """Convert Claude's tile results (bbox in tile-image pixels) to page-space
+    :class:`Token` objects."""
     from .wire_parser import Token, SOURCE_AI
-    try:
-        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
-        results = claude_api.read_wire_region(
-            pix, field_widths=field_widths, zero_pad=zero_pad,
-            model=model, api_key=api_key)
-    except Exception:
-        return []
-    tokens: list = []
+    out = []
     for r in results:
-        if not isinstance(r, dict):
-            continue
-        if r.get("is_wire") is False:
+        if not isinstance(r, dict) or r.get("is_wire") is False:
             continue
         label = str(r.get("label", "")).strip()
         if not label:
             continue
         bbox = r.get("bbox") or [0, 0, 0, 0]
         try:
-            x = float(bbox[0]) / zoom
-            y = float(bbox[1]) / zoom
+            x = origin_x + float(bbox[0]) / zoom
+            y = origin_y + float(bbox[1]) / zoom
         except (TypeError, ValueError, IndexError):
-            x = y = 0.0
+            x = origin_x
+            y = origin_y
         try:
             conf = float(r.get("confidence", 0.5))
         except (TypeError, ValueError):
             conf = 0.5
-        tokens.append(Token(text=label, x=x, y=y, page=page_index,
-                            source=SOURCE_AI, confidence=conf))
-    return tokens
+        out.append(Token(text=label, x=x, y=y, page=page_index,
+                         source=SOURCE_AI, confidence=conf))
+    return out
+
+
+def _dedupe_ai_tokens(tokens, tol=8.0):
+    """Drop near-duplicate AI tokens (same label at ~same spot) that arise from
+    overlapping tiles, keeping the higher-confidence one."""
+    kept = []
+    for t in sorted(tokens, key=lambda z: -z.confidence):
+        dup = False
+        for k in kept:
+            if k.text == t.text and abs(k.x - t.x) <= tol and abs(k.y - t.y) <= tol:
+                dup = True
+                break
+        if not dup:
+            kept.append(t)
+    return kept
+
+
+def ai_page(page: "fitz.Page", page_index: int, field_widths=(3, 2, 1),
+            zero_pad: bool = True, model: str = "claude-opus-4-8",
+            api_key: str = "", tiles: int = 2, should_cancel=None,
+            on_tile=None) -> list:
+    """Read wire-number labels from a scanned page using Claude vision.
+
+    The page is split into an ``tiles`` x ``tiles`` grid (with a small overlap);
+    each tile is rendered at full resolution and sent to Claude so small labels
+    survive image down-scaling.  Tile-local bboxes are mapped back to page
+    coordinates and overlap duplicates are removed.  Returns ``[]`` on failure.
+    """
+    from . import claude_api
+    tiles = max(1, int(tiles))
+    rect = page.rect
+    W, H = float(rect.width), float(rect.height)
+    tile_w, tile_h = W / tiles, H / tiles
+    pad_x, pad_y = tile_w * AI_TILE_OVERLAP, tile_h * AI_TILE_OVERLAP
+    # zoom so each (padded) tile's long edge ~= the target pixel size
+    long_edge = max(tile_w + 2 * pad_x, tile_h + 2 * pad_y)
+    zoom = max(1.0, min(6.0, AI_TILE_TARGET_PX / long_edge))
+
+    tokens: list = []
+    total_tiles = tiles * tiles
+    done = 0
+    for ry in range(tiles):
+        for cx in range(tiles):
+            if should_cancel is not None and should_cancel():
+                return tokens
+            x0 = max(0.0, cx * tile_w - pad_x)
+            y0 = max(0.0, ry * tile_h - pad_y)
+            x1 = min(W, (cx + 1) * tile_w + pad_x)
+            y1 = min(H, (ry + 1) * tile_h + pad_y)
+            try:
+                pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom),
+                                      clip=fitz.Rect(x0, y0, x1, y1), alpha=False)
+                results = claude_api.read_wire_region(
+                    pix, field_widths=field_widths, zero_pad=zero_pad,
+                    model=model, api_key=api_key)
+                tokens.extend(_ai_results_to_tokens(results, page_index, x0, y0, zoom))
+            except Exception:
+                pass
+            done += 1
+            if on_tile is not None:
+                on_tile(done, total_tiles)
+    return _dedupe_ai_tokens(tokens)
 
 
 def collect_tokens(doc: "fitz.Document", ocr_enabled: bool = False,
                    ocr_zoom: float = 3.0, progress=None, should_cancel=None,
                    ai_enabled: bool = False, ai_key: str = "",
                    ai_model: str = "claude-opus-4-8", field_widths=(3, 2, 1),
-                   zero_pad: bool = True, ai_zoom: float = 2.0) -> list:
+                   zero_pad: bool = True, ai_tiles: int = 2,
+                   ai_tile_progress=None) -> list:
     """Collect tokens from every page: text layer where present, OCR otherwise.
 
     For pages **without** a text layer (scanned drawings), Claude vision is used
@@ -222,9 +277,13 @@ def collect_tokens(doc: "fitz.Document", ocr_enabled: bool = False,
         if page_has_text(page):
             tokens.extend(extract_tokens(page, i, ocg_names))
         elif use_ai:
+            page_no = i + 1
+            on_tile = ((lambda td, tt: ai_tile_progress(page_no, total, td, tt))
+                       if ai_tile_progress is not None else None)
             tokens.extend(ai_page(page, i, field_widths=field_widths,
                                   zero_pad=zero_pad, model=ai_model,
-                                  api_key=ai_key, zoom=ai_zoom))
+                                  api_key=ai_key, tiles=ai_tiles,
+                                  should_cancel=should_cancel, on_tile=on_tile))
         elif use_ocr:
             from . import ocr as _ocr
             tokens.extend(_ocr.ocr_page(page, i, zoom=ocr_zoom))
