@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt, QEvent, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QMainWindow, QTabWidget, QToolBar, QFileDialog, QMessageBox, QDockWidget,
@@ -676,6 +676,22 @@ class MainWindow(QMainWindow):
     def _update_actions_enabled(self, on: bool):
         for a in (self.act_save, self.act_export_pdf):
             a.setEnabled(on)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Force the dock layout to settle once the window is on screen so the
+        # nav/comment separators are draggable from the start (otherwise the
+        # splitter only becomes active after the dock is hidden and reshown).
+        if not getattr(self, "_docks_sized", False):
+            self._docks_sized = True
+            QTimer.singleShot(0, self._init_dock_sizes)
+
+    def _init_dock_sizes(self):
+        try:
+            self.resizeDocks([self.nav_dock, self.comment_dock], [260, 320],
+                             Qt.Horizontal)
+        except Exception:
+            pass
 
     def closeEvent(self, event):
         try:
