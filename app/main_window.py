@@ -278,14 +278,16 @@ def _swatch(color: QColor) -> QIcon:
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, on_progress=None):
         super().__init__()
+        self._progress = on_progress or (lambda *a, **k: None)
         self.setWindowTitle(__app_name__)
         self.setWindowIcon(app_icon())
         self.resize(1320, 880)
         self.config = AppConfig()
         self.document = None
 
+        self._progress("Preparing the canvas…", 62)
         self.view = PdfView(self)
         self.view.config = self.config
         self.view.requestCommentEdit.connect(self._edit_comment)
@@ -297,6 +299,7 @@ class MainWindow(QMainWindow):
         # synchronous prompt when a drawing tool clicks an existing mark
         self.view.existing_mark_prompt = self._prompt_existing_mark
 
+        self._progress("Setting up the wire-number engine…", 75)
         self.tabs = QTabWidget()
         self.tabs.addTab(self.view, "Viewer")
         self.todo_panel = TodoPanel()
@@ -307,6 +310,7 @@ class MainWindow(QMainWindow):
 
         self.todo_panel.activated.connect(self._jump_to)
 
+        self._progress("Building the comment & TODO panels…", 85)
         # comment dock
         self.comment_panel = CommentPanel()
         self.comment_panel.activated.connect(self._jump_to)
@@ -317,6 +321,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
         self.comment_dock = dock
 
+        self._progress("Assembling the toolbar…", 92)
         self.setStatusBar(QStatusBar())
         self._build_menu()
         self._build_toolbar()
