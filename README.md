@@ -35,16 +35,22 @@ _© DSI Innovations, LLC 2026_
   indicator), and export to **Markdown** (GitHub task list) or **DOCX** (table with
   ☐/☑ glyphs).
 - **Wire Numbers tab** — extract, classify, spot-check and export wire numbers.
-- **Wire export** — `.xlsx` / `.csv`, single-file (`~sheet~` separators, labels-only)
-  or one-file-per-sheet (full columns), configurable labels-per-wire, and multiple
-  sort/filter modes.
+- **Component Labels tab** — the same engine for **device/component tags** like
+  `LT-10010` (family code + sheet/rung). Known family codes live in Settings
+  (seeded + editable); unlisted codes are captured and flagged. Choose **OCR or
+  Claude** for scanned pages; same select/search/sort/export controls as wires.
+- **Wire & component export** — `.xlsx` / `.csv`, single-file (`~sheet~` separators,
+  labels-only) or one-file-per-sheet (full columns), configurable
+  labels-per-wire/device, and multiple sort/filter modes.
 - **PDF tools** — an iLovePDF-style **PDF Tools** workspace (thumbnail grid +
   operation rail) where you **pick pages by clicking thumbnails** to extract,
   split into ranges, delete, or rotate (with a live rotation preview) — plus
-  combine, insert, swap, convert to Word, and crop regions to PNG. A guided
-  **sheet-number split** wizard (box the title-block number; works on rotated and
-  scanned sets) and an optional Claude-powered crop → TAG/DESCRIPTION table round
-  it out. **Drag a PDF onto the window** to open it in the viewer or the tools.
+  combine, insert, swap, and convert to Word. A guided **sheet-number split**
+  wizard (box the title-block number; works on rotated and scanned sets) and a
+  **crop/extract** wizard that uses Claude to turn captured regions into editable
+  docs — **tables → Excel, prose → Word, or everything → Markdown** (OCR text
+  fallback without a key). **Drag a PDF onto the window** to open it in the viewer
+  or the tools.
 - **Navigation dock** — page thumbnails + PDF bookmarks for jumping around a set.
 - **Built-in user manual** — **Help ▸ User Manual** opens a read-only, Obsidian-style
   vault (the `docs/` folder) with a page list, clickable `#tags`, `[[wikilinks]]` and
@@ -128,6 +134,7 @@ python main.py drawings.pdf   # or open a file directly
 | **Viewer** | Read and mark up the drawing. Pick a tool from the toolbar, choose a color/width, and draw. The **Comments** dock on the right lists every note. |
 | **TODO** | Everything flagged as a TODO. Check items off, edit text inline, group by sheet/commenter, and export to Markdown or DOCX. |
 | **Wire Numbers** | Click **Extract wire numbers** to scan the set. Review the table (label, sheet, rung, index, type, page, count, source), untick any you don't want, then **Export…**. |
+| **Component Labels** | Click **Extract component labels** to find device tags (e.g. `LT-10010`). Pick OCR or AI for scanned pages, review/filter the table, then **Export…**. Family codes are editable in Settings. |
 
 ### Saving
 

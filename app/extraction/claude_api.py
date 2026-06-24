@@ -278,7 +278,7 @@ def extract_region_content(pix, model: str = DEFAULT_MODEL,
     if not text:
         return {}
     obj = _extract_json_object(text)
-    if not isinstance(obj, dict):
+    if not isinstance(obj, dict) or not obj:
         return {}
     kind = "table" if str(obj.get("type", "")).lower().startswith("tab") else "text"
     rows = obj.get("rows") or []

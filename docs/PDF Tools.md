@@ -67,10 +67,15 @@ Scanned pages without text are read with **OCR or Claude** when enabled
 ## Convert & extract
 
 - **PDF → Word** — convert a PDF to an editable `.docx`.
-- **Crop / extract (wizard)** — box one or more regions across pages and export
-  them as **PNGs**. Optionally, the app sends those crops to **Claude** to build
-  a **TAG / DESCRIPTION** table (xlsx) automatically — handy for turning device
-  labels into a tag list. Requires AI enabled + an API key ([[AI Assist]]).
+- **Crop / extract (wizard)** — box one or more regions across pages, then turn
+  them into editable documents. **Claude reads each region and decides what it
+  is**: a **table/BOM** is rebuilt into an **Excel** sheet (one worksheet per
+  table), and a **body of prose** (a note, description, instructions) goes into a
+  **Word** document for easy editing. A **Markdown** option skips the routing and
+  dumps *everything* into one `.md` (tables as markdown tables, text as text).
+  You can also keep the raw **PNG** crops. Without an API key it falls back to
+  **OCR** text (tables won't be structured) — enable Claude in [[AI Assist]] for
+  table detection.
 
 Related: [[Viewer]] · [[Settings]] · [[Wire Numbers]]
 

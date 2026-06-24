@@ -265,9 +265,11 @@ class CropWizard(QObject):
         self.regions_by_page = {}
         QMessageBox.information(
             self.win, "Crop / extract",
-            "Drag a box around a region to capture (e.g. a device label). "
-            "You can add several across pages; navigate with the Pages/Bookmarks "
-            "panel or scroll.")
+            "Drag a box around anything you want to pull out of the drawing — a "
+            "table/BOM, a block of notes or instructions, a device label. Add as "
+            "many regions across pages as you like (navigate with the "
+            "Pages/Bookmarks panel or scroll). At the end you choose the output: "
+            "tables → Excel, text → Word, or everything → Markdown.")
         self._begin_pick()
 
     def _begin_pick(self):
@@ -301,20 +303,40 @@ class CropWizard(QObject):
     def _finish(self):
         if not self.regions_by_page:
             return
-        dlg = QDialog(self.win)
-        dlg.setWindowTitle("Export cropped regions")
-        lay = QVBoxLayout(dlg)
-        lay.addWidget(QLabel("Cropped regions are saved as PNGs."))
-        ai_cb = QCheckBox("Also build a TAG / DESCRIPTION table with Claude")
         cfg = self.win.config
         from ..extraction import claude_api
         ai_ok = bool(getattr(cfg, "ai_enabled", False)) and \
             claude_api.available(getattr(cfg, "ai_api_key", ""))
-        ai_cb.setEnabled(ai_ok)
-        ai_cb.setChecked(ai_ok)
-        if not ai_ok:
-            ai_cb.setText(ai_cb.text() + "  (enable AI + set API key in Settings)")
-        lay.addWidget(ai_cb)
+        try:
+            from ..extraction import ocr as _ocr
+            ocr_ok = _ocr.available()
+        except Exception:
+            ocr_ok = False
+
+        dlg = QDialog(self.win)
+        dlg.setWindowTitle("Export captured regions")
+        lay = QVBoxLayout(dlg)
+        if ai_ok:
+            note = ("Claude reads each region and splits it into tables (→ Excel) "
+                    "and prose/notes (→ Word). Markdown puts everything in one file.")
+        elif ocr_ok:
+            note = ("No AI key — regions are OCR-read as plain text (tables won't be "
+                    "structured). Enable Claude in Settings for table detection.")
+        else:
+            note = ("No AI or OCR available — only the cropped PNGs can be saved. "
+                    "Enable Claude or Tesseract in Settings to capture text.")
+        nlbl = QLabel(note); nlbl.setWordWrap(True); lay.addWidget(nlbl)
+
+        cb_excel = QCheckBox("Tables → Excel (.xlsx)")
+        cb_word = QCheckBox("Text → Word (.docx)")
+        cb_md = QCheckBox("Everything → Markdown (.md)")
+        cb_png = QCheckBox("Also save cropped PNGs")
+        cb_excel.setChecked(ai_ok or ocr_ok)
+        cb_word.setChecked(ai_ok or ocr_ok)
+        cb_png.setChecked(not (ai_ok or ocr_ok))
+        for cb in (cb_excel, cb_word, cb_md, cb_png):
+            lay.addWidget(cb)
+
         btns = QHBoxLayout()
         ok = QPushButton("Export"); ok.setDefault(True); ok.clicked.connect(dlg.accept)
         cx = QPushButton("Cancel"); cx.clicked.connect(dlg.reject)
@@ -322,46 +344,110 @@ class CropWizard(QObject):
         lay.addLayout(btns)
         if dlg.exec() != QDialog.Accepted:
             return
+
+        formats = set()
+        if cb_excel.isChecked():
+            formats.add("excel")
+        if cb_word.isChecked():
+            formats.add("word")
+        if cb_md.isChecked():
+            formats.add("markdown")
+        save_png = cb_png.isChecked()
+        if not formats and not save_png:
+            QMessageBox.information(self.win, "Nothing selected",
+                                    "Choose at least one output.")
+            return
+
         out_dir = QFileDialog.getExistingDirectory(self.win, "Choose output folder")
         if not out_dir:
             return
         src = self.win.document.path
         regions = dict(self.regions_by_page)
-        use_ai = ai_cb.isChecked()
         ai_key = getattr(cfg, "ai_api_key", "")
         ai_model = getattr(cfg, "ai_model", "claude-opus-4-8")
         base = os.path.splitext(os.path.basename(src))[0]
 
         def fn(progress, cancel):
-            pngs = ops.crop_regions_to_png(src, out_dir, regions,
-                                           progress=progress, cancel=cancel)
-            rows = None
-            if use_ai and not cancel():
-                from ..extraction import claude_api as capi
+            from . import region_export
+            results = []
+            if formats:
+                items = [(pg, i, r) for pg in sorted(regions)
+                         for i, r in enumerate(regions[pg])]
+                total = len(items)
                 doc = fitz.open(src)
-                pixmaps = []
-                for pg in sorted(regions):
-                    for r in regions[pg]:
-                        pixmaps.append(doc[pg].get_pixmap(
-                            matrix=fitz.Matrix(3, 3), clip=fitz.Rect(*r), alpha=False))
-                doc.close()
-                rows = capi.tag_descriptions(pixmaps, api_key=ai_key, model=ai_model)
-                if rows:
-                    _write_tag_table(rows, os.path.join(out_dir, f"{base}_tags.xlsx"))
-            return (pngs, rows)
+                try:
+                    for done_n, (pg, i, rect) in enumerate(items, 1):
+                        if cancel():
+                            break
+                        pix = doc[pg].get_pixmap(matrix=fitz.Matrix(3, 3),
+                                                 clip=fitz.Rect(*rect), alpha=False)
+                        results.append(_classify_region(
+                            pix, pg, i, ai_ok, ocr_ok, ai_key, ai_model))
+                        progress(done_n, total)
+                finally:
+                    doc.close()
+            written = region_export.export_regions(results, out_dir, base, formats) \
+                if formats else []
+            pngs = []
+            if save_png and not cancel():
+                pngs = ops.crop_regions_to_png(src, out_dir, regions, cancel=cancel)
+            return (written, pngs, results)
 
         def done(result):
-            pngs, rows = result
-            msg = f"Saved {len(pngs)} PNG(s) to:\n{out_dir}"
-            if rows:
-                msg += f"\n\nTAG/DESCRIPTION table: {base}_tags.xlsx ({len(rows)} rows)"
-            elif use_ai:
-                msg += "\n\n(AI returned no rows — check the API key/quota.)"
-            QMessageBox.information(self.win, "Done", msg)
+            written, pngs, results = result
+            n_tab = sum(1 for r in results if r.get("type") == "table")
+            n_txt = len(results) - n_tab
+            lines = [f"Captured {len(results)} region(s) "
+                     f"({n_tab} table, {n_txt} text)."]
+            for p in written:
+                lines.append(f"• {os.path.basename(p)}")
+            if pngs:
+                lines.append(f"• {len(pngs)} PNG(s)")
+            lines.append(f"\nIn: {out_dir}")
+            QMessageBox.information(self.win, "Done", "\n".join(lines))
 
         self._task = run_with_progress(
-            self.win, "Cropping regions…", fn, done,
-            on_error=lambda m: QMessageBox.warning(self.win, "Crop failed", m))
+            self.win, "Reading captured regions…", fn, done,
+            on_error=lambda m: QMessageBox.warning(self.win, "Capture failed", m))
+
+
+def _ocr_pix(pix) -> str:
+    """OCR a rendered pixmap to plain text (''. on any failure)."""
+    try:
+        import io
+        import pytesseract
+        from PIL import Image
+        return (pytesseract.image_to_string(
+            Image.open(io.BytesIO(pix.tobytes("png")))) or "").strip()
+    except Exception:
+        return ""
+
+
+def _classify_region(pix, page, index, ai_ok, ocr_ok, ai_key, ai_model) -> dict:
+    """Turn one rendered region into a result dict for region_export.
+
+    Uses Claude to classify table vs prose when available; otherwise OCR's the
+    region as plain text (type='text').  Never raises.
+    """
+    res = {}
+    if ai_ok:
+        try:
+            from ..extraction import claude_api
+            res = claude_api.extract_region_content(
+                pix, model=ai_model, api_key=ai_key) or {}
+        except Exception:
+            res = {}
+    if not res:
+        text = _ocr_pix(pix) if ocr_ok else ""
+        res = {"type": "text", "title": "", "rows": [], "text": text}
+    return {
+        "page": page,
+        "index": index,
+        "type": "table" if res.get("type") == "table" else "text",
+        "title": res.get("title", ""),
+        "rows": res.get("rows", []),
+        "text": res.get("text", ""),
+    }
 
 
 def _write_tag_table(rows, path):
