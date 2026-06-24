@@ -306,6 +306,19 @@ class SidecarDB:
                 included INTEGER,
                 flags TEXT
             );
+            CREATE TABLE IF NOT EXISTS components (
+                label TEXT,
+                family TEXT,
+                number TEXT,
+                sheet INTEGER,
+                rung INTEGER,
+                comp_type TEXT,
+                page INTEGER,
+                source TEXT,
+                count INTEGER,
+                included INTEGER,
+                flags TEXT
+            );
             CREATE TABLE IF NOT EXISTS meta (
                 key TEXT PRIMARY KEY,
                 value TEXT
@@ -382,6 +395,46 @@ class SidecarDB:
                 out.append(WireNumber(
                     label=r["label"], sheet=r["sheet"], rung=r["rung"],
                     wire_index=r["wire_index"], wire_type=r["wire_type"],
+                    page=r["page"], source=r["source"], count=r["count"],
+                    included=bool(r["included"]),
+                    flags=json.loads(r["flags"] or "[]"),
+                ))
+            except Exception:
+                continue
+        return out
+
+    # -- component cache -----------------------------------------------------
+
+    def save_components(self, components: Iterable) -> None:
+        self.conn.execute("DELETE FROM components")
+        rows = [
+            (
+                c.label, c.family, c.number, c.sheet, c.rung, c.comp_type,
+                c.page, c.source, c.count, int(c.included),
+                json.dumps(list(c.flags)),
+            )
+            for c in components
+        ]
+        self.conn.executemany(
+            "INSERT INTO components (label, family, number, sheet, rung, "
+            "comp_type, page, source, count, included, flags) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            rows,
+        )
+        self.conn.commit()
+
+    def load_components(self) -> list:
+        from ..extraction.component_parser import ComponentLabel
+        try:
+            cur = self.conn.execute("SELECT * FROM components")
+        except Exception:
+            return []
+        out = []
+        for r in cur.fetchall():
+            try:
+                out.append(ComponentLabel(
+                    label=r["label"], family=r["family"], number=r["number"],
+                    sheet=r["sheet"], rung=r["rung"], comp_type=r["comp_type"],
                     page=r["page"], source=r["source"], count=r["count"],
                     included=bool(r["included"]),
                     flags=json.loads(r["flags"] or "[]"),

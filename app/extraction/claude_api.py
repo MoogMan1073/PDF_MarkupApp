@@ -201,6 +201,119 @@ def read_text_region(pix, model: str = DEFAULT_MODEL, api_key: Optional[str] = N
         model=model, api_key=api_key, max_tokens=256)
 
 
+def _build_component_prompt(families, img_w=0, img_h=0) -> str:
+    fam = ", ".join(sorted({str(f).strip().upper() for f in families if str(f).strip()}))
+    dims = (f"The image is {img_w}x{img_h} pixels. " if img_w and img_h else "")
+    return (
+        "You are reading an electrical/controls drawing sheet. Find EVERY "
+        "component/device tag: a short identifier of a FAMILY code (1-4 letters) "
+        "followed by a number, e.g. LT-10010, CR-30024, PB-301, FU100. The number "
+        "usually encodes the sheet and rung the device sits on. Read tags exactly "
+        "as printed (the separator may be a hyphen, space, or nothing).\n\n"
+        + (f"Common family codes on this job: {fam}.\n\n" if fam else "")
+        + f"{dims}Return ONLY a JSON array (no prose, no fences). Each element: "
+        '{"label": str, "family": str, "is_component": bool, "confidence": 0..1, '
+        '"bbox": [x0,y0,x1,y1]} where bbox is in image pixels. Set '
+        "is_component=false for wire numbers, rung numbers, notes and titles - "
+        "true only for device/component tags."
+    )
+
+
+def read_component_region(pix, families=(), model: str = DEFAULT_MODEL,
+                          max_tokens: int = 4096,
+                          api_key: Optional[str] = None) -> list:
+    """Send a rendered region to Claude and return parsed component dicts.
+
+    Returns ``[]`` on any failure so callers fall back to OCR + rules.
+    """
+    key = resolve_key(api_key)
+    if not (sdk_installed() and key):
+        return []
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=key)
+        b64 = _pixmap_to_png_b64(pix)
+        prompt = _build_component_prompt(
+            families, getattr(pix, "width", 0), getattr(pix, "height", 0))
+        msg = client.messages.create(
+            model=model, max_tokens=max_tokens,
+            messages=[{"role": "user", "content": [
+                {"type": "image", "source": {
+                    "type": "base64", "media_type": "image/png", "data": b64}},
+                {"type": "text", "text": prompt},
+            ]}])
+        parts = [b.text for b in msg.content if getattr(b, "type", None) == "text"]
+        return _extract_json("".join(parts))
+    except Exception:
+        return []
+
+
+# --- crop / extract: classify a region as a table or a body of prose --------
+
+REGION_CONTENT_PROMPT = (
+    "This image is a region cropped from an engineering/technical PDF. Read ALL "
+    "of its text exactly. Decide whether the content is primarily a TABLE (e.g. a "
+    "bill of materials, schedule, or grid with rows and columns) or a body of "
+    "PROSE/free text (e.g. a note, description, or instructions).\n\n"
+    "Return ONLY one JSON object (no prose, no fences):\n"
+    '{"type": "table" | "text", "title": str, '
+    '"rows": [[cell, cell, ...], ...], "text": str}\n'
+    "For a table, fill \"rows\" with the cell grid (first row = headers if any) "
+    "and set \"text\" to \"\". For prose, fill \"text\" with the full readable "
+    "text (keep line/paragraph breaks) and set \"rows\" to []. \"title\" is a "
+    "short caption if one is visible, else \"\"."
+)
+
+
+def extract_region_content(pix, model: str = DEFAULT_MODEL,
+                           max_tokens: int = 4096,
+                           api_key: Optional[str] = None) -> dict:
+    """Classify + transcribe a cropped region.
+
+    Returns ``{"type": "table"|"text", "title": str, "rows": list, "text": str}``
+    or ``{}`` on failure (caller falls back to a plain OCR/text dump).
+    """
+    text = _vision_call([pix], REGION_CONTENT_PROMPT, model=model,
+                        api_key=api_key, max_tokens=max_tokens)
+    if not text:
+        return {}
+    obj = _extract_json_object(text)
+    if not isinstance(obj, dict):
+        return {}
+    kind = "table" if str(obj.get("type", "")).lower().startswith("tab") else "text"
+    rows = obj.get("rows") or []
+    norm_rows = []
+    if isinstance(rows, list):
+        for r in rows:
+            if isinstance(r, list):
+                norm_rows.append([("" if c is None else str(c)) for c in r])
+            else:
+                norm_rows.append([str(r)])
+    return {
+        "type": kind,
+        "title": str(obj.get("title", "")).strip(),
+        "rows": norm_rows,
+        "text": str(obj.get("text", "")).strip(),
+    }
+
+
+def _extract_json_object(text: str):
+    """Pull a single JSON object out of a model response, defensively."""
+    text = text.strip()
+    text = re.sub(r"^```(?:json)?", "", text).strip()
+    text = re.sub(r"```$", "", text).strip()
+    try:
+        return json.loads(text)
+    except Exception:
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except Exception:
+                return {}
+    return {}
+
+
 # default prompt for the crop -> TAG/DESCRIPTION table (mirrors the legacy
 # ChatGPT prompt the user kept in their old tool)
 TAG_PROMPT = (

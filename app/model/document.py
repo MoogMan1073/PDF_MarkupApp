@@ -32,6 +32,7 @@ class Document:
             ignore_patterns if ignore_patterns is not None else DEFAULT_IGNORE_PATTERNS
         )
         self.wires: list = []
+        self.components: list = []
         self._dirty = False
 
     # -- basic page access ---------------------------------------------------
@@ -74,8 +75,9 @@ class Document:
                 ann.ignored = True
             self.store.add(ann, silent=True)
 
-        # 3) cached wire numbers
+        # 3) cached wire numbers + component labels
         self.wires = self.sidecar.load_wires()
+        self.components = self.sidecar.load_components()
 
     # -- saving --------------------------------------------------------------
 
@@ -97,6 +99,8 @@ class Document:
         self.sidecar.save_annotations(self.store.all())
         if self.wires:
             self.sidecar.save_wires(self.wires)
+        if self.components:
+            self.sidecar.save_components(self.components)
         self.sidecar.set_meta("source_pdf", os.path.basename(self.path))
         self._dirty = False
         return out
@@ -110,6 +114,10 @@ class Document:
     def set_wires(self, wires: list) -> None:
         self.wires = wires
         self.sidecar.save_wires(wires)
+
+    def set_components(self, components: list) -> None:
+        self.components = components
+        self.sidecar.save_components(components)
 
     # -- lifecycle -----------------------------------------------------------
 

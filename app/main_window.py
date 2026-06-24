@@ -26,6 +26,7 @@ from .extraction import claude_api
 from .panels.comment_panel import CommentPanel
 from .panels.todo_panel import TodoPanel
 from .panels.wire_panel import WirePanel
+from .panels.component_panel import ComponentPanel
 from .panels.tools_panel import ToolsPanel, pdf_path_from_mime
 from .panels.nav_panel import NavPanel
 
@@ -155,6 +156,33 @@ class SettingsDialog(QDialog):
         fw.addRow(self.cross_check)
         lay.addWidget(gb_w)
 
+        # component labels (FAMILY-SHEETRUNG, e.g. LT-10010)
+        gb_cmp = QGroupBox("Component labels")
+        fcmp = QFormLayout(gb_cmp)
+        self.cmp_sheet_w = QSpinBox(); self.cmp_sheet_w.setRange(1, 6)
+        self.cmp_sheet_w.setValue(int(config.get("component/sheet_width")))
+        self.cmp_rung_w = QSpinBox(); self.cmp_rung_w.setRange(1, 6)
+        self.cmp_rung_w.setValue(int(config.get("component/rung_width")))
+        self.cmp_zero_pad = QCheckBox("Zero-pad fields")
+        self.cmp_zero_pad.setChecked(bool(config.get("component/zero_pad")))
+        self.cmp_method = QComboBox(); self.cmp_method.addItems(["AI assist", "OCR"])
+        self.cmp_method.setCurrentIndex(0 if config.component_extract_method == "ai" else 1)
+        self.cmp_labels_per = QSpinBox(); self.cmp_labels_per.setRange(1, 99)
+        self.cmp_labels_per.setValue(config.component_labels_per_device)
+        self.cmp_families = QPlainTextEdit(", ".join(config.component_families()))
+        self.cmp_families.setMaximumHeight(90)
+        self.cmp_families.setToolTip(
+            "Known device family codes (comma- or newline-separated), e.g. "
+            "LT, CR, PB. Labels with codes not listed here are still captured "
+            "but flagged 'unknown family'.")
+        fcmp.addRow("Sheet width:", self.cmp_sheet_w)
+        fcmp.addRow("Rung width:", self.cmp_rung_w)
+        fcmp.addRow(self.cmp_zero_pad)
+        fcmp.addRow("Scanned-page method:", self.cmp_method)
+        fcmp.addRow("Labels per device:", self.cmp_labels_per)
+        fcmp.addRow("Family codes:", self.cmp_families)
+        lay.addWidget(gb_cmp)
+
         # export
         gb_e = QGroupBox("Export defaults")
         fe = QFormLayout(gb_e)
@@ -234,6 +262,14 @@ class SettingsDialog(QDialog):
         c.set("wire/zero_pad", self.zero_pad.isChecked())
         c.set("wire/regex_override", self.regex.text())
         c.set("wire/cross_check_sheet", self.cross_check.isChecked())
+        c.set("component/sheet_width", self.cmp_sheet_w.value())
+        c.set("component/rung_width", self.cmp_rung_w.value())
+        c.set("component/zero_pad", self.cmp_zero_pad.isChecked())
+        c.set("component/extract_method", "ai" if self.cmp_method.currentIndex() == 0 else "ocr")
+        c.set("component/labels_per_device", self.cmp_labels_per.value())
+        import re as _re
+        fams = [f for f in _re.split(r"[,\n]+", self.cmp_families.toPlainText()) if f.strip()]
+        c.set_component_families(fams)
         c.set("export/labels_per_wire", self.labels_per.value())
         c.set("export/mode", self.exp_mode.currentText())
         c.set("export/format", self.exp_fmt.currentText())
@@ -319,13 +355,16 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.view, "Viewer")
         self.todo_panel = TodoPanel()
         self.wire_panel = WirePanel()
+        self.component_panel = ComponentPanel()
         self.tools_panel = ToolsPanel(self)
         self.tabs.addTab(self.todo_panel, "TODO")
         self.tabs.addTab(self.wire_panel, "Wire Numbers")
+        self.tabs.addTab(self.component_panel, "Component Labels")
         self.tabs.addTab(self.tools_panel, "PDF Tools")
         self.setCentralWidget(self.tabs)
 
         self.todo_panel.activated.connect(self._jump_to)
+        self.component_panel.activated.connect(self._jump_to)
 
         self._progress("Building the comment & TODO panels…", 85)
         # navigation dock (pages + bookmarks) on the left
@@ -593,6 +632,7 @@ class MainWindow(QMainWindow):
         self.comment_panel.set_store(doc.store, self.config)
         self.todo_panel.set_store(doc.store, self.config)
         self.wire_panel.set_document(doc, self.config)
+        self.component_panel.set_document(doc, self.config)
         self.nav_panel.set_document(doc)
         self.tools_panel.set_default_pdf(path)
         self.page_spin.setRange(1, max(1, doc.page_count))
@@ -755,6 +795,10 @@ class MainWindow(QMainWindow):
         self._save_ui_state()            # remember the dock layout + geometry
         try:
             self.wire_panel.shutdown()   # stop any running extraction thread
+        except Exception:
+            pass
+        try:
+            self.component_panel.shutdown()
         except Exception:
             pass
         try:

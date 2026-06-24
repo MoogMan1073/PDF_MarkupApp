@@ -13,6 +13,7 @@ from typing import Any
 from PySide6.QtCore import QSettings
 
 from .extraction.wire_parser import WireConfig
+from .extraction.component_parser import ComponentConfig, DEFAULT_FAMILY_CODES
 from .export.wire_export import WireExportOptions, SORT_NUMERICAL
 from .model.storage import DEFAULT_IGNORE_PATTERNS
 
@@ -36,6 +37,13 @@ DEFAULTS: dict = {
     "wire/zero_pad": True,
     "wire/regex_override": "",
     "wire/cross_check_sheet": False,
+    # component labels (FAMILY-SHEETRUNG, e.g. LT-10010)
+    "component/sheet_width": 3,
+    "component/rung_width": 2,
+    "component/zero_pad": True,
+    "component/families": json.dumps(list(DEFAULT_FAMILY_CODES)),
+    "component/extract_method": "ai",   # "ai" | "ocr" for scanned pages
+    "component/labels_per_device": 1,
     # export
     "export/labels_per_wire": 2,
     "export/mode": "single",        # "single" | "per_sheet"
@@ -122,6 +130,43 @@ class AppConfig:
             regex_override=str(self.get("wire/regex_override") or ""),
             cross_check_sheet=bool(self.get("wire/cross_check_sheet")),
         )
+
+    def component_families(self) -> list:
+        raw = self.get("component/families")
+        try:
+            val = json.loads(raw) if isinstance(raw, str) else list(raw)
+            if isinstance(val, list):
+                return [str(f).strip().upper() for f in val if str(f).strip()]
+        except Exception:
+            pass
+        return list(DEFAULT_FAMILY_CODES)
+
+    def set_component_families(self, families: list) -> None:
+        cleaned = []
+        seen = set()
+        for f in families:
+            f = str(f).strip().upper()
+            if f and f not in seen:
+                seen.add(f)
+                cleaned.append(f)
+        self.set("component/families", json.dumps(cleaned))
+
+    def component_config(self) -> ComponentConfig:
+        return ComponentConfig(
+            sheet_width=int(self.get("component/sheet_width")),
+            rung_width=int(self.get("component/rung_width")),
+            zero_pad=bool(self.get("component/zero_pad")),
+            families=tuple(self.component_families()),
+        )
+
+    @property
+    def component_extract_method(self) -> str:
+        m = str(self.get("component/extract_method") or "ai").lower()
+        return m if m in ("ai", "ocr") else "ai"
+
+    @property
+    def component_labels_per_device(self) -> int:
+        return max(1, int(self.get("component/labels_per_device")))
 
     def export_options(self) -> WireExportOptions:
         return WireExportOptions(
