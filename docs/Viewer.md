@@ -28,6 +28,15 @@ The current page number updates automatically as you scroll. The left
 **Navigation** pane (page thumbnails + bookmarks) and the right **Comments**
 pane toggle with **F9** and **F10**.
 
+## Arranging the panels
+
+The **Navigation** and **Comments** panes are dockable, Visual-Studio-style:
+**drag a pane's title bar** to snap it to any edge (left, right, top or bottom),
+drop it onto another pane to **tab** them together, split panes side-by-side, or
+pull one out of the window to **float** it. Your arrangement (and the window
+size) is **remembered between sessions**; **View ▸ Reset panel layout** puts
+everything back to the default.
+
 ## Select & copy text
 
 With the **Select** tool active, **drag across text** to highlight it (just like

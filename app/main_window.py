@@ -292,6 +292,12 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(app_icon())
         self.resize(1320, 880)
         self.setAcceptDrops(True)   # drop a PDF anywhere to open it
+        # Visual-Studio-style dockable panels: drag a pane's title bar to snap it
+        # to any edge (left/right/top/bottom), split panes side-by-side, tab them
+        # together, or float them out of the window.
+        self.setDockOptions(
+            QMainWindow.AnimatedDocks | QMainWindow.AllowNestedDocks
+            | QMainWindow.AllowTabbedDocks | QMainWindow.GroupedDragging)
         self.config = AppConfig()
         self.document = None
 
@@ -326,8 +332,9 @@ class MainWindow(QMainWindow):
         self.nav_panel = NavPanel()
         self.nav_panel.pageActivated.connect(self.view.go_to_page)
         nav_dock = QDockWidget("Navigation", self)
+        nav_dock.setObjectName("NavDock")
         nav_dock.setWidget(self.nav_panel)
-        nav_dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        nav_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
         self.addDockWidget(Qt.LeftDockWidgetArea, nav_dock)
         self.nav_dock = nav_dock
 
@@ -336,8 +343,9 @@ class MainWindow(QMainWindow):
         self.comment_panel.activated.connect(self._jump_to)
         self.comment_panel.deleteRequested.connect(self._delete_annotation)
         dock = QDockWidget("Comments", self)
+        dock.setObjectName("CommentDock")
         dock.setWidget(self.comment_panel)
-        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        dock.setAllowedAreas(Qt.AllDockWidgetAreas)
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
         self.comment_dock = dock
 
@@ -346,6 +354,11 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._build_toolbar()
         self._update_actions_enabled(False)
+
+        # Remember the freshly-built default arrangement (for "Reset panel
+        # layout"), then apply whatever layout the user left last session.
+        self._default_state = self.saveState()
+        self._restore_ui_state()
 
     # -- menu / toolbar ------------------------------------------------------
 
@@ -384,6 +397,8 @@ class MainWindow(QMainWindow):
             "Toggle navigation panel",
             lambda: self.nav_dock.setVisible(not self.nav_dock.isVisible()))
         act_nav.setShortcut("F9")
+        m_view.addSeparator()
+        m_view.addAction("Reset panel layout", self.reset_layout)
 
         m_tools = mb.addMenu("&Tools")
         m_tools.addAction("Extract pages (visual)…", lambda: self.tools_panel.show_operation("extract"))
@@ -423,6 +438,7 @@ class MainWindow(QMainWindow):
 
     def _build_toolbar(self):
         tb = QToolBar("Tools")
+        tb.setObjectName("MainToolBar")
         tb.setMovable(False)
         self.addToolBar(tb)
 
@@ -690,9 +706,11 @@ class MainWindow(QMainWindow):
         # Force the dock layout to settle once the window is on screen so the
         # nav/comment separators are draggable from the start (otherwise the
         # splitter only becomes active after the dock is hidden and reshown).
+        # Skip the default sizing when a saved layout was restored.
         if not getattr(self, "_docks_sized", False):
             self._docks_sized = True
-            QTimer.singleShot(0, self._init_dock_sizes)
+            if not getattr(self, "_state_restored", False):
+                QTimer.singleShot(0, self._init_dock_sizes)
 
     def _init_dock_sizes(self):
         try:
@@ -701,7 +719,40 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    # -- dock layout persistence (Visual-Studio-style) ----------------------
+
+    def _restore_ui_state(self):
+        """Apply the window geometry + dock layout saved last session."""
+        self._state_restored = False
+        try:
+            geo = self.config.s.value("ui/geometry")
+            state = self.config.s.value("ui/window_state")
+            if geo:
+                self.restoreGeometry(geo)
+            if state and self.restoreState(state):
+                self._state_restored = True
+        except Exception:
+            self._state_restored = False
+
+    def _save_ui_state(self):
+        try:
+            self.config.s.setValue("ui/geometry", self.saveGeometry())
+            self.config.s.setValue("ui/window_state", self.saveState())
+            self.config.s.sync()
+        except Exception:
+            pass
+
+    def reset_layout(self):
+        """Restore the panes to their default docked arrangement."""
+        if getattr(self, "_default_state", None) is not None:
+            self.restoreState(self._default_state)
+        for d in (self.nav_dock, self.comment_dock):
+            d.setFloating(False)
+            d.show()
+        self._init_dock_sizes()
+
     def closeEvent(self, event):
+        self._save_ui_state()            # remember the dock layout + geometry
         try:
             self.wire_panel.shutdown()   # stop any running extraction thread
         except Exception:
