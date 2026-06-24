@@ -48,9 +48,9 @@ _© DSI Innovations, LLC 2026_
   combine, insert, swap, and convert to Word. A guided **sheet-number split**
   wizard (box the title-block number; works on rotated and scanned sets) and a
   **crop/extract** wizard that uses Claude to turn captured regions into editable
-  docs — **tables → Excel, prose → Word, or everything → Markdown** (OCR text
-  fallback without a key). **Drag a PDF onto the window** to open it in the viewer
-  or the tools.
+  docs — **tables → Excel, prose → Word, or everything → Markdown** (OCR with
+  best-effort table reconstruction when no key is set). **Drag a PDF onto the
+  window** to open it in the viewer or the tools.
 - **Navigation dock** — page thumbnails + PDF bookmarks for jumping around a set.
 - **Built-in user manual** — **Help ▸ User Manual** opens a read-only, Obsidian-style
   vault (the `docs/` folder) with a page list, clickable `#tags`, `[[wikilinks]]` and

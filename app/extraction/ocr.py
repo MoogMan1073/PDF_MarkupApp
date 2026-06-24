@@ -74,3 +74,114 @@ def ocr_page(page: "fitz.Page", page_index: int,
 
 def is_low_confidence(token: Token) -> bool:
     return token.source == SOURCE_OCR and token.confidence * 100.0 < LOW_CONF
+
+
+# --- best-effort table reconstruction from OCR geometry ---------------------
+
+
+def words_to_structured(words, gutter_frac: float = 0.9,
+                        min_table_rows: int = 2) -> dict:
+    """Reconstruct a table (or prose) from positioned OCR words.
+
+    ``words`` is a list of dicts ``{left, top, width, text, line}`` where
+    ``line`` groups words on the same text line.  Columns are found from the
+    vertical **whitespace gutters** that run between word blocks across the whole
+    region; a gutter wider than ``gutter_frac × median word width`` separates two
+    columns.  Returns the region-content shape used by the crop exporter::
+
+        {"type": "table"|"text", "title": "", "rows": [[...]], "text": str}
+
+    A region is called a *table* only when it has >=2 columns, >=2 rows, and at
+    least half its rows fill more than one column; otherwise it is prose.
+    """
+    words = [w for w in words if str(w.get("text", "")).strip()]
+    if not words:
+        return {"type": "text", "title": "", "rows": [], "text": ""}
+
+    lines: dict = {}
+    for w in words:
+        lines.setdefault(w["line"], []).append(w)
+    line_ids = sorted(lines, key=lambda lid: min(x["top"] for x in lines[lid]))
+
+    widths = sorted(int(w["width"]) for w in words)
+    med_w = widths[len(widths) // 2] or 10
+    gutter_min = max(10.0, gutter_frac * med_w)
+
+    # merge covered x-intervals across all words, then split at wide gutters
+    ivs = sorted([int(w["left"]), int(w["left"]) + int(w["width"])] for w in words)
+    merged = [list(ivs[0])]
+    for a, b in ivs[1:]:
+        if a <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    boundaries = []
+    for i in range(len(merged) - 1):
+        if merged[i + 1][0] - merged[i][1] >= gutter_min:
+            boundaries.append((merged[i][1] + merged[i + 1][0]) / 2.0)
+
+    def col_of(x):
+        c = 0
+        for b in boundaries:
+            if x >= b:
+                c += 1
+            else:
+                break
+        return c
+
+    n_cols = len(boundaries) + 1
+    grid = []
+    multi = 0
+    for lid in line_ids:
+        cells = [""] * n_cols
+        for w in sorted(lines[lid], key=lambda z: z["left"]):
+            c = col_of(int(w["left"]))
+            cells[c] = (cells[c] + " " + w["text"]).strip() if cells[c] else w["text"]
+        grid.append(cells)
+        if sum(1 for c in cells if c) >= 2:
+            multi += 1
+
+    n_rows = len(grid)
+    is_table = (n_cols >= 2 and n_rows >= min_table_rows
+                and multi >= max(2, n_rows / 2))
+    if is_table:
+        return {"type": "table", "title": "", "rows": grid, "text": ""}
+    text = "\n".join(
+        " ".join(w["text"] for w in sorted(lines[lid], key=lambda z: z["left"]))
+        for lid in line_ids)
+    return {"type": "text", "title": "", "rows": [], "text": text}
+
+
+def ocr_structured(pix) -> dict:
+    """OCR a rendered region and reconstruct a table/prose result.
+
+    Returns the region-content dict (see :func:`words_to_structured`) or ``{}``
+    when OCR is unavailable / fails so callers can fall back.
+    """
+    if not available():
+        return {}
+    import io
+    import pytesseract
+    from PIL import Image
+    try:
+        img = Image.open(io.BytesIO(pix.tobytes("png")))
+        data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+    except Exception:
+        return {}
+    words = []
+    n = len(data.get("text", []))
+    for i in range(n):
+        t = (data["text"][i] or "").strip()
+        if not t:
+            continue
+        try:
+            if float(data["conf"][i]) < 0:
+                continue
+        except (ValueError, TypeError):
+            continue
+        words.append({
+            "left": int(data["left"][i]), "top": int(data["top"][i]),
+            "width": int(data["width"][i]), "text": t,
+            "line": (data["block_num"][i], data["par_num"][i], data["line_num"][i]),
+        })
+    return words_to_structured(words)

@@ -74,8 +74,9 @@ Scanned pages without text are read with **OCR or Claude** when enabled
   **Word** document for easy editing. A **Markdown** option skips the routing and
   dumps *everything* into one `.md` (tables as markdown tables, text as text).
   You can also keep the raw **PNG** crops. Without an API key it falls back to
-  **OCR** text (tables won't be structured) — enable Claude in [[AI Assist]] for
-  table detection.
+  **OCR**, reconstructing tables **best-effort** from text alignment (less
+  reliable than Claude) — enable Claude in [[AI Assist]] for the most accurate
+  tables.
 
 Related: [[Viewer]] · [[Settings]] · [[Wire Numbers]]
 

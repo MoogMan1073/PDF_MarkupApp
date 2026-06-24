@@ -320,8 +320,9 @@ class CropWizard(QObject):
             note = ("Claude reads each region and splits it into tables (→ Excel) "
                     "and prose/notes (→ Word). Markdown puts everything in one file.")
         elif ocr_ok:
-            note = ("No AI key — regions are OCR-read as plain text (tables won't be "
-                    "structured). Enable Claude in Settings for table detection.")
+            note = ("No AI key — regions are OCR-read; tables are reconstructed "
+                    "best-effort from text alignment (less reliable than Claude). "
+                    "Enable Claude in Settings for the most accurate tables.")
         else:
             note = ("No AI or OCR available — only the cropped PNGs can be saved. "
                     "Enable Claude or Tesseract in Settings to capture text.")
@@ -411,18 +412,6 @@ class CropWizard(QObject):
             on_error=lambda m: QMessageBox.warning(self.win, "Capture failed", m))
 
 
-def _ocr_pix(pix) -> str:
-    """OCR a rendered pixmap to plain text (''. on any failure)."""
-    try:
-        import io
-        import pytesseract
-        from PIL import Image
-        return (pytesseract.image_to_string(
-            Image.open(io.BytesIO(pix.tobytes("png")))) or "").strip()
-    except Exception:
-        return ""
-
-
 def _classify_region(pix, page, index, ai_ok, ocr_ok, ai_key, ai_model) -> dict:
     """Turn one rendered region into a result dict for region_export.
 
@@ -437,9 +426,15 @@ def _classify_region(pix, page, index, ai_ok, ocr_ok, ai_key, ai_model) -> dict:
                 pix, model=ai_model, api_key=ai_key) or {}
         except Exception:
             res = {}
+    if not res and ocr_ok:
+        # best-effort: reconstruct a table from OCR geometry, else prose text
+        try:
+            from ..extraction import ocr as _ocr
+            res = _ocr.ocr_structured(pix) or {}
+        except Exception:
+            res = {}
     if not res:
-        text = _ocr_pix(pix) if ocr_ok else ""
-        res = {"type": "text", "title": "", "rows": [], "text": text}
+        res = {"type": "text", "title": "", "rows": [], "text": ""}
     return {
         "page": page,
         "index": index,

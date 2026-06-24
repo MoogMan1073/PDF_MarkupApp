@@ -101,6 +101,45 @@ class TestWriters(unittest.TestCase):
         self.assertEqual(names, ["d_text.docx"])
 
 
+class TestOcrStructured(unittest.TestCase):
+    """Best-effort table reconstruction from positioned OCR words (no Tesseract)."""
+
+    @staticmethod
+    def _grid_words():
+        # two columns (x~10 and x~210) over three lines -> a table
+        words = []
+        rows = [("Item", "Qty"), ("Pump", "2"), ("Valve", "5")]
+        for r, (a, b) in enumerate(rows):
+            top = 10 + r * 30
+            words.append({"left": 10, "top": top, "width": 60, "text": a, "line": r})
+            words.append({"left": 210, "top": top, "width": 30, "text": b, "line": r})
+        return words
+
+    def test_detects_table_columns(self):
+        from app.extraction.ocr import words_to_structured
+        out = words_to_structured(self._grid_words())
+        self.assertEqual(out["type"], "table")
+        self.assertEqual(out["rows"][0], ["Item", "Qty"])
+        self.assertEqual(out["rows"][2], ["Valve", "5"])
+
+    def test_prose_when_single_column(self):
+        from app.extraction.ocr import words_to_structured
+        words = [
+            {"left": 10, "top": 10, "width": 40, "text": "Install", "line": 0},
+            {"left": 55, "top": 10, "width": 30, "text": "per", "line": 0},
+            {"left": 90, "top": 10, "width": 40, "text": "spec.", "line": 0},
+            {"left": 10, "top": 40, "width": 50, "text": "Torque", "line": 1},
+            {"left": 65, "top": 40, "width": 20, "text": "40", "line": 1},
+        ]
+        out = words_to_structured(words)
+        self.assertEqual(out["type"], "text")
+        self.assertIn("Install per spec.", out["text"])
+
+    def test_empty_words(self):
+        from app.extraction.ocr import words_to_structured
+        self.assertEqual(words_to_structured([])["type"], "text")
+
+
 class TestClassifyRegion(unittest.TestCase):
     def test_ai_path(self):
         import app.tools.wizards as wiz
