@@ -127,15 +127,16 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.config = config
         self.setWindowTitle("Settings")
-        self.resize(520, 560)
+        self.resize(560, 470)
         lay = QVBoxLayout(self)
+        tabs = QTabWidget()
+        lay.addWidget(tabs, 1)
 
         # identity
         gb_id = QGroupBox("Identity")
         f = QFormLayout(gb_id)
         self.name = QLineEdit(config.your_name)
         f.addRow("Your name (commenter):", self.name)
-        lay.addWidget(gb_id)
 
         # wire fields
         gb_w = QGroupBox("Wire number fields")
@@ -148,13 +149,18 @@ class SettingsDialog(QDialog):
         self.regex.setPlaceholderText(r"optional override, e.g. ^\d{6}$")
         self.cross_check = QCheckBox("Cross-check sheet (flag mismatches)")
         self.cross_check.setChecked(bool(config.get("wire/cross_check_sheet")))
+        self.wire_method = QComboBox(); self.wire_method.addItems(["AI assist", "OCR"])
+        self.wire_method.setCurrentIndex(0 if config.wire_extract_method == "ai" else 1)
+        self.wire_method.setToolTip(
+            "Default engine for scanned (no-text) pages in the Wire Numbers tab. "
+            "You can also switch it there per extraction.")
         fw.addRow("Sheet width:", self.sheet_w)
         fw.addRow("Rung width:", self.rung_w)
         fw.addRow("Wire-index width:", self.wire_w)
         fw.addRow(self.zero_pad)
         fw.addRow("Full-label regex:", self.regex)
         fw.addRow(self.cross_check)
-        lay.addWidget(gb_w)
+        fw.addRow("Scanned-page method:", self.wire_method)
 
         # component labels (FAMILY-SHEETRUNG, e.g. LT-10010)
         gb_cmp = QGroupBox("Component labels")
@@ -181,7 +187,6 @@ class SettingsDialog(QDialog):
         fcmp.addRow("Scanned-page method:", self.cmp_method)
         fcmp.addRow("Labels per device:", self.cmp_labels_per)
         fcmp.addRow("Family codes:", self.cmp_families)
-        lay.addWidget(gb_cmp)
 
         # export
         gb_e = QGroupBox("Export defaults")
@@ -194,7 +199,6 @@ class SettingsDialog(QDialog):
         fe.addRow("Labels per wire:", self.labels_per)
         fe.addRow("Default mode:", self.exp_mode)
         fe.addRow("Default format:", self.exp_fmt)
-        lay.addWidget(gb_e)
 
         # comments / junk
         gb_c = QGroupBox("Comments & junk filter")
@@ -208,7 +212,6 @@ class SettingsDialog(QDialog):
         fc.addRow(self.treat_todo)
         fc.addRow(self.show_ignored)
         fc.addRow("Ignore patterns (one regex/line):", self.ignore)
-        lay.addWidget(gb_c)
 
         # ocr / ai
         gb_a = QGroupBox("OCR & AI assist")
@@ -244,9 +247,21 @@ class SettingsDialog(QDialog):
         fa.addRow("Status:", self.ai_status)
         fa.addRow("AI model:", self.ai_model)
         fa.addRow("AI tiling (N×N, calls/page = N²):", self.ai_tiles)
-        lay.addWidget(gb_a)
         self._on_ai_toggled(self.ai.isChecked())
         self._refresh_api_status()
+
+        # organise the group boxes into tabs so the dialog never outgrows the
+        # screen (was a single tall column of every section stacked vertically)
+        def _page(*boxes):
+            w = QWidget(); v = QVBoxLayout(w)
+            for b in boxes:
+                v.addWidget(b)
+            v.addStretch(1)
+            return w
+        tabs.addTab(_page(gb_id, gb_e, gb_c), "General")
+        tabs.addTab(_page(gb_w), "Wire numbers")
+        tabs.addTab(_page(gb_cmp), "Component labels")
+        tabs.addTab(_page(gb_a), "OCR / AI")
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
@@ -262,6 +277,7 @@ class SettingsDialog(QDialog):
         c.set("wire/zero_pad", self.zero_pad.isChecked())
         c.set("wire/regex_override", self.regex.text())
         c.set("wire/cross_check_sheet", self.cross_check.isChecked())
+        c.set("wire/extract_method", "ai" if self.wire_method.currentIndex() == 0 else "ocr")
         c.set("component/sheet_width", self.cmp_sheet_w.value())
         c.set("component/rung_width", self.cmp_rung_w.value())
         c.set("component/zero_pad", self.cmp_zero_pad.isChecked())

@@ -37,6 +37,7 @@ DEFAULTS: dict = {
     "wire/zero_pad": True,
     "wire/regex_override": "",
     "wire/cross_check_sheet": False,
+    "wire/extract_method": "ai",   # "ai" | "ocr" for scanned pages
     # component labels (FAMILY-SHEETRUNG, e.g. LT-10010)
     "component/sheet_width": 3,
     "component/rung_width": 2,
@@ -158,6 +159,11 @@ class AppConfig:
             zero_pad=bool(self.get("component/zero_pad")),
             families=tuple(self.component_families()),
         )
+
+    @property
+    def wire_extract_method(self) -> str:
+        m = str(self.get("wire/extract_method") or "ai").lower()
+        return m if m in ("ai", "ocr") else "ai"
 
     @property
     def component_extract_method(self) -> str:

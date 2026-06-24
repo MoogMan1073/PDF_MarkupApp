@@ -160,6 +160,13 @@ class WirePanel(QWidget):
         top = QHBoxLayout()
         self.btn_extract = QPushButton("Extract wire numbers")
         self.btn_extract.clicked.connect(self.extract)
+        top.addWidget(self.btn_extract)
+        top.addWidget(QLabel("Scanned pages:"))
+        self.method = QComboBox(); self.method.addItems(["AI assist", "OCR"])
+        self.method.setToolTip("How to read pages that have no text layer "
+                               "(scanned drawings). Vector pages always use the "
+                               "text layer.")
+        top.addWidget(self.method)
         self.extract_progress = QProgressBar()
         self.extract_progress.setFixedWidth(220)
         self.extract_progress.setVisible(False)
@@ -167,7 +174,6 @@ class WirePanel(QWidget):
         self.btn_cancel.setVisible(False)
         self.btn_cancel.clicked.connect(self._cancel_extract)
         self.status = QLabel("Open a PDF, then extract.")
-        top.addWidget(self.btn_extract)
         top.addWidget(self.extract_progress)
         top.addWidget(self.btn_cancel)
         top.addWidget(self.status, 1)
@@ -242,6 +248,8 @@ class WirePanel(QWidget):
         self.document = document
         self.config = config
         self.wires = list(getattr(document, "wires", []) or [])
+        if config is not None:
+            self.method.setCurrentIndex(0 if config.wire_extract_method == "ai" else 1)
         if self.wires:
             self._populate()
             self.status.setText(f"{len(self.wires)} cached wire numbers (re-extract to refresh).")
@@ -258,8 +266,11 @@ class WirePanel(QWidget):
         if self._worker is not None and self._worker.isRunning():
             return
         cfg = self.config.wire_config() if self.config else None
-        ocr_enabled = bool(self.config and self.config.ocr_enabled)
-        ai_enabled = bool(self.config and self.config.ai_enabled)
+        # the tab's dropdown picks the engine for scanned pages (overrides the
+        # global enable toggles); vector pages always use the text layer
+        method = "ai" if self.method.currentIndex() == 0 else "ocr"
+        ai_enabled = method == "ai"
+        ocr_enabled = method == "ocr"
         ai_key = self.config.ai_api_key if self.config else ""
         ai_model = self.config.ai_model if self.config else "claude-opus-4-8"
         ai_tiles = self.config.ai_tiles if self.config else 2
@@ -270,7 +281,12 @@ class WirePanel(QWidget):
             try:
                 from ..extraction import claude_api
                 from ..extraction.text_extract import page_has_text
-                if claude_api.available(ai_key):
+                if not claude_api.available(ai_key):
+                    QMessageBox.information(
+                        self, "AI not available",
+                        "Claude AI assist isn't configured. Add an API key in "
+                        "Settings, or choose OCR for scanned pages.")
+                else:
                     scanned = sum(1 for i in range(self.document.page_count)
                                   if not page_has_text(self.document.fitz_doc[i]))
                     if scanned > 0:
@@ -337,8 +353,8 @@ class WirePanel(QWidget):
             if scanned and not summary.get("ai_used") and not summary.get("ocr_used"):
                 self.status.setText(
                     f"No wire numbers found — {scanned} page(s) are scanned images "
-                    f"with no text. Enable Claude AI assist (or OCR) in Settings, "
-                    f"then extract again.")
+                    f"with no text. Pick AI assist (or OCR) for scanned pages and "
+                    f"try again.")
             elif summary.get("ai_used"):
                 self.status.setText(
                     "No wire numbers found. The AI didn't return any labels — the "
