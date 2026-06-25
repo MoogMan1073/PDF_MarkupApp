@@ -386,7 +386,7 @@ class MainWindow(QMainWindow):
         self._progress("Building the comment & TODO panels…", 85)
         # navigation dock (pages + bookmarks) on the left
         self.nav_panel = NavPanel()
-        self.nav_panel.pageActivated.connect(self.view.go_to_page)
+        self.nav_panel.pageActivated.connect(self._nav_to_page)
         nav_dock = QDockWidget("Navigation", self)
         nav_dock.setObjectName("NavDock")
         nav_dock.setWidget(self.nav_panel)
@@ -535,9 +535,9 @@ class MainWindow(QMainWindow):
 
         # rotate whole document (permanent — writes a rotated copy)
         act_ccw = tb.addAction("↺", lambda: self.rotate_all_pages(270))
-        act_ccw.setToolTip("Rotate ALL pages 90° counter-clockwise and save a new PDF")
+        act_ccw.setToolTip("Rotate the view 90° counter-clockwise (in memory; marks rotate too)")
         act_cw = tb.addAction("↻", lambda: self.rotate_all_pages(90))
-        act_cw.setToolTip("Rotate ALL pages 90° clockwise and save a new PDF")
+        act_cw.setToolTip("Rotate the view 90° clockwise (in memory; marks rotate too)")
         tb.addSeparator()
 
         # zoom (− / editable % / +) + fit
@@ -583,37 +583,18 @@ class MainWindow(QMainWindow):
         if pct > 0:
             self.view.set_zoom(pct / 100.0)
 
-    # -- rotate whole document -----------------------------------------------
+    # -- rotate whole document (in the viewer, in memory) --------------------
 
     def rotate_all_pages(self, angle: int):
-        """Rotate every page by ``angle`` and save a new, rotated PDF (the open
-        original is never modified); then open the rotated copy."""
+        """Rotate the whole document in the viewer by ``angle`` degrees. This is
+        an **in-memory view rotation only** — nothing is written to disk. Marks,
+        comments and highlights rotate with their page and snap back exactly when
+        rotated the other way."""
         if self.document is None:
             QMessageBox.information(self, "No document", "Open a PDF first.")
             return
-        import os
-        from .tools import pdf_ops as ops
-        src = self.document.path
-        base, _ = os.path.splitext(src)
-        default = base + "_rotated.pdf"
-        which = {90: "clockwise", 270: "counter-clockwise"}.get(angle % 360, f"{angle}°")
-        resp = QMessageBox.question(
-            self, "Rotate all pages",
-            f"Rotate all {self.document.page_count} page(s) {which} and save to a "
-            f"new PDF?\n\nThe original is left untouched; the rotated copy opens here.",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-        if resp != QMessageBox.Yes:
-            return
-        out, _ = QFileDialog.getSaveFileName(
-            self, "Save rotated PDF", default, "PDF (*.pdf)")
-        if not out:
-            return
-        try:
-            ops.rotate_pdf(src, out, angle)   # pages=None -> all pages
-        except Exception as e:
-            QMessageBox.warning(self, "Rotate failed", str(e))
-            return
-        self.load_document(out)
+        self.tabs.setCurrentWidget(self.view)   # rotation is a Viewer action
+        self.view.rotate_view(angle)
 
     # -- tool handling -------------------------------------------------------
 
@@ -817,6 +798,12 @@ class MainWindow(QMainWindow):
             if page is not None:
                 self.tabs.setCurrentWidget(self.view)
                 self.view.go_to_page(page)
+
+    def _nav_to_page(self, page_no):
+        """Picking a page/bookmark in the Navigation pane jumps the Viewer to it
+        — switching to the Viewer tab first if the user is on another tab."""
+        self.tabs.setCurrentWidget(self.view)
+        self.view.go_to_page(page_no)
 
     def _reveal_in_panel(self, ann, target):
         """Jump from a PDF mark to its row in the TODO list or comment sidebar."""

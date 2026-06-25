@@ -60,6 +60,7 @@ class PdfView(QGraphicsView):
         self.tool = T.ToolState()
 
         self._page_items: list = []
+        self._rotation = 0               # whole-document view rotation (0/90/180/270)
         self._item_by_ann: dict = {}     # ann.id -> graphics item
         self._zoom = 1.0
         self._panning = False
@@ -140,15 +141,12 @@ class PdfView(QGraphicsView):
         if self._search_bar is not None:
             self._search_bar.hide()
 
-        top = 0.0
-        max_w = 0.0
+        self._rotation = 0
         for pno in range(document.page_count):
-            item = PageItem(document, pno, top)
+            item = PageItem(document, pno, 0.0)
             self._scene.addItem(item)
             self._page_items.append(item)
-            top += item.pdf_h + PAGE_GAP
-            max_w = max(max_w, item.pdf_w)
-        self._scene.setSceneRect(0, 0, max_w, max(top - PAGE_GAP, 1.0))
+        self._layout_pages()
 
         # build items for pre-loaded annotations
         for ann in self.store.all():
@@ -157,6 +155,45 @@ class PdfView(QGraphicsView):
 
         QTimer.singleShot(0, self.fit_width)
         QTimer.singleShot(0, self._render_visible)
+
+    # -- page layout / rotation ---------------------------------------------
+
+    def _page_scene_rect(self, item) -> QRectF:
+        """The page's own rect in scene coords (honours its rotation), excluding
+        child marks/shadow — used for layout, culling and hit-testing."""
+        return item.mapToScene(item.rect()).boundingRect()
+
+    def _layout_pages(self) -> None:
+        """Stack pages vertically, applying the current view rotation to each.
+        Annotation items are children of their page, so they rotate and stay
+        aligned with the page automatically — nothing is written to disk."""
+        from PySide6.QtGui import QTransform
+        rot = QTransform()
+        rot.rotate(self._rotation)
+        mapped = [rot.mapRect(QRectF(0, 0, it.pdf_w, it.pdf_h)) for it in self._page_items]
+        max_w = max([m.width() for m in mapped], default=1.0)
+        top = 0.0
+        for item, mr in zip(self._page_items, mapped):
+            item.setRotation(self._rotation)
+            x = (max_w - mr.width()) / 2.0          # centre pages horizontally
+            item.setPos(x - mr.left(), top - mr.top())
+            top += mr.height() + PAGE_GAP
+        self._scene.setSceneRect(0, 0, max_w, max(top - PAGE_GAP, 1.0))
+
+    def rotate_view(self, delta: int) -> None:
+        """Rotate the whole document in the viewer by ``delta`` degrees (in
+        memory only — the file on disk is never modified). Marks rotate with
+        their page and snap back exactly when rotated the other way."""
+        if not self._page_items:
+            return
+        self._rotation = (self._rotation + int(delta)) % 360
+        self._layout_pages()
+        self.fit_width()
+        self._render_visible()
+
+    @property
+    def rotation(self) -> int:
+        return self._rotation
 
     # -- rendering -----------------------------------------------------------
 
@@ -171,10 +208,11 @@ class PdfView(QGraphicsView):
         lo, hi = vis.top() - margin, vis.bottom() + margin
         scale = max(1.0, min(self._zoom, 4.0))
         for item in self._page_items:
-            if item.scene_bottom() >= lo and item.scene_top() <= hi:
+            r = self._page_scene_rect(item)
+            if r.bottom() >= lo and r.top() <= hi:
                 item.render(scale)
-            elif item.is_rendered() and (item.scene_bottom() < vis.top() - 4 * margin
-                                         or item.scene_top() > vis.bottom() + 4 * margin):
+            elif item.is_rendered() and (r.bottom() < vis.top() - 4 * margin
+                                         or r.top() > vis.bottom() + 4 * margin):
                 item.clear_render()
         self._emit_current_page()
 
@@ -185,7 +223,8 @@ class PdfView(QGraphicsView):
         vis = self._visible_scene_rect()
         mid = vis.center().y()
         for i, item in enumerate(self._page_items):
-            if item.scene_top() <= mid <= item.scene_bottom():
+            r = self._page_scene_rect(item)
+            if r.top() <= mid <= r.bottom():
                 self.pageChanged.emit(i)
                 return
 
@@ -208,7 +247,7 @@ class PdfView(QGraphicsView):
     def fit_width(self):
         if not self._page_items:
             return
-        page_w = self._page_items[0].pdf_w
+        page_w = self._page_scene_rect(self._page_items[0]).width()  # displayed width
         avail = self.viewport().width() - 24
         if page_w > 0:
             self.set_zoom(avail / page_w)
@@ -216,15 +255,16 @@ class PdfView(QGraphicsView):
     def fit_page(self):
         if not self._page_items:
             return
-        page = self._page_items[0]
+        r = self._page_scene_rect(self._page_items[0])  # displayed size (rotated)
         aw = self.viewport().width() - 24
         ah = self.viewport().height() - 24
-        self.set_zoom(min(aw / page.pdf_w, ah / page.pdf_h))
+        if r.width() > 0 and r.height() > 0:
+            self.set_zoom(min(aw / r.width(), ah / r.height()))
 
     def go_to_page(self, page_no: int):
         if 0 <= page_no < len(self._page_items):
-            item = self._page_items[page_no]
-            self.centerOn(item.pdf_w / 2, item.scene_top() + 20)
+            r = self._page_scene_rect(self._page_items[page_no])
+            self.centerOn(r.center().x(), r.top() + 20)
             self._render_timer.start()
 
     # -- events --------------------------------------------------------------
@@ -301,7 +341,7 @@ class PdfView(QGraphicsView):
 
     def _page_at_scene(self, scene_pt: QPointF):
         for i, item in enumerate(self._page_items):
-            if item.scene_top() <= scene_pt.y() <= item.scene_bottom():
+            if self._page_scene_rect(item).contains(scene_pt):
                 return i, item
         return None, None
 
@@ -330,7 +370,8 @@ class PdfView(QGraphicsView):
         if page is None:
             return False
         self._region_page = (pno, page)
-        self._region_start = (scene_pt.x() - page.pos().x(), scene_pt.y() - page.pos().y())
+        _lp = page.mapFromScene(scene_pt)
+        self._region_start = (_lp.x(), _lp.y())
         self._region_item = QGraphicsRectItem(page)
         self._region_item.setZValue(60)
         pen = QPen(QColor(30, 120, 230), 0, Qt.DashLine)
@@ -343,7 +384,7 @@ class PdfView(QGraphicsView):
         if self._region_item is None:
             return
         _, page = self._region_page
-        lx, ly = scene_pt.x() - page.pos().x(), scene_pt.y() - page.pos().y()
+        _lp = page.mapFromScene(scene_pt); lx, ly = _lp.x(), _lp.y()
         sx, sy = self._region_start
         self._region_item.setRect(min(sx, lx), min(sy, ly), abs(lx - sx), abs(ly - sy))
 
@@ -389,9 +430,8 @@ class PdfView(QGraphicsView):
                 pno, page = self._page_at_scene(scene_pt)
                 if page is not None:
                     self._scene.clearSelection()
-                    lx = scene_pt.x() - page.pos().x()
-                    ly = scene_pt.y() - page.pos().y()
-                    self._begin_text_selection(pno, page, lx, ly)
+                    _lp = page.mapFromScene(scene_pt)
+                    self._begin_text_selection(pno, page, _lp.x(), _lp.y())
                     event.accept()
                     return
             else:
@@ -411,7 +451,7 @@ class PdfView(QGraphicsView):
         if self._text_selecting and (event.buttons() & Qt.LeftButton):
             scene_pt = self.mapToScene(event.position().toPoint())
             _, page = self._text_sel_page
-            lx, ly = scene_pt.x() - page.pos().x(), scene_pt.y() - page.pos().y()
+            _lp = page.mapFromScene(scene_pt); lx, ly = _lp.x(), _lp.y()
             self._update_text_selection(lx, ly)
             event.accept()
             return
@@ -468,7 +508,7 @@ class PdfView(QGraphicsView):
         pno, page = self._page_at_scene(scene_pt)
         if page is None:
             return False
-        lx, ly = scene_pt.x() - page.pos().x(), scene_pt.y() - page.pos().y()
+        _lp = page.mapFromScene(scene_pt); lx, ly = _lp.x(), _lp.y()
         self._draft_page = (pno, page)
         self._draft_start = (lx, ly)
         author = self.config.your_name if self.config else ""
@@ -528,7 +568,7 @@ class PdfView(QGraphicsView):
         if self._draft is None:
             return
         _, page = self._draft_page
-        lx, ly = scene_pt.x() - page.pos().x(), scene_pt.y() - page.pos().y()
+        _lp = page.mapFromScene(scene_pt); lx, ly = _lp.x(), _lp.y()
         if self._draft.kind == KIND_PEN:
             self._draft.points.append((lx, ly))
         else:
@@ -703,7 +743,7 @@ class PdfView(QGraphicsView):
         self.go_to_page(ann.page)
         x0, y0, x1, y1 = ann.rect
         page = self._page_items[ann.page]
-        self.centerOn(page.pos().x() + (x0 + x1) / 2, page.scene_top() + (y0 + y1) / 2)
+        self.centerOn(page.mapToScene(QPointF((x0 + x1) / 2, (y0 + y1) / 2)))
         item = self._item_by_ann.get(ann.id)
         if item is not None:
             item.setSelected(True)
@@ -896,8 +936,7 @@ class PdfView(QGraphicsView):
         pno, r = self._search_matches[self._search_index]
         if 0 <= pno < len(self._page_items):
             page = self._page_items[pno]
-            self.centerOn(page.pos().x() + (r.x0 + r.x1) / 2,
-                          page.scene_top() + (r.y0 + r.y1) / 2)
+            self.centerOn(page.mapToScene(QPointF((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2)))
             self._render_timer.start()
 
     def _update_search_count(self):

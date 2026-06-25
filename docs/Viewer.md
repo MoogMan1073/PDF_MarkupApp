@@ -28,16 +28,21 @@ into the Viewer.
 The toolbar's **zoom %** box always shows the current zoom and updates as you
 zoom; type any percentage and press **Enter** to jump to it.
 
-### Rotate the whole document
+### Rotate the view
 
-The **↺ / ↻** buttons rotate **all pages** 90° counter-clockwise / clockwise.
-This is a **permanent** edit: you're prompted for a filename and a **rotated
-copy** of the PDF is written (the original is never modified) and then opened.
-For rotating only *some* pages, use the visual **Rotate** tool in [[PDF Tools]].
+The **↺ / ↻** buttons rotate the whole document 90° counter-clockwise /
+clockwise **in the viewer only** — handy for reading a sideways drawing. It is
+**in-memory and non-destructive**: nothing is written to disk, and rotating back
+(or a full turn) returns everything exactly as it was. Your **markups, comments
+and highlights rotate with their page** and stay correctly placed. To bake a
+rotation into a saved file instead, use the visual **Rotate** tool in
+[[PDF Tools]], which writes a new rotated PDF.
 
 The current page number updates automatically as you scroll. The left
 **Navigation** pane (page thumbnails + bookmarks) and the right **Comments**
-pane toggle with **F9** and **F10**.
+pane toggle with **F9** and **F10**. Clicking a **page thumbnail or bookmark**
+jumps the Viewer to it — and if you're on another tab (TODO, Wire Numbers, …)
+it switches back to the Viewer automatically.
 
 ## Arranging the panels
 
