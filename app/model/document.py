@@ -1,0 +1,138 @@
+"""High-level document controller (GUI-free).
+
+Owns the open :class:`fitz.Document`, the :class:`AnnotationStore`, and the
+:class:`SidecarDB`, and implements the hybrid open/save workflow described in
+the spec.  The viewer/panels talk to this object.
+"""
+
+from __future__ import annotations
+
+import os
+from typing import Iterable, Optional
+
+import fitz  # PyMuPDF
+
+from .annotations import Annotation, AnnotationStore
+from .storage import (
+    SidecarDB, load_pdf_annotations, write_annotations_to_pdf,
+    compile_ignore_patterns, text_is_ignored,
+    marked_pdf_path, sidecar_path, DEFAULT_IGNORE_PATTERNS,
+)
+
+
+class Document:
+    """A single open PDF plus its markup state."""
+
+    def __init__(self, path: str, ignore_patterns: Optional[Iterable[str]] = None):
+        self.path = path
+        self.fitz_doc = fitz.open(path)
+        self.store = AnnotationStore()
+        self.sidecar = SidecarDB(sidecar_path(path))
+        self.ignore_patterns = list(
+            ignore_patterns if ignore_patterns is not None else DEFAULT_IGNORE_PATTERNS
+        )
+        self.wires: list = []
+        self.components: list = []
+        self._dirty = False
+
+    # -- basic page access ---------------------------------------------------
+
+    @property
+    def page_count(self) -> int:
+        return self.fitz_doc.page_count
+
+    def page_rect(self, page_no: int) -> "fitz.Rect":
+        return self.fitz_doc[page_no].rect
+
+    def get_pixmap(self, page_no: int, zoom: float = 1.0) -> "fitz.Pixmap":
+        """Render a page to a :class:`fitz.Pixmap` (GUI converts to QImage)."""
+        mat = fitz.Matrix(zoom, zoom)
+        return self.fitz_doc[page_no].get_pixmap(matrix=mat, alpha=False)
+
+    # -- loading -------------------------------------------------------------
+
+    def load(self) -> None:
+        """Load sidecar (our) annotations, then import external PDF annots.
+
+        The sidecar is authoritative for marks this app created.  Any annotation
+        found in the PDF whose ``/NM`` id is *not* already known is treated as
+        external (e.g. a colleague's markup or AutoCAD junk) and imported with
+        its real author; junk is flagged ignored.
+        """
+        # 1) our marks from the sidecar
+        known_ids = set()
+        for ann in self.sidecar.load_annotations():
+            self.store.add(ann, silent=True)
+            known_ids.add(ann.id)
+
+        # 2) external marks living in the PDF itself
+        compiled = compile_ignore_patterns(self.ignore_patterns)
+        for ann in load_pdf_annotations(self.fitz_doc, self.ignore_patterns):
+            if ann.id in known_ids:
+                continue  # sidecar copy already loaded
+            # re-evaluate junk filter against the current pattern list
+            if text_is_ignored(ann.text, compiled) or text_is_ignored(ann.author, compiled):
+                ann.ignored = True
+            self.store.add(ann, silent=True)
+
+        # 3) cached wire numbers + component labels
+        self.wires = self.sidecar.load_wires()
+        self.components = self.sidecar.load_components()
+
+    # -- saving --------------------------------------------------------------
+
+    def save(self, marked_path: Optional[str] = None,
+             include_ignored: bool = False) -> str:
+        """Write the ``.marked.pdf`` copy and sync the sidecar.
+
+        The original PDF is never overwritten.  Returns the marked PDF path.
+        """
+        out = marked_path or marked_pdf_path(self.path)
+        # Write to a fresh copy of the original so we never duplicate annots.
+        work = fitz.open(self.path)
+        write_annotations_to_pdf(work, self.store.all(), include_ignored=include_ignored)
+        # incremental=False, full save to a (possibly new) path
+        work.save(out, garbage=3, deflate=True)
+        work.close()
+
+        # sync app state + wire cache
+        self.sidecar.save_annotations(self.store.all())
+        if self.wires:
+            self.sidecar.save_wires(self.wires)
+        if self.components:
+            self.sidecar.save_components(self.components)
+        self.sidecar.set_meta("source_pdf", os.path.basename(self.path))
+        self._dirty = False
+        return out
+
+    def export_annotated_pdf(self, out_path: str, include_ignored: bool = False) -> str:
+        """Explicit 'Export annotated PDF…' to an arbitrary path."""
+        return self.save(marked_path=out_path, include_ignored=include_ignored)
+
+    # -- wire cache ----------------------------------------------------------
+
+    def set_wires(self, wires: list) -> None:
+        self.wires = wires
+        self.sidecar.save_wires(wires)
+
+    def set_components(self, components: list) -> None:
+        self.components = components
+        self.sidecar.save_components(components)
+
+    # -- lifecycle -----------------------------------------------------------
+
+    def mark_dirty(self) -> None:
+        self._dirty = True
+
+    @property
+    def dirty(self) -> bool:
+        return self._dirty
+
+    def close(self) -> None:
+        try:
+            self.sidecar.close()
+        finally:
+            try:
+                self.fitz_doc.close()
+            except Exception:
+                pass

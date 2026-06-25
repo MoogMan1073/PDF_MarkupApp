@@ -1,0 +1,79 @@
+name: Build Windows
+
+# Produces a portable one-folder app and an Inno Setup installer as artifacts.
+# Run manually (Actions ▸ Build Windows ▸ Run workflow) or on a version tag.
+# On a v* tag it also publishes a GitHub Release with both attached.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # needed to create the Release on a tag
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r packaging/requirements-build.txt
+
+      - name: Run tests (offscreen)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -s tests
+
+      - name: Build app (PyInstaller)
+        run: pyinstaller packaging/DSI_Redline.spec --noconfirm
+
+      - name: Build installer (Inno Setup)
+        run: |
+          choco install innosetup --no-progress -y
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\installer.iss
+
+      - name: Package portable zip
+        shell: pwsh
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          New-Item -ItemType Directory -Force dist_installer | Out-Null
+          $ver = ($env:REF_NAME -replace '[^\w.\-]', '_')
+          Compress-Archive -Path "dist/DSI Redline/*" `
+            -DestinationPath "dist_installer/DSI-Redline-$ver-portable.zip" -Force
+
+      - name: Upload portable app
+        uses: actions/upload-artifact@v4
+        with:
+          name: DSI-Redline-portable
+          path: "dist/DSI Redline/**"
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: DSI-Redline-installer
+          path: "dist_installer/*.exe"
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF_NAME: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          $assets = Get-ChildItem "dist_installer/*.exe","dist_installer/*.zip" `
+            -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+          gh release create "$env:REF_NAME" $assets `
+            --repo "$env:REPO" `
+            --title "DSI Redline $env:REF_NAME" `
+            --notes "Automated Windows build for $env:REF_NAME. Download the installer (DSI_Redline_Setup) or the portable .zip below."
