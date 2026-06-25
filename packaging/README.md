@@ -14,7 +14,7 @@ This folder builds a Windows **executable** and an **installer**.
 
 ## Easiest: let CI build it
 
-Push a tag (e.g. `v1.0.0`) or run **Actions ▸ Build Windows ▸ Run workflow**.
+Push a tag (e.g. `vX.Y.Z`) or run **Actions ▸ Build Windows ▸ Run workflow**.
 The job runs the tests, builds the app, builds the installer, and uploads two
 artifacts: **DSI-Redline-portable** (the app folder) and
 **DSI-Redline-installer** (the `Setup.exe`). No local Windows machine needed.
@@ -33,7 +33,7 @@ packaging\build_windows.bat
 
 Outputs:
 - `dist\DSI Redline\DSI Redline.exe` — the portable app (zip the folder to share).
-- `dist_installer\DSI_Redline_Setup_1.0.0.exe` — the installer.
+- `dist_installer\DSI_Redline_Setup_<version>.exe` — the installer.
 
 The `docs/` user-manual vault is bundled into the app (under `_internal\docs`),
 so **Help ▸ User Manual** works on every machine — the docs travel with the app.
