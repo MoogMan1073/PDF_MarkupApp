@@ -31,6 +31,7 @@ class NavPanel(QWidget):
         super().__init__(parent)
         self.document = None
         self._thumb_built = set()
+        self._thumb_h = int(self.THUMB_W * 1.3)   # updated per-document to the page aspect
         self._build_ui()
 
     def _build_ui(self):
@@ -40,7 +41,7 @@ class NavPanel(QWidget):
 
         self.pages = QListWidget()
         self.pages.setViewMode(QListWidget.IconMode)
-        self.pages.setIconSize(QSize(self.THUMB_W, int(self.THUMB_W * 1.3)))
+        self.pages.setIconSize(QSize(self.THUMB_W, self._thumb_h))
         self.pages.setMovement(QListWidget.Static)
         self.pages.setResizeMode(QListWidget.Adjust)
         self.pages.setWordWrap(False)
@@ -63,9 +64,24 @@ class NavPanel(QWidget):
     def set_document(self, document):
         self.document = document
         self._thumb_built = set()
+        self._update_thumb_height()
         self._build_page_list()
         self._build_bookmarks()
         QTimer.singleShot(0, self._render_visible_thumbs)
+
+    def _update_thumb_height(self):
+        """Size the icon box to the page's aspect ratio so landscape drawings
+        sit snug against the page number instead of floating in a tall box."""
+        aspect = 1.3
+        if self.document is not None and self.document.page_count:
+            try:
+                r = self.document.page_rect(0)
+                if r.width > 0:
+                    aspect = max(0.4, min(1.4, r.height / r.width))
+            except Exception:
+                pass
+        self._thumb_h = int(self.THUMB_W * aspect)
+        self.pages.setIconSize(QSize(self.THUMB_W, self._thumb_h))
 
     def _build_page_list(self):
         self.pages.clear()
@@ -75,7 +91,7 @@ class NavPanel(QWidget):
             it = QListWidgetItem(str(i + 1))
             it.setData(Qt.UserRole, i)
             it.setTextAlignment(Qt.AlignHCenter | Qt.AlignBottom)
-            it.setSizeHint(QSize(self.THUMB_W + 20, int(self.THUMB_W * 1.3) + 26))
+            it.setSizeHint(QSize(self.THUMB_W + 16, self._thumb_h + 20))
             self.pages.addItem(it)
 
     def _build_bookmarks(self):

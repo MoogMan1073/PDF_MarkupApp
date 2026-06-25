@@ -124,6 +124,21 @@ def read_titleblock_sheet(page: "fitz.Page", sheet_width: int = 3) -> Optional[i
         return None
 
 
+def read_titleblock_sheet_label(page: "fitz.Page") -> Optional[str]:
+    """Best-effort title-block sheet number as the *raw* string (e.g. ``"000"``).
+
+    Like :func:`read_titleblock_sheet` but preserves leading zeros so a cover
+    sheet reads ``"000"`` rather than ``0``.  Returns ``None`` when nothing
+    convincing is found; never raises.
+    """
+    try:
+        text = page.get_text("text") or ""
+    except Exception:
+        return None
+    m = _SHEET_RE.search(text)
+    return m.group(1) if m else None
+
+
 def extract_document_tokens(doc: "fitz.Document") -> list:
     """Extract tokens for every text-bearing page in a document.
 

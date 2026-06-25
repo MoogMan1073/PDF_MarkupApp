@@ -19,10 +19,21 @@ into the Viewer.
 |--------|-----|
 | Scroll | Mouse wheel / trackpad |
 | Zoom in / out | `Ctrl` + scroll, or the `+` / `−` buttons, or `Ctrl` `+` / `Ctrl` `-` |
+| Set an exact zoom | Type a percentage (or pick a preset) in the toolbar **zoom %** box |
 | Fit width | **Fit W** button or **View ▸ Fit width** |
 | Fit page | **Fit P** button or **View ▸ Fit page** |
 | Pan | Hold **Space** and drag, or drag with the **middle mouse button** |
 | Go to page | Type a page number in the toolbar **Page** box |
+
+The toolbar's **zoom %** box always shows the current zoom and updates as you
+zoom; type any percentage and press **Enter** to jump to it.
+
+### Rotate the whole document
+
+The **↺ / ↻** buttons rotate **all pages** 90° counter-clockwise / clockwise.
+This is a **permanent** edit: you're prompted for a filename and a **rotated
+copy** of the PDF is written (the original is never modified) and then opened.
+For rotating only *some* pages, use the visual **Rotate** tool in [[PDF Tools]].
 
 The current page number updates automatically as you scroll. The left
 **Navigation** pane (page thumbnails + bookmarks) and the right **Comments**

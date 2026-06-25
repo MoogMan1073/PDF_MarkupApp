@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import Optional
 
 from PySide6.QtWidgets import QApplication
 
@@ -18,6 +19,21 @@ def _set_windows_app_id():
             "DSIInnovations.DSIRedline")
     except Exception:
         pass
+
+
+def pdf_from_argv(argv) -> Optional[str]:
+    """The PDF to open from a launch's arguments, or ``None``.
+
+    Used when the app is started via Windows "Open with… ▸ DSI Redline" (or any
+    file-association / command-line launch): the shell passes the document path
+    as an argument.  Returns the first argument that names an existing ``.pdf``
+    file (case-insensitive); surrounding quotes are tolerated.
+    """
+    for raw in list(argv)[1:]:
+        a = (raw or "").strip().strip('"')
+        if a.lower().endswith(".pdf") and os.path.isfile(a):
+            return a
+    return None
 
 
 def main(argv=None) -> int:
@@ -48,11 +64,12 @@ def main(argv=None) -> int:
     splash.message("Finishing up…", 95)
     win.show()
 
-    # optional: open a PDF passed on the command line (keep the splash up for it)
-    pdf_args = [a for a in argv[1:] if a.lower().endswith(".pdf")]
-    if pdf_args and os.path.exists(pdf_args[0]):
-        splash.message(f"Opening {os.path.basename(pdf_args[0])}…", 98)
-        win.load_document(pdf_args[0])
+    # open a PDF passed on the command line / via "Open with…" (keep the splash
+    # up for it) — it lands in the Viewer and the PDF Tools tab (load_document)
+    pdf_path = pdf_from_argv(argv)
+    if pdf_path:
+        splash.message(f"Opening {os.path.basename(pdf_path)}…", 98)
+        win.load_document(pdf_path)
 
     splash.finish(win)
     return app.exec()

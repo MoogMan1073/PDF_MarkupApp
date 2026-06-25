@@ -50,6 +50,11 @@ pyinstaller --onefile --windowed --name "DSI Redline" ^
 
 ## Notes
 
+- The installer registers DSI Redline as a **PDF viewer** (opt-in checkbox,
+  ticked by default): it's added to the Windows **Open with** list and the
+  **Default apps** picker. This is *additive* — it never overrides the user's
+  current default PDF app on install, and uninstall removes every key it added.
+  See `[Registry]` in `installer.iss` and [[File Associations]] in the docs.
 - **Tesseract** (OCR) and an **Anthropic API key** (AI) remain optional at
   runtime; neither is required to run the packaged app. If `anthropic` is
   installed in the build environment it is bundled automatically.

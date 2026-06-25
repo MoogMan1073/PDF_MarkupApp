@@ -16,6 +16,8 @@ shows `☐` (open) or `✓` (done).
 ## Find a mark
 
 - **Click a row** to scroll the Viewer to that mark and flash it.
+- The other way round: **right-click a mark on the page ▸ "Reveal in Comments"**
+  to select its row here.
 - **Search** box filters by text.
 - Filter by **type** (comment / text box / highlight / pen) and by **commenter**.
 - **TODO only** shows just flagged items.

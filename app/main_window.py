@@ -361,6 +361,7 @@ class MainWindow(QMainWindow):
         self.view.pageChanged.connect(self._on_page_changed)
         self.view.requestTool.connect(self._activate_tool)
         self.view.requestOpen.connect(self.load_document)   # drag/drop a PDF
+        self.view.requestReveal.connect(self._reveal_in_panel)   # PDF mark -> panel
         # synchronous prompt used when *creating* a new comment / text box
         self.view.new_text_prompt = self._prompt_new_text
         # synchronous prompt when a drawing tool clicks an existing mark
@@ -532,11 +533,31 @@ class MainWindow(QMainWindow):
         tb.addWidget(self.bold); tb.addWidget(self.italic)
         tb.addSeparator()
 
-        # zoom / page nav
+        # rotate whole document (permanent — writes a rotated copy)
+        act_ccw = tb.addAction("↺", lambda: self.rotate_all_pages(270))
+        act_ccw.setToolTip("Rotate ALL pages 90° counter-clockwise and save a new PDF")
+        act_cw = tb.addAction("↻", lambda: self.rotate_all_pages(90))
+        act_cw.setToolTip("Rotate ALL pages 90° clockwise and save a new PDF")
+        tb.addSeparator()
+
+        # zoom (− / editable % / +) + fit
         tb.addAction("−", self.view.zoom_out)
+        self.zoom_combo = QComboBox()
+        self.zoom_combo.setEditable(True)
+        self.zoom_combo.setInsertPolicy(QComboBox.NoInsert)
+        self.zoom_combo.addItems(["50%", "75%", "100%", "125%", "150%", "200%", "400%"])
+        self.zoom_combo.setCurrentText("100%")
+        self.zoom_combo.setFixedWidth(72)
+        self.zoom_combo.lineEdit().setAlignment(Qt.AlignCenter)
+        self.zoom_combo.setToolTip("Zoom level — pick a preset or type a percentage")
+        self.zoom_combo.textActivated.connect(self._apply_zoom_text)
+        self.zoom_combo.lineEdit().returnPressed.connect(
+            lambda: self._apply_zoom_text(self.zoom_combo.currentText()))
+        tb.addWidget(self.zoom_combo)
         tb.addAction("+", self.view.zoom_in)
         tb.addAction("Fit W", self.view.fit_width)
         tb.addAction("Fit P", self.view.fit_page)
+        self.view.zoomChanged.connect(self._on_zoom_changed)
         tb.addWidget(QLabel("  Page "))
         self.page_spin = QSpinBox(); self.page_spin.setRange(1, 1)
         self.page_spin.valueChanged.connect(lambda v: self.view.go_to_page(v - 1))
@@ -544,6 +565,55 @@ class MainWindow(QMainWindow):
         self.page_total = QLabel(" / 0")
         tb.addWidget(self.page_total)
         self._update_color_btn()
+
+    # -- zoom % readout ------------------------------------------------------
+
+    def _on_zoom_changed(self, zoom: float):
+        self.zoom_combo.blockSignals(True)
+        self.zoom_combo.setCurrentText(f"{round(zoom * 100)}%")
+        self.zoom_combo.blockSignals(False)
+
+    def _apply_zoom_text(self, text: str):
+        t = (text or "").strip().rstrip("%").strip()
+        try:
+            pct = float(t)
+        except ValueError:
+            self._on_zoom_changed(self.view._zoom)   # revert to the real value
+            return
+        if pct > 0:
+            self.view.set_zoom(pct / 100.0)
+
+    # -- rotate whole document -----------------------------------------------
+
+    def rotate_all_pages(self, angle: int):
+        """Rotate every page by ``angle`` and save a new, rotated PDF (the open
+        original is never modified); then open the rotated copy."""
+        if self.document is None:
+            QMessageBox.information(self, "No document", "Open a PDF first.")
+            return
+        import os
+        from .tools import pdf_ops as ops
+        src = self.document.path
+        base, _ = os.path.splitext(src)
+        default = base + "_rotated.pdf"
+        which = {90: "clockwise", 270: "counter-clockwise"}.get(angle % 360, f"{angle}°")
+        resp = QMessageBox.question(
+            self, "Rotate all pages",
+            f"Rotate all {self.document.page_count} page(s) {which} and save to a "
+            f"new PDF?\n\nThe original is left untouched; the rotated copy opens here.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if resp != QMessageBox.Yes:
+            return
+        out, _ = QFileDialog.getSaveFileName(
+            self, "Save rotated PDF", default, "PDF (*.pdf)")
+        if not out:
+            return
+        try:
+            ops.rotate_pdf(src, out, angle)   # pages=None -> all pages
+        except Exception as e:
+            QMessageBox.warning(self, "Rotate failed", str(e))
+            return
+        self.load_document(out)
 
     # -- tool handling -------------------------------------------------------
 
@@ -646,7 +716,7 @@ class MainWindow(QMainWindow):
         self.document = doc
         self.view.set_document(doc, self.config)
         self.comment_panel.set_store(doc.store, self.config)
-        self.todo_panel.set_store(doc.store, self.config)
+        self.todo_panel.set_store(doc.store, self.config, doc)
         self.wire_panel.set_document(doc, self.config)
         self.component_panel.set_document(doc, self.config)
         self.nav_panel.set_document(doc)
@@ -747,6 +817,16 @@ class MainWindow(QMainWindow):
             if page is not None:
                 self.tabs.setCurrentWidget(self.view)
                 self.view.go_to_page(page)
+
+    def _reveal_in_panel(self, ann, target):
+        """Jump from a PDF mark to its row in the TODO list or comment sidebar."""
+        if target == "todo":
+            self.tabs.setCurrentWidget(self.todo_panel)
+            self.todo_panel.reveal(ann)
+        else:
+            self.comment_dock.setVisible(True)
+            self.comment_dock.raise_()
+            self.comment_panel.reveal(ann)
 
     def _on_page_changed(self, page_no):
         self.page_spin.blockSignals(True)

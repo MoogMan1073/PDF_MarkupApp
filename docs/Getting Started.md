@@ -23,18 +23,23 @@ The app is fully functional offline with neither of these.
 
 ## Open a PDF
 
-**File ▸ Open PDF…** (`Ctrl+O`). The drawing loads in the [[Viewer]] with
-continuous vertical scroll. Any annotations already in the PDF (for example a
-colleague's markup) are imported with their original authors — see
+**File ▸ Open PDF…** (`Ctrl+O`), drag a PDF onto the window, or — on a Windows
+install — **right-click a PDF ▸ Open with ▸ DSI Redline**. See
+[[File Associations]] to add DSI Redline to the *Open with* list and make it your
+default PDF app. The drawing loads in the [[Viewer]] with continuous vertical
+scroll (and into the [[PDF Tools]] tab). Any annotations already in the PDF (for
+example a colleague's markup) are imported with their original authors — see
 [[Storage and Files]].
 
-## Three tabs
+## Tabs
 
-DSI Redline is organised into three tabs:
+DSI Redline is organised into these tabs:
 
 1. **Viewer** — read and mark up the drawing. See [[Viewer]] and [[Markup Tools]].
 2. **TODO** — your action items. See [[TODO]].
 3. **Wire Numbers** — extract and export wire labels. See [[Wire Numbers]].
+4. **Component Labels** — extract and export device tags. See [[Component Labels]].
+5. **PDF Tools** — extract / split / delete / rotate / combine pages. See [[PDF Tools]].
 
 The **Comments** panel docks on the right of the Viewer — see
 [[Comments Sidebar]].

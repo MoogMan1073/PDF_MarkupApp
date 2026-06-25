@@ -33,6 +33,7 @@ class Document:
         )
         self.wires: list = []
         self.components: list = []
+        self.sheet_labels: dict = {}   # page_index -> sheet number (str, e.g. "000")
         self._dirty = False
 
     # -- basic page access ---------------------------------------------------
@@ -79,6 +80,60 @@ class Document:
         self.wires = self.sidecar.load_wires()
         self.components = self.sidecar.load_components()
 
+        # 4) per-page sheet numbers: load saved edits, then best-effort
+        #    title-block auto-detect for searchable pages we don't know yet
+        self._load_sheet_labels()
+
+    # -- sheet numbers (per page) -------------------------------------------
+
+    def _load_sheet_labels(self) -> None:
+        import json
+        raw = self.sidecar.get_meta("sheet_labels")
+        saved = {}
+        if raw:
+            try:
+                saved = {int(k): str(v) for k, v in json.loads(raw).items()}
+            except Exception:
+                saved = {}
+        self.sheet_labels = saved
+        self._autodetect_sheet_labels()
+
+    def _autodetect_sheet_labels(self) -> None:
+        """Fill sheet numbers from the title block of searchable pages, without
+        clobbering any the user has already saved/edited."""
+        from ..extraction.text_extract import page_has_text, read_titleblock_sheet_label
+        for i in range(self.page_count):
+            if i in self.sheet_labels:
+                continue
+            try:
+                page = self.fitz_doc[i]
+                if not page_has_text(page):
+                    continue   # scanned page: leave blank for manual entry
+                label = read_titleblock_sheet_label(page)
+            except Exception:
+                label = None
+            if label:
+                self.sheet_labels[i] = label
+
+    def sheet_label(self, page_no: int) -> str:
+        return self.sheet_labels.get(int(page_no), "")
+
+    def set_sheet_label(self, page_no: int, label: str) -> None:
+        """Set (or clear, when blank) a page's sheet number and persist it."""
+        page_no = int(page_no)
+        label = (label or "").strip()
+        if label:
+            self.sheet_labels[page_no] = label
+        else:
+            self.sheet_labels.pop(page_no, None)
+        self._save_sheet_labels()
+
+    def _save_sheet_labels(self) -> None:
+        import json
+        self.sidecar.set_meta(
+            "sheet_labels",
+            json.dumps({str(k): v for k, v in self.sheet_labels.items()}))
+
     # -- saving --------------------------------------------------------------
 
     def save(self, marked_path: Optional[str] = None,
@@ -101,6 +156,7 @@ class Document:
             self.sidecar.save_wires(self.wires)
         if self.components:
             self.sidecar.save_components(self.components)
+        self._save_sheet_labels()
         self.sidecar.set_meta("source_pdf", os.path.basename(self.path))
         self._dirty = False
         return out
