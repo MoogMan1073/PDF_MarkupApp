@@ -94,7 +94,9 @@ class TestToolsWorkspace(unittest.TestCase):
     def test_drag_drop_mime_helper(self):
         from app.panels.tools_panel import pdf_path_from_mime
         m = QMimeData(); m.setUrls([QUrl.fromLocalFile(self.src)])
-        self.assertEqual(pdf_path_from_mime(m), self.src)
+        # toLocalFile() uses forward slashes even on Windows -> normalise both
+        self.assertEqual(os.path.normpath(pdf_path_from_mime(m)),
+                         os.path.normpath(self.src))
         m2 = QMimeData(); m2.setUrls([QUrl.fromLocalFile("/x/y.txt")])
         self.assertEqual(pdf_path_from_mime(m2), "")
         self.assertEqual(pdf_path_from_mime(QMimeData()), "")

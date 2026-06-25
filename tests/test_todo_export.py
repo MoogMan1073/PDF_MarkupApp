@@ -27,7 +27,7 @@ class TestTodoExport(unittest.TestCase):
     def test_markdown_by_page(self):
         p = export_markdown(self.todos, os.path.join(self.tmp, "t.md"),
                             group_by=GROUP_PAGE)
-        text = open(p).read()
+        text = open(p, encoding="utf-8").read()
         self.assertIn("## Page 5", text)
         self.assertIn("## Page 7", text)
         self.assertIn("- [ ] Verify breaker — p.5, Eli", text)
@@ -36,7 +36,7 @@ class TestTodoExport(unittest.TestCase):
     def test_markdown_by_sheet(self):
         p = export_markdown(self.todos, os.path.join(self.tmp, "s.md"),
                             group_by=GROUP_SHEET, sheet_labels=self.sheets)
-        text = open(p).read()
+        text = open(p, encoding="utf-8").read()
         self.assertIn("## Sheet 300", text)
         self.assertIn("## Sheet 601", text)
         # the per-row meta carries the sheet too

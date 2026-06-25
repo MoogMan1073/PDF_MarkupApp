@@ -40,7 +40,10 @@ class TestDragDrop(unittest.TestCase):
         class _E:
             def mimeData(self_inner):
                 return m
-        self.assertEqual(PdfView._dropped_pdf(_E()), path)
+        # QUrl.toLocalFile() yields forward slashes even on Windows; compare
+        # OS-normalised so the test is cross-platform (functionally equivalent).
+        self.assertEqual(os.path.normpath(PdfView._dropped_pdf(_E())),
+                         os.path.normpath(path))
 
     def test_view_ignores_non_pdf(self):
         from app.viewer.pdf_view import PdfView
@@ -61,7 +64,8 @@ class TestDragDrop(unittest.TestCase):
         evt = QDropEvent(QPointF(10, 10), Qt.CopyAction, m,
                          Qt.LeftButton, Qt.NoModifier, QEvent.Drop)
         view.dropEvent(evt)
-        self.assertEqual(seen, [path])
+        self.assertEqual([os.path.normpath(p) for p in seen],
+                         [os.path.normpath(path)])
         self.assertTrue(evt.isAccepted())
 
 
