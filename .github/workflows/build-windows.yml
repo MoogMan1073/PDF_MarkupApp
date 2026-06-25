@@ -73,7 +73,12 @@ jobs:
         run: |
           $assets = Get-ChildItem "dist_installer/*.exe","dist_installer/*.zip" `
             -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
-          gh release create "$env:REF_NAME" $assets `
-            --repo "$env:REPO" `
-            --title "DSI Redline $env:REF_NAME" `
-            --notes "Automated Windows build for $env:REF_NAME. Download the installer (DSI_Redline_Setup) or the portable .zip below."
+          # idempotent: works whether the tag was pushed via git (no release yet)
+          # or created from the GitHub "Draft a new release" UI (release exists)
+          gh release view "$env:REF_NAME" --repo "$env:REPO" *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create "$env:REF_NAME" --repo "$env:REPO" `
+              --title "DSI Redline $env:REF_NAME" `
+              --notes "Automated Windows build for $env:REF_NAME. Download the installer (DSI_Redline_Setup) or the portable .zip below."
+          }
+          gh release upload "$env:REF_NAME" $assets --clobber --repo "$env:REPO"
