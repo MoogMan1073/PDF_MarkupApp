@@ -1,8 +1,15 @@
 """TODO tab (Phase 5).
 
 Top-level tab listing every TODO-flagged mark with a done/undone checkbox,
-inline-editable text, page, commenter, date and tag, plus group-by, filter,
-sort, drag-reorder and Markdown / DOCX export.
+inline-editable text, page, sheet, commenter, date and tag, plus group-by
+(page / sheet / commenter), filter, sort, drag-reorder and Markdown / DOCX
+export.
+
+Double-click edits a cell (Text / Sheet / Tag); the Pg cell is read-only and
+double-clicking it jumps to the mark on the PDF.  Right-click → "Go to in PDF"
+also jumps.  The Sheet column is a per-page value (all TODOs on a page share it),
+auto-detected from the drawing title block on searchable PDFs and editable so it
+can be corrected or filled in manually.
 """
 
 from __future__ import annotations
@@ -11,12 +18,13 @@ from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QLineEdit, QLabel,
     QPushButton, QTreeWidget, QTreeWidgetItem, QFileDialog, QMessageBox,
-    QAbstractItemView,
+    QAbstractItemView, QMenu,
 )
 
 from ..model.annotations import Annotation
 from ..export.todo_export import (
-    export_markdown, export_docx, GROUP_SHEET, GROUP_COMMENTER, GROUP_NONE,
+    export_markdown, export_docx,
+    GROUP_PAGE, GROUP_SHEET, GROUP_COMMENTER, GROUP_NONE,
 )
 
 _DATE = lambda iso: (iso or "")[:16].replace("T", " ")
@@ -25,10 +33,15 @@ _DATE = lambda iso: (iso or "")[:16].replace("T", " ")
 class TodoPanel(QWidget):
     activated = Signal(object)
 
+    # column layout
+    COL_DONE, COL_TEXT, COL_PG, COL_SHEET, COL_COMMENTER, COL_DATE, COL_TAG = range(7)
+    _EDITABLE_COLS = {COL_TEXT, COL_SHEET, COL_TAG}
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.store = None
         self.config = None
+        self.document = None
         self._loading = False
         self._sort_col = None                  # None -> natural (order, page)
         self._sort_order = Qt.AscendingOrder
@@ -40,7 +53,8 @@ class TodoPanel(QWidget):
         lay = QVBoxLayout(self)
         bar = QHBoxLayout()
         self.group_by = QComboBox()
-        self.group_by.addItems(["Group: Sheet", "Group: Commenter", "No grouping"])
+        self.group_by.addItems(
+            ["Group: Page", "Group: Sheet", "Group: Commenter", "No grouping"])
         self.group_by.currentIndexChanged.connect(self.refresh)
         self.search = QLineEdit(placeholderText="Filter…")
         self.search.textChanged.connect(self.refresh)
@@ -59,16 +73,24 @@ class TodoPanel(QWidget):
         lay.addLayout(bar)
 
         self.tree = QTreeWidget()
-        self.tree.setColumnCount(6)
-        self.tree.setHeaderLabels(["Done", "Text", "Pg", "Commenter", "Date", "Tag"])
-        self.tree.setRootIsDecorated(self.group_by.currentIndex() < 2)
+        self.tree.setColumnCount(7)
+        self.tree.setHeaderLabels(
+            ["Done", "Text", "Pg", "Sheet", "Commenter", "Date", "Tag"])
+        self.tree.setRootIsDecorated(self.group_by.currentIndex() < 3)
         self.tree.setAlternatingRowColors(True)
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
         self.tree.setDragDropMode(QAbstractItemView.InternalMove)
+        # No automatic edit triggers: we route double-click ourselves so editing
+        # a cell never also jumps to the PDF (and read-only cells stay put).
+        self.tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._show_menu)
         self.tree.itemChanged.connect(self._on_item_changed)
         self.tree.itemDoubleClicked.connect(self._on_double)
-        self.tree.setColumnWidth(0, 44)
-        self.tree.setColumnWidth(1, 320)
+        self.tree.setColumnWidth(self.COL_DONE, 44)
+        self.tree.setColumnWidth(self.COL_TEXT, 300)
+        self.tree.setColumnWidth(self.COL_PG, 44)
+        self.tree.setColumnWidth(self.COL_SHEET, 56)
         # clickable headers sort items within each group (grouping stays primary)
         hdr = self.tree.header()
         hdr.setSectionsClickable(True)
@@ -82,23 +104,31 @@ class TodoPanel(QWidget):
 
     # -- wiring --------------------------------------------------------------
 
-    def set_store(self, store, config=None):
+    def set_store(self, store, config=None, document=None):
         self.store = store
         self.config = config
+        self.document = document
         store.add_listener(lambda *_: QTimer.singleShot(0, self.refresh))
         self.refresh()
 
     def _group_mode(self):
-        return [GROUP_SHEET, GROUP_COMMENTER, GROUP_NONE][self.group_by.currentIndex()]
+        return [GROUP_PAGE, GROUP_SHEET, GROUP_COMMENTER, GROUP_NONE][
+            self.group_by.currentIndex()]
 
-    # column -> sort key over an Annotation
+    def _sheet_of(self, page) -> str:
+        return self.document.sheet_label(page) if self.document is not None else ""
+
+    def _sheet_map(self) -> dict:
+        return dict(self.document.sheet_labels) if self.document is not None else {}
+
+    # column -> sort key over an Annotation (Sheet handled specially below)
     _SORT_KEYS = {
-        0: lambda a: (a.todo_done,),
-        1: lambda a: ((a.text or "").lower(),),
-        2: lambda a: (a.page,),
-        3: lambda a: ((a.author or "").lower(),),
-        4: lambda a: (a.created,),
-        5: lambda a: (",".join(a.tags).lower(),),
+        COL_DONE: lambda a: (a.todo_done,),
+        COL_TEXT: lambda a: ((a.text or "").lower(),),
+        COL_PG: lambda a: (a.page,),
+        COL_COMMENTER: lambda a: ((a.author or "").lower(),),
+        COL_DATE: lambda a: (a.created,),
+        COL_TAG: lambda a: (",".join(a.tags).lower(),),
     }
 
     def _on_header_clicked(self, col):
@@ -111,11 +141,21 @@ class TodoPanel(QWidget):
         self.tree.header().setSortIndicator(self._sort_col, self._sort_order)
         self.refresh()
 
+    def _sheet_sort_key(self, a):
+        s = self._sheet_of(a.page)
+        try:
+            return (0, int(s), "")
+        except (ValueError, TypeError):
+            return (1, 0, s.lower())
+
     def _sort_within_group(self, items):
         """Apply the active column sort to one group's items (grouping is primary)."""
         if self._sort_col is None:
             return items
-        key = self._SORT_KEYS.get(self._sort_col)
+        if self._sort_col == self.COL_SHEET:
+            key = self._sheet_sort_key
+        else:
+            key = self._SORT_KEYS.get(self._sort_col)
         if key is None:
             return items
         return sorted(items, key=key,
@@ -146,8 +186,11 @@ class TodoPanel(QWidget):
         groups = {}
         order = []
         for a in todos:
-            if mode == GROUP_SHEET:
-                k = f"Sheet {a.page + 1}"
+            if mode == GROUP_PAGE:
+                k = f"Page {a.page + 1}"
+            elif mode == GROUP_SHEET:
+                lbl = self._sheet_of(a.page)
+                k = f"Sheet {lbl}" if lbl else "(no sheet)"
             elif mode == GROUP_COMMENTER:
                 k = a.author or "(unknown)"
             else:
@@ -196,8 +239,8 @@ class TodoPanel(QWidget):
 
     def _make_row(self, parent, a: Annotation):
         it = QTreeWidgetItem(["", a.text or a.snippet(), str(a.page + 1),
-                              a.author or "", _DATE(a.created),
-                              ",".join(a.tags)])
+                              self._sheet_of(a.page), a.author or "",
+                              _DATE(a.created), ",".join(a.tags)])
         it.setFlags(it.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsEditable)
         it.setCheckState(0, Qt.Checked if a.todo_done else Qt.Unchecked)
         it.setData(0, Qt.UserRole, a)
@@ -214,28 +257,69 @@ class TodoPanel(QWidget):
         a = item.data(0, Qt.UserRole)
         if a is None:
             return
+        # Sheet is a per-page value stored on the document, not on the mark.
+        if col == self.COL_SHEET and self.document is not None:
+            val = item.text(self.COL_SHEET).strip()
+            if val != self._sheet_of(a.page):
+                self.document.set_sheet_label(a.page, val)
+                QTimer.singleShot(0, self.refresh)  # all rows on this page + grouping
+            return
+
         changed = False
         done = item.checkState(0) == Qt.Checked
         if done != a.todo_done:
             a.todo_done = done
             changed = True
-        new_text = item.text(1)
-        if col == 1 and new_text != a.text:
-            a.text = new_text
+        if col == self.COL_TEXT and item.text(self.COL_TEXT) != a.text:
+            a.text = item.text(self.COL_TEXT)
             changed = True
-        new_tags = [t.strip() for t in item.text(5).split(",") if t.strip()]
-        if col == 5 and new_tags != a.tags:
-            a.tags = new_tags
-            changed = True
+        if col == self.COL_TAG:
+            new_tags = [t.strip() for t in item.text(self.COL_TAG).split(",") if t.strip()]
+            if new_tags != a.tags:
+                a.tags = new_tags
+                changed = True
         if changed:
             self.store.update(a)
 
     def _on_double(self, item, col):
-        if col == 1:
-            return  # editing
         a = item.data(0, Qt.UserRole)
-        if a is not None:
+        if a is None:
+            return  # group header
+        if col in self._EDITABLE_COLS:
+            self.tree.editItem(item, col)        # edit the cell, do not jump
+        elif col == self.COL_PG:
+            self.activated.emit(a)               # Pg is read-only -> jump to PDF
+
+    def _show_menu(self, pos):
+        item = self.tree.itemAt(pos)
+        if item is None:
+            return
+        a = item.data(0, Qt.UserRole)
+        if a is None:
+            return  # group header
+        menu = QMenu(self)
+        act_jump = menu.addAction("Go to in PDF")
+        chosen = menu.exec(self.tree.viewport().mapToGlobal(pos))
+        if chosen == act_jump:
             self.activated.emit(a)
+
+    def reveal(self, ann):
+        """Select and scroll to ``ann`` (used when jumping in from the PDF)."""
+        for i in range(self.tree.topLevelItemCount()):
+            top = self.tree.topLevelItem(i)
+            if self._reveal_in(top, ann):
+                return True
+        return False
+
+    def _reveal_in(self, node, ann):
+        if node.data(0, Qt.UserRole) is ann:
+            self.tree.setCurrentItem(node)
+            self.tree.scrollToItem(node)
+            return True
+        for j in range(node.childCount()):
+            if self._reveal_in(node.child(j), ann):
+                return True
+        return False
 
     # -- export --------------------------------------------------------------
 
@@ -245,7 +329,8 @@ class TodoPanel(QWidget):
         if not path:
             return
         try:
-            export_markdown(self._todos(), path, group_by=self._group_mode())
+            export_markdown(self._todos(), path, group_by=self._group_mode(),
+                            sheet_labels=self._sheet_map())
             QMessageBox.information(self, "Exported", f"Wrote {path}")
         except Exception as e:
             QMessageBox.warning(self, "Export failed", str(e))
@@ -256,7 +341,8 @@ class TodoPanel(QWidget):
         if not path:
             return
         try:
-            export_docx(self._todos(), path, group_by=self._group_mode())
+            export_docx(self._todos(), path, group_by=self._group_mode(),
+                        sheet_labels=self._sheet_map())
             QMessageBox.information(self, "Exported", f"Wrote {path}")
         except Exception as e:
             QMessageBox.warning(self, "Export failed", str(e))

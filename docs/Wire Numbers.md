@@ -42,10 +42,26 @@ Types are color-coded:
 - **jumper** — on a "jumper" layer (excluded by default; only when the PDF
   exposes layers).
 
-A **mismatch** flag appears when a label's sheet differs from a cross-checked
-title-block sheet (only if you enable that in [[Settings]]).
-
 `Source` is `text`, `ocr` or `ai` depending on how the label was read.
+
+### The Flags column
+
+**Flags** surfaces a data-quality *warning* about a label; a blank cell means no
+issue. The wire flag is **`mismatch`**: the sheet encoded in the label's leading
+digits doesn't match the sheet DSI Redline resolved for that page from its title
+block (e.g. a `300xxx` label found on a page resolved as sheet 432).
+
+- It's **opt-in** — flags only appear when you enable **Cross-check sheet** in
+  [[Settings]]. It's off by default because drawings legitimately reference
+  wires from *other* sheets on one page (cross-references, bus continuations),
+  which would otherwise raise false mismatches.
+- Treat a flag as "eyeball this one": it's either a legitimate off-sheet
+  reference or a mis-read/mislabeled wire worth verifying.
+- Only **conforming** labels are cross-checked; jumpers and fixed/OEM are never
+  flagged this way.
+
+(The [[Component Labels]] tab has a parallel Flags column whose value is
+`unknown family`.)
 
 ## Spot-check before export
 

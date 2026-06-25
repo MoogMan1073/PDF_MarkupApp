@@ -27,9 +27,20 @@ Tick **Labels only** to force single-column output in either mode.
   - *In drawing order* — spatial reading order (top-to-bottom by rung,
     left-to-right within a rung).
   - *By sheet* — grouped by sheet.
-- **Dedupe** — collapse identical labels (on by default).
+- **Dedupe** — write each unique label only **once** (on by default). A wire
+  number is printed many times across a set (both ends of a wire, every sheet a
+  bus crosses), so deduping gives one row per physical wire. Note the on-screen
+  table is *already* deduped at extraction (that's what the **Count** column
+  reflects), so this checkbox is a final guard — in the normal flow you'll see
+  the same rows either way.
 - **Show** filters (Conforming / Fixed-OEM / Jumpers) and the **✓** include
   toggles from the table are all honoured.
+
+> **Dedupe vs. Labels/wire vs. Count.** These are three different things:
+> **Dedupe** removes duplicate labels; **Labels/wire** *repeats* each label N
+> times so you can print several physical tags; and **Count** is informational
+> only — it shows how many times a label was seen and does **not** control how
+> many are exported.
 
 Defaults for mode, format, sort and labels-per-wire come from [[Settings]].
 

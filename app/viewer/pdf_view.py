@@ -38,6 +38,8 @@ class PdfView(QGraphicsView):
     requestTool = Signal(str)             # ask the window to switch tools
     regionPicked = Signal(int, object)    # page_index, QRectF (page points)
     requestOpen = Signal(str)             # a PDF was dropped onto the canvas
+    requestReveal = Signal(object, str)   # Annotation, target ("todo" | "comment")
+    zoomChanged = Signal(float)           # current zoom factor (1.0 == 100%)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -195,6 +197,7 @@ class PdfView(QGraphicsView):
         self.resetTransform()
         self.scale(zoom, zoom)
         self._render_timer.start()
+        self.zoomChanged.emit(zoom)
 
     def zoom_in(self):
         self.set_zoom(self._zoom * 1.25)
@@ -632,6 +635,10 @@ class PdfView(QGraphicsView):
         meta = " · ".join(p for p in (ann.author, when) if p)
         QMessageBox.information(self, "Comment contents",
                                 f"{meta}\n\n{ann.text or '(no text)'}")
+
+    def reveal_in_panel(self, ann: Annotation, target: str):
+        """Ask the window to reveal this mark in the TODO list / comment sidebar."""
+        self.requestReveal.emit(ann, target)
 
     # -- store sync ----------------------------------------------------------
 

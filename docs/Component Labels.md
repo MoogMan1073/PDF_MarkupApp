@@ -45,8 +45,11 @@ resize**. Types are color-coded:
 - **conforming** — the number is exactly sheet+rung wide and splits cleanly.
 - **other length** — a family+number tag of a different length (kept, not split).
 
-The **Flags** column shows *unknown family* for tags whose code isn't in your
-list.
+The **Flags** column is a review *warning* (blank = no issue). It shows
+**`unknown family`** for tags whose family code isn't in your known-codes list —
+the tag is still captured, the flag just asks you to confirm it's a real device
+and, if so, add the code in [[Settings]]. (The [[Wire Numbers]] tab has a
+parallel Flags column whose value is `mismatch`.)
 
 ## Spot-check, then export
 
@@ -57,7 +60,9 @@ Uncheck all** toggle every visible row; **Shift/Ctrl-click** selects groups;
 
 Export to **.xlsx / .csv**, single-file (with `~sheet~` separators) or one file
 per sheet, labels-only or full columns, with a configurable **labels-per-device**
-repeat — mirroring [[Wire Export]].
+repeat — mirroring [[Wire Export]]. **Dedupe** (on by default) writes each unique
+tag once; **labels-per-device** then repeats it for printing, and the **Count**
+column is informational only (see the Dedupe note in [[Wire Export]]).
 
 Related: [[Wire Numbers]] · [[Settings]] · [[AI Assist]]
 

@@ -188,6 +188,16 @@ class CommentPanel(QWidget):
             return None
         return items[0].data(0, Qt.UserRole)
 
+    def reveal(self, ann):
+        """Select and scroll to ``ann`` (used when jumping in from the PDF)."""
+        for i in range(self.tree.topLevelItemCount()):
+            it = self.tree.topLevelItem(i)
+            if it.data(0, Qt.UserRole) is ann:
+                self.tree.setCurrentItem(it)
+                self.tree.scrollToItem(it)
+                return True
+        return False
+
     def _update_delete_enabled(self):
         self.btn_delete.setEnabled(self._selected_annotation() is not None)
 

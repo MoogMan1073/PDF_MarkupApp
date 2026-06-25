@@ -76,11 +76,21 @@ class _BaseMixin:
         from PySide6.QtWidgets import QMenu
         menu = QMenu()
         show_act = menu.addAction("Show comment contents") if self.ann.is_comment_like else None
+        todo_act = menu.addAction("Reveal in TODO list") if self.ann.is_todo else None
+        cmt_act = menu.addAction("Reveal in Comments") if self.ann.is_comment_like else None
+        if show_act or todo_act or cmt_act:
+            menu.addSeparator()
         del_act = menu.addAction("Delete")
         chosen = menu.exec(event.screenPos())
-        if chosen is not None and chosen == show_act:
+        if chosen is None:
+            pass
+        elif chosen == show_act:
             self.view.show_comment_contents(self.ann)
-        elif chosen is not None and chosen == del_act:
+        elif chosen == todo_act:
+            self.view.reveal_in_panel(self.ann, "todo")
+        elif chosen == cmt_act:
+            self.view.reveal_in_panel(self.ann, "comment")
+        elif chosen == del_act:
             self.view.request_delete_annotation(self.ann)
         event.accept()
 
