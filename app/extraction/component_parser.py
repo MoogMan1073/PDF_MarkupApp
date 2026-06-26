@@ -44,6 +44,8 @@ DEFAULT_FAMILY_CODES = (
     # common ISA instrument families
     "FT", "FV", "PV", "TV", "LV", "TT", "ZS", "ZSO", "ZSC", "FIT", "PIT",
     "TIT", "RTD", "TC", "PLC", "HMI", "VFD", "MOV",
+    # power / grounding / misc families (reported during testing)
+    "CBL", "DV", "EN", "DN", "GND", "PDB", "PRS", "PW", "SCR", "SE", "X",
 )
 
 
@@ -207,6 +209,29 @@ class ComponentParser:
 
 
 # --- post-processing (mirrors wire_parser) ----------------------------------
+
+
+def reclassify(components: Iterable[ComponentLabel],
+               config: Optional[ComponentConfig]) -> list:
+    """Re-derive family / sheet / rung / type / flags for already-extracted
+    labels under a (possibly changed) config — e.g. after the user edits the
+    known family codes or field widths in Settings — *without* re-running
+    extraction. Mutates each label in place (preserving count / included /
+    position) and returns the list."""
+    fams = config.family_set() if config else set()
+    out = list(components)
+    for c in out:
+        parsed = parse_component_label(c.label, config)
+        if parsed is None:
+            continue
+        family, number, sheet, rung = parsed
+        c.family, c.number, c.sheet, c.rung = family, number, sheet, rung
+        c.comp_type = TYPE_CONFORMING if sheet is not None else TYPE_NONCONFORMING
+        flags = [f for f in c.flags if f != FLAG_UNKNOWN_FAMILY]
+        if family not in fams:
+            flags.append(FLAG_UNKNOWN_FAMILY)
+        c.flags = flags
+    return out
 
 
 def dedupe(components: Iterable[ComponentLabel]) -> list:

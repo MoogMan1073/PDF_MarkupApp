@@ -466,11 +466,43 @@ class SidecarDB:
 # --- path helpers -----------------------------------------------------------
 
 
-def marked_pdf_path(pdf_path: str) -> str:
+def _canonical_stem(pdf_path: str) -> str:
+    """The stem shared by a document and its ``.marked.pdf`` / ``.markup.db``.
+
+    Opening either ``foo.pdf`` or ``foo.marked.pdf`` maps to the same stem
+    ``foo`` — so there is only ever ONE ``foo.marked.pdf`` (never
+    ``foo.marked.marked.pdf``) and ONE ``foo.markup.db`` sidecar.
+    """
     base, _ = os.path.splitext(pdf_path)
-    return base + ".marked.pdf"
+    if base.lower().endswith(".marked"):
+        base = base[: -len(".marked")]
+    return base
+
+
+def is_marked_pdf(pdf_path: str) -> bool:
+    """True when the path is a ``*.marked.pdf`` produced by this app."""
+    base, _ = os.path.splitext(pdf_path)
+    return base.lower().endswith(".marked")
+
+
+def original_pdf_path(pdf_path: str) -> str:
+    return _canonical_stem(pdf_path) + ".pdf"
+
+
+def marked_pdf_path(pdf_path: str) -> str:
+    return _canonical_stem(pdf_path) + ".marked.pdf"
 
 
 def sidecar_path(pdf_path: str) -> str:
-    base, _ = os.path.splitext(pdf_path)
-    return base + ".markup.db"
+    return _canonical_stem(pdf_path) + ".markup.db"
+
+
+def strip_annotations(doc: "fitz.Document") -> None:
+    """Remove every annotation from ``doc`` (used when a ``.marked.pdf`` is the
+    only available base, so re-saving the store doesn't double the marks)."""
+    for page in doc:
+        for annot in list(page.annots() or []):
+            try:
+                page.delete_annot(annot)
+            except Exception:
+                pass

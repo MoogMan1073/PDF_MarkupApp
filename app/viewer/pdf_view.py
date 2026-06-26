@@ -267,6 +267,42 @@ class PdfView(QGraphicsView):
             self.centerOn(r.center().x(), r.top() + 20)
             self._render_timer.start()
 
+    def go_to_location(self, page_no: int, x: float, y: float):
+        """Centre on a page-local point (PDF points) — used to jump a wire /
+        component row to its spot on the drawing, with a brief pulse marker."""
+        if not (0 <= page_no < len(self._page_items)):
+            return
+        page = self._page_items[page_no]
+        self.centerOn(page.mapToScene(QPointF(x, y)))
+        self._render_timer.start()
+        self._pulse_at(page, x, y)
+
+    def _pulse_at(self, page, x: float, y: float):
+        """A short-lived ring drawn on the page to draw the eye to a jump target."""
+        from PySide6.QtWidgets import QGraphicsEllipseItem
+        from PySide6.QtGui import QPen
+        old = getattr(self, "_pulse_item", None)
+        if old is not None:
+            try:
+                self._scene.removeItem(old)
+            except Exception:
+                pass
+        ring = QGraphicsEllipseItem(-14, -14, 28, 28, page)
+        ring.setPos(x, y)
+        ring.setPen(QPen(QColor(232, 119, 46), 2.0))
+        ring.setBrush(QBrush(QColor(232, 119, 46, 60)))
+        ring.setZValue(80)
+        self._pulse_item = ring
+        QTimer.singleShot(900, lambda: self._clear_pulse(ring))
+
+    def _clear_pulse(self, ring):
+        try:
+            self._scene.removeItem(ring)
+        except Exception:
+            pass
+        if getattr(self, "_pulse_item", None) is ring:
+            self._pulse_item = None
+
     # -- events --------------------------------------------------------------
 
     def wheelEvent(self, event):
@@ -422,11 +458,15 @@ class PdfView(QGraphicsView):
                 event.accept()
                 return
 
-        # Select tool: drag on empty page area selects text (Chrome-style);
-        # clicking an existing mark falls through to Qt for move/select.
+        # Select tool: drag on empty page area selects text (Chrome-style).
+        # But a click on a mark — or on one of its resize/rotate grips (which can
+        # sit *outside* the mark's box, e.g. the rotate grip above it) — must act
+        # on the mark, never start a text selection that would steal the gesture.
         if event.button() == Qt.LeftButton and self.tool.is_select():
             scene_pt = self.mapToScene(event.position().toPoint())
-            if self._annotation_item_at(scene_pt) is None:
+            on_mark = self._annotation_item_at(scene_pt) is not None
+            on_grip = self._grip_item_at(scene_pt)
+            if not on_mark and not on_grip:
                 pno, page = self._page_at_scene(scene_pt)
                 if page is not None:
                     self._scene.clearSelection()
@@ -503,6 +543,12 @@ class PdfView(QGraphicsView):
             if ann is not None:
                 return it
         return None
+
+    def _grip_item_at(self, scene_pt: QPointF) -> bool:
+        """True if a resize/rotate grip is under the point (so a click there
+        should resize/rotate the mark, not start a text selection)."""
+        return any(getattr(it, "_is_grip", False)
+                   for it in self._scene.items(scene_pt))
 
     def _begin_draft(self, scene_pt: QPointF) -> bool:
         pno, page = self._page_at_scene(scene_pt)
@@ -655,10 +701,21 @@ class PdfView(QGraphicsView):
             self._erase_macro_open = False
 
     def delete_selected(self):
-        for it in list(self._scene.selectedItems()):
-            ann = getattr(it, "ann", None)
-            if ann is not None:
-                self.push_command(RemoveAnnotationCommand(self, ann, "Delete"))
+        from PySide6.QtWidgets import QMessageBox
+        anns = [a for a in (getattr(it, "ann", None)
+                            for it in self._scene.selectedItems()) if a is not None]
+        if not anns:
+            return
+        if len(anns) == 1:
+            msg = f"Delete this {anns[0].kind}?\n\n{anns[0].snippet(80)}"
+        else:
+            msg = f"Delete these {len(anns)} marks?"
+        resp = QMessageBox.question(self, "Delete", msg,
+                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if resp != QMessageBox.Yes:
+            return
+        for ann in anns:
+            self.push_command(RemoveAnnotationCommand(self, ann, "Delete"))
 
     def request_delete_annotation(self, ann: Annotation):
         """Confirm, then delete a mark from the canvas (undoable)."""
@@ -852,6 +909,11 @@ class PdfView(QGraphicsView):
         self._search_bar.show()
         self._search_bar.raise_()
         self._search_bar.focus_input()
+        # Re-run any text left in the box so reopening Ctrl+F re-highlights it
+        # (otherwise the stale query sat there with no matches shown).
+        text = self._search_bar.input.text().strip()
+        if text:
+            self.run_search(text)
 
     def hide_search(self):
         self._clear_search_highlights()
@@ -890,8 +952,20 @@ class PdfView(QGraphicsView):
             self._focus_current_match()
         self._update_search_count()
 
+    def _research_if_stale(self) -> bool:
+        """If there are no matches but the box still holds a query, search it
+        now (lands on the first match). Returns True when it re-ran."""
+        if self._search_matches or self._search_bar is None:
+            return False
+        q = self._search_bar.input.text().strip()
+        if q:
+            self.run_search(q)
+            return True
+        return False
+
     def search_next(self):
         if not self._search_matches:
+            self._research_if_stale()
             return
         self._search_index = (self._search_index + 1) % len(self._search_matches)
         self._focus_current_match()
@@ -899,6 +973,7 @@ class PdfView(QGraphicsView):
 
     def search_prev(self):
         if not self._search_matches:
+            self._research_if_stale()
             return
         self._search_index = (self._search_index - 1) % len(self._search_matches)
         self._focus_current_match()

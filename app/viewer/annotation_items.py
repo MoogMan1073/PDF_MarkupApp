@@ -108,6 +108,8 @@ class _BaseMixin:
 class _HandleItem(QGraphicsRectItem):
     """A small resize grip living on a resizable parent."""
 
+    _is_grip = True   # so the view lets a grip click act, not start text-select
+
     _CURSORS = {
         "nw": Qt.SizeFDiagCursor, "se": Qt.SizeFDiagCursor,
         "ne": Qt.SizeBDiagCursor, "sw": Qt.SizeBDiagCursor,
@@ -137,6 +139,8 @@ class _HandleItem(QGraphicsRectItem):
 
 class _RotateHandle(QGraphicsEllipseItem):
     """A round grip above the top edge that rotates the parent (Word-style)."""
+
+    _is_grip = True   # the rotate grip sits ABOVE the mark, outside its bbox
 
     def __init__(self, parent):
         super().__init__(-HANDLE / 2, -HANDLE / 2, HANDLE, HANDLE, parent)

@@ -381,6 +381,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.tabs)
 
         self.todo_panel.activated.connect(self._jump_to)
+        self.wire_panel.activated.connect(self._jump_to)        # double-click → drawing
         self.component_panel.activated.connect(self._jump_to)
 
         self._progress("Building the comment & TODO panels…", 85)
@@ -423,7 +424,8 @@ class MainWindow(QMainWindow):
         m_file = mb.addMenu("&File")
         self.act_open = m_file.addAction("&Open PDF…", self.open_pdf, QKeySequence.Open)
         self.act_save = m_file.addAction("&Save markup", self.save_markup, QKeySequence.Save)
-        self.act_export_pdf = m_file.addAction("Export annotated PDF…", self.export_pdf)
+        self.act_export_pdf = m_file.addAction(
+            "Export annotated PDF…", self.export_pdf, QKeySequence("Ctrl+Shift+E"))
         m_file.addSeparator()
         m_file.addAction("Settings…", self.open_settings)
         m_file.addSeparator()
@@ -683,6 +685,18 @@ class MainWindow(QMainWindow):
             event.acceptProposedAction()
 
     def load_document(self, path):
+        from .model.storage import sidecar_path
+
+        def _doc_key(p):
+            return os.path.normcase(os.path.realpath(sidecar_path(p)))
+
+        # Feature 1: refuse to open the document that's already open. foo.pdf and
+        # foo.marked.pdf share a sidecar, so they count as the same document.
+        if self.document is not None and _doc_key(path) == _doc_key(self.document.path):
+            QMessageBox.information(
+                self, "Already open",
+                f"“{os.path.basename(path)}” is already open.")
+            return
         if self.document is not None:
             try:
                 self.document.close()
@@ -695,6 +709,14 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Open failed", str(e))
             return
         self.document = doc
+        # Feature 4: a .marked.pdf was opened but its original markup database
+        # couldn't be found, so a new one was started — let the user know.
+        if getattr(doc, "sidecar_recreated", False):
+            QMessageBox.information(
+                self, "New markup database",
+                "This .marked.pdf's original markup database wasn't found next to "
+                "it, so a new one has been started. Previously saved marks, TODOs "
+                "and extractions for this file may not be available.")
         self.view.set_document(doc, self.config)
         self.comment_panel.set_store(doc.store, self.config)
         self.todo_panel.set_store(doc.store, self.config, doc)
@@ -742,6 +764,13 @@ class MainWindow(QMainWindow):
                 self.comment_panel.refresh()
                 self.todo_panel.refresh()
                 self.view.rebuild_all_items()
+                # Bug 8: re-flag already-extracted component labels against the
+                # (possibly edited) family codes / widths — no re-extract needed.
+                if self.document.components:
+                    from .extraction.component_parser import reclassify
+                    reclassify(self.document.components, self.config.component_config())
+                    self.document.set_components(self.document.components)
+                    self.component_panel.set_document(self.document, self.config)
 
     # -- edit hooks ----------------------------------------------------------
 
@@ -788,16 +817,22 @@ class MainWindow(QMainWindow):
     # -- navigation ----------------------------------------------------------
 
     def _jump_to(self, obj):
-        # obj is an Annotation or a WireNumber
+        # obj is an Annotation, or a WireNumber / ComponentLabel (which carry a
+        # page + x/y of their FIRST occurrence after dedupe).
         ann = obj if isinstance(obj, Annotation) else None
         if ann is not None:
             self.tabs.setCurrentWidget(self.view)
             self.view.flash_annotation(ann)
+            return
+        page = getattr(obj, "page", None)
+        if page is None:
+            return
+        self.tabs.setCurrentWidget(self.view)
+        x, y = getattr(obj, "x", None), getattr(obj, "y", None)
+        if x is not None and y is not None and (x or y):
+            self.view.go_to_location(int(page), float(x), float(y))
         else:
-            page = getattr(obj, "page", None)
-            if page is not None:
-                self.tabs.setCurrentWidget(self.view)
-                self.view.go_to_page(page)
+            self.view.go_to_page(int(page))
 
     def _nav_to_page(self, page_no):
         """Picking a page/bookmark in the Navigation pane jumps the Viewer to it

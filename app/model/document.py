@@ -16,7 +16,8 @@ from .annotations import Annotation, AnnotationStore
 from .storage import (
     SidecarDB, load_pdf_annotations, write_annotations_to_pdf,
     compile_ignore_patterns, text_is_ignored,
-    marked_pdf_path, sidecar_path, DEFAULT_IGNORE_PATTERNS,
+    marked_pdf_path, sidecar_path, original_pdf_path, is_marked_pdf,
+    strip_annotations, DEFAULT_IGNORE_PATTERNS,
 )
 
 
@@ -27,7 +28,12 @@ class Document:
         self.path = path
         self.fitz_doc = fitz.open(path)
         self.store = AnnotationStore()
-        self.sidecar = SidecarDB(sidecar_path(path))
+        sc_path = sidecar_path(path)
+        # Opening a *.marked.pdf reuses the ORIGINAL's single sidecar. If that
+        # sidecar is missing (e.g. the file was moved on its own), we create a
+        # fresh one and flag it so the UI can tell the user.
+        self.sidecar_recreated = is_marked_pdf(path) and not os.path.exists(sc_path)
+        self.sidecar = SidecarDB(sc_path)
         self.ignore_patterns = list(
             ignore_patterns if ignore_patterns is not None else DEFAULT_IGNORE_PATTERNS
         )
@@ -143,12 +149,32 @@ class Document:
         The original PDF is never overwritten.  Returns the marked PDF path.
         """
         out = marked_path or marked_pdf_path(self.path)
-        # Write to a fresh copy of the original so we never duplicate annots.
-        work = fitz.open(self.path)
+        # Base the write on the PRISTINE original when it's available, so re-saving
+        # never doubles the marks; if only the .marked.pdf exists, strip its
+        # annotations first. Either way the store is the single source of truth.
+        original = original_pdf_path(self.path)
+        if os.path.exists(original):
+            work = fitz.open(original)
+            base_path = original
+        else:
+            work = fitz.open(self.path)
+            base_path = self.path
+            if is_marked_pdf(self.path):
+                strip_annotations(work)
         write_annotations_to_pdf(work, self.store.all(), include_ignored=include_ignored)
-        # incremental=False, full save to a (possibly new) path
-        work.save(out, garbage=3, deflate=True)
-        work.close()
+        if os.path.abspath(out) == os.path.abspath(base_path):
+            # PyMuPDF can't full-save onto the file it has open — write a temp in
+            # the same folder and atomically replace, so we still update one file.
+            import tempfile
+            d = os.path.dirname(os.path.abspath(out)) or "."
+            fd, tmp = tempfile.mkstemp(suffix=".pdf", dir=d)
+            os.close(fd)
+            work.save(tmp, garbage=3, deflate=True)
+            work.close()
+            os.replace(tmp, out)
+        else:
+            work.save(out, garbage=3, deflate=True)
+            work.close()
 
         # sync app state + wire cache
         self.sidecar.save_annotations(self.store.all())

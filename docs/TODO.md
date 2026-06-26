@@ -26,7 +26,8 @@ appears here.
 - **Hide done** to focus on what's left.
 - **Click a column header** to sort items *within* each group; an ↑/↓ arrow
   shows the direction. Grouping always stays the primary order.
-- **Drag** rows to reorder.
+- The **Filter** box matches across **all** columns — text, page, sheet,
+  commenter and tags — so typing a tag shows only items with that tag.
 
 > **Jumping the other way:** right-click a mark on the PDF and choose
 > **Reveal in TODO list** (for TODO marks) or **Reveal in Comments** to select
@@ -41,8 +42,8 @@ The **Tag** column is a free-form, comma-separated set of labels you attach to a
 TODO for your own triage — there's no fixed vocabulary. Type values like
 `electrical, RFI, priority` into the cell. Tags are saved in the markup sidecar
 (see [[Storage and Files]]), you can **sort** by them via the header, and they
-appear on export as `#tag1,tag2`. The top **Filter** box matches the *Text*
-column only, not tags.
+appear on export as `#tag1,tag2`. The **Filter** box matches tags too (along
+with every other column).
 
 ### Sheet column
 
