@@ -72,7 +72,9 @@ block (e.g. a `300xxx` label found on a page resolved as sheet 432).
 - **Check all / Uncheck all** toggle every *visible* row at once.
 - Select multiple rows with **Shift/Ctrl-click**, then toggle one checkbox to
   apply the same state to the whole selection.
-- **Double-click** a row to jump to that page in the [[Viewer]].
+- **Double-click** a row to jump to that label's **location on the drawing** in
+  the [[Viewer]] (the first occurrence for labels that appear more than once),
+  with a brief pulse marker.
 
 When you're happy, see [[Wire Export]].
 

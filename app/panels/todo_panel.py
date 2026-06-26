@@ -79,7 +79,9 @@ class TodoPanel(QWidget):
         self.tree.setRootIsDecorated(self.group_by.currentIndex() < 3)
         self.tree.setAlternatingRowColors(True)
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.tree.setDragDropMode(QAbstractItemView.InternalMove)
+        # Rows are not drag-reorderable / groupable — filter + sort cover it,
+        # and dragging risked accidental nesting.
+        self.tree.setDragDropMode(QAbstractItemView.NoDragDrop)
         # No automatic edit triggers: we route double-click ourselves so editing
         # a cell never also jumps to the PDF (and read-only cells stay put).
         self.tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -161,6 +163,13 @@ class TodoPanel(QWidget):
         return sorted(items, key=key,
                       reverse=self._sort_order == Qt.DescendingOrder)
 
+    def _row_haystack(self, a) -> str:
+        """All visible columns joined, for the Filter box to match across
+        text, page, sheet, commenter, date and tags."""
+        parts = [a.text or a.snippet(), str(a.page + 1), self._sheet_of(a.page),
+                 a.author or "", _DATE(a.created), ",".join(a.tags)]
+        return " ".join(p for p in parts if p).lower()
+
     def _todos(self):
         if self.store is None:
             return []
@@ -168,7 +177,7 @@ class TodoPanel(QWidget):
         items = self.store.todos(show_ignored)
         needle = self.search.text().lower().strip()
         if needle:
-            items = [a for a in items if needle in (a.text or "").lower()]
+            items = [a for a in items if needle in self._row_haystack(a)]
         if self.hide_done.isChecked():
             items = [a for a in items if not a.todo_done]
         items.sort(key=lambda a: (a.order, a.page, a.created))

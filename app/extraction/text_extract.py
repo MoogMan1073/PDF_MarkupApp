@@ -127,16 +127,49 @@ def read_titleblock_sheet(page: "fitz.Page", sheet_width: int = 3) -> Optional[i
 def read_titleblock_sheet_label(page: "fitz.Page") -> Optional[str]:
     """Best-effort title-block sheet number as the *raw* string (e.g. ``"000"``).
 
-    Like :func:`read_titleblock_sheet` but preserves leading zeros so a cover
-    sheet reads ``"000"`` rather than ``0``.  Returns ``None`` when nothing
-    convincing is found; never raises.
+    Two passes, both preserving leading zeros (a cover sheet reads ``"000"``):
+
+    1. A ``SHEET 300`` / ``SHT 300`` keyword match in the page text.
+    2. Failing that, the **bottom-right corner** heuristic for AutoCAD title
+       blocks where the ``THIS SHEET:`` label is SHX (not in the text layer):
+       the sheet number is the **lesser** of the few numeric tokens sitting in
+       that corner. Conservative — gives up (returns ``None``) when the corner
+       is empty or too ambiguous, so the editable Sheet column is the fallback.
+
+    Returns ``None`` when nothing convincing is found; never raises.
     """
     try:
         text = page.get_text("text") or ""
     except Exception:
-        return None
+        text = ""
     m = _SHEET_RE.search(text)
-    return m.group(1) if m else None
+    if m:
+        return m.group(1)
+    return _corner_sheet_label(page)
+
+
+def _corner_sheet_label(page: "fitz.Page",
+                        x_frac: float = 0.70, y_frac: float = 0.82,
+                        max_candidates: int = 4) -> Optional[str]:
+    """The lesser numeric token in the page's bottom-right corner, or ``None``."""
+    try:
+        r = page.rect
+        words = page.get_text("words") or []
+    except Exception:
+        return None
+    x_min = r.x0 + r.width * x_frac
+    y_min = r.y0 + r.height * y_frac
+    nums = []
+    for w in words:
+        try:
+            x0, y0, tok = float(w[0]), float(w[1]), str(w[4]).strip()
+        except (IndexError, ValueError, TypeError):
+            continue
+        if x0 >= x_min and y0 >= y_min and tok.isdigit() and 1 <= len(tok) <= 4:
+            nums.append(tok)
+    if not nums or len(nums) > max_candidates:
+        return None              # nothing, or too ambiguous — leave it blank
+    return min(nums, key=lambda s: int(s))
 
 
 def extract_document_tokens(doc: "fitz.Document") -> list:

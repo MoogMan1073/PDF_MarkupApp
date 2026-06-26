@@ -17,8 +17,16 @@ Next to your PDF (`drawing.pdf`):
   status, tags, extra styling, rotation, and the cached wire numbers. This is the
   source of truth for marks this app created.
 
-Save with **File ▸ Save markup** (`Ctrl+S`). Use **Export annotated PDF…** to
-write a copy anywhere.
+Save with **File ▸ Save markup** (`Ctrl+S`). Use **Export annotated PDF…**
+(`Ctrl+Shift+E`) to write a copy anywhere.
+
+> [!note] One database, one marked copy
+> There is only ever **one** `drawing.markup.db` and **one** `drawing.marked.pdf`
+> per drawing. If you open the `drawing.marked.pdf` itself, the app reuses the
+> original sidecar and keeps updating the same marked file — it never makes a
+> `drawing.marked.marked.pdf`, and re-saving never doubles your marks. If the
+> original `.markup.db` can't be found next to a `.marked.pdf` you open, a new
+> one is started and you're told.
 
 ## Opening a marked-up PDF from someone else
 

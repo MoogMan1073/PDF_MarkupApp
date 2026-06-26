@@ -4,6 +4,43 @@ All notable changes to **DSI Redline** are documented here. Versions are tagged
 `vX.Y.Z`; each tag triggers the Windows build that publishes the installer and a
 portable zip to the matching GitHub release.
 
+## v1.0.3
+
+Bug fixes (found in pre-beta testing):
+
+- **Rotate grip works again.** Clicking a mark's resize/rotate grip now performs
+  that action instead of starting a text selection — including the rotate grip,
+  which sits just above the mark, and grips that overlap nearby text.
+- **Ctrl+F re-searches stale text.** Reopening Find (or pressing Enter) with text
+  already in the box re-runs the search and re-highlights the matches.
+- **Delete key confirms.** Pressing `Delete` on a mark now shows the same "are
+  you sure?" prompt as right-click / trash-bin delete (one prompt for a
+  multi-selection).
+- **Sheet auto-fill** now also reads the **bottom-right corner** of the title
+  block (the lesser of the two numbers there) for drawings whose `THIS SHEET:`
+  label isn't in the text layer. Still best-effort; the Sheet column stays
+  editable.
+- **TODO rows no longer drag-reorder** (filter + sort cover it; avoids accidental
+  nesting).
+- **Wire / Component double-click** now jumps to the label's spot on the drawing
+  (the first occurrence for labels that repeat) with a brief pulse marker.
+- **More known family codes:** `CBL, DV, EN, DN, GND, PDB, PRS, PW, SCR, SE, X`.
+- **Family-code edits take effect immediately** — changing the known codes (or
+  widths) in Settings re-flags already-extracted component labels without a
+  re-extract.
+
+New features:
+
+- **Opening an already-open PDF** is blocked with a notice (a file and its
+  `.marked.pdf` count as the same document).
+- **Export hotkey:** `Ctrl+Shift+E` exports the annotated PDF.
+- **One markup database, one `.marked.pdf`.** Opening a `.marked.pdf` reuses the
+  original's single `.markup.db` (never a second one), and saving always updates
+  the same `.marked.pdf` (never `.marked.marked.pdf`). If the original markup
+  database is missing, a new one is started and you're told.
+- **TODO filter** now matches across **all** columns (text, page, sheet,
+  commenter, tags).
+
 ## v1.0.2
 
 - **Viewer rotate is now in-memory and non-destructive.** The ribbon **↺ / ↻**
