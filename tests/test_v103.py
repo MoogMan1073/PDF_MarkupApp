@@ -82,10 +82,15 @@ class TestSingleSidecar(unittest.TestCase):
         # delete the original so the next save is forced to base on the marked
         os.remove(src)
         doc2 = Document(marked); doc2.load()
-        marked2 = doc2.save()
-        doc2.close()
+        marked2 = doc2.save()                          # in-place save over the open file
         self.assertEqual(marked2, marked)             # one .marked.pdf, no .marked.marked
         self.assertEqual(self._annot_count(marked2), 1)  # not doubled
+        # the Document reopened the file it just replaced and stays usable
+        self.assertEqual(doc2.page_count, 1)
+        self.assertEqual(os.path.abspath(doc2.path), os.path.abspath(marked))
+        doc2.save()                                    # repeated in-place save is fine
+        self.assertEqual(self._annot_count(marked), 1)
+        doc2.close()
 
     def test_sidecar_recreated_flag(self):
         tmp = tempfile.mkdtemp()

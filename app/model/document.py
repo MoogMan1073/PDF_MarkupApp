@@ -52,9 +52,14 @@ class Document:
         return self.fitz_doc[page_no].rect
 
     def get_pixmap(self, page_no: int, zoom: float = 1.0) -> "fitz.Pixmap":
-        """Render a page to a :class:`fitz.Pixmap` (GUI converts to QImage)."""
+        """Render a page to a :class:`fitz.Pixmap` (GUI converts to QImage).
+
+        ``annots=False`` so the bitmap is the clean page: the app draws every
+        mark as its own overlay item, so a PDF that already carries annotations
+        (a ``.marked.pdf`` or a colleague's markup) isn't rendered twice.
+        """
         mat = fitz.Matrix(zoom, zoom)
-        return self.fitz_doc[page_no].get_pixmap(matrix=mat, alpha=False)
+        return self.fitz_doc[page_no].get_pixmap(matrix=mat, alpha=False, annots=False)
 
     # -- loading -------------------------------------------------------------
 
@@ -155,23 +160,31 @@ class Document:
         original = original_pdf_path(self.path)
         if os.path.exists(original):
             work = fitz.open(original)
-            base_path = original
         else:
             work = fitz.open(self.path)
-            base_path = self.path
             if is_marked_pdf(self.path):
                 strip_annotations(work)
         write_annotations_to_pdf(work, self.store.all(), include_ignored=include_ignored)
-        if os.path.abspath(out) == os.path.abspath(base_path):
-            # PyMuPDF can't full-save onto the file it has open — write a temp in
-            # the same folder and atomically replace, so we still update one file.
+
+        # ``out`` is the same file this Document already holds open (e.g. the user
+        # opened the .marked.pdf itself) → write a temp, RELEASE our handle (on
+        # Windows an open file can't be replaced), atomically swap it in, then
+        # reopen on the freshly-written file.
+        out_is_open = os.path.abspath(out) == os.path.abspath(self.path)
+        if out_is_open:
             import tempfile
             d = os.path.dirname(os.path.abspath(out)) or "."
             fd, tmp = tempfile.mkstemp(suffix=".pdf", dir=d)
             os.close(fd)
             work.save(tmp, garbage=3, deflate=True)
             work.close()
+            try:
+                self.fitz_doc.close()
+            except Exception:
+                pass
             os.replace(tmp, out)
+            self.fitz_doc = fitz.open(out)
+            self.path = out
         else:
             work.save(out, garbage=3, deflate=True)
             work.close()
