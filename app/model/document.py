@@ -204,6 +204,54 @@ class Document:
         """Explicit 'Export annotated PDF…' to an arbitrary path."""
         return self.save(marked_path=out_path, include_ignored=include_ignored)
 
+    def save_as(self, dest_pdf: str, include_ignored: bool = False) -> str:
+        """Fork the current markup into a NEW working file and switch to it.
+
+        A pristine copy of the source PDF is written to ``dest_pdf`` (canonicalised
+        so we never fork to a ``*.marked.pdf``), a fresh sidecar is started there
+        carrying every current mark / wire / component / sheet number, its
+        ``.marked.pdf`` is written, and this :class:`Document` is re-pointed at the
+        copy so subsequent edits land on the fork.  The original file is left
+        untouched.  Returns the new ``.marked.pdf`` path.
+        """
+        dest = original_pdf_path(dest_pdf)          # never fork to foo.marked.pdf
+        src = original_pdf_path(self.path)
+        if not os.path.exists(src):
+            src = self.path                         # only the marked copy exists
+
+        # 1) write a pristine (annotation-free) copy of the source to dest
+        if os.path.abspath(dest) != os.path.abspath(src):
+            work = fitz.open(src)
+            try:
+                if is_marked_pdf(src):
+                    strip_annotations(work)
+                work.save(dest, garbage=3, deflate=True)
+            finally:
+                work.close()
+
+        # 2) re-point this Document at the fork with a fresh sidecar
+        try:
+            self.sidecar.close()
+        except Exception:
+            pass
+        try:
+            self.fitz_doc.close()
+        except Exception:
+            pass
+        self.path = dest
+        self.fitz_doc = fitz.open(dest)
+        self.sidecar = SidecarDB(sidecar_path(dest))
+        self.sidecar_recreated = False
+
+        # 3) persist all in-memory state to the new sidecar + write its marked PDF
+        out = self.save(include_ignored=include_ignored)
+        # If dest reused a pre-existing sidecar, its wire/component tables could
+        # hold foreign rows that save() only rewrites when we actually have some.
+        # Force them to mirror THIS document exactly (empty clears them).
+        self.sidecar.save_wires(self.wires)
+        self.sidecar.save_components(self.components)
+        return out
+
     # -- wire cache ----------------------------------------------------------
 
     def set_wires(self, wires: list) -> None:

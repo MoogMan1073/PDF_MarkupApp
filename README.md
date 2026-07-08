@@ -17,13 +17,19 @@ _© DSI Innovations, LLC 2026_
   zoom, fit-width / fit-page, space/middle-drag pan, page navigation. Pages render
   lazily and re-render crisper as you zoom in.
 - **Markup tools** — select/move/**resize/rotate** (Word-style handles), highlight,
-  freehand pen, eraser, sticky-note comments, on-page text boxes, plus rectangle &
-  arrow shapes. Shapes preview live while you drag and stay editable afterward. Full
-  undo/redo (`Ctrl+Z` / `Ctrl+Shift+Z`). Every mark records its author and timestamp.
+  freehand pen, eraser, sticky-note comments, on-page text boxes, rectangle & arrow
+  shapes, **callouts** (text box + leader arrow) and **revision clouds** (freehand or
+  click-polygon, outline only). Rectangles and text boxes take an **interior fill**
+  with adjustable opacity — up to an opaque white cover. **Any** mark can carry a
+  **note** (not just comments). Shapes preview live while you drag and stay editable
+  afterward. Full undo/redo (`Ctrl+Z` / `Ctrl+Shift+Z`). Every mark records its author
+  and timestamp.
 - **Hybrid storage** — marks are saved as standard PDF annotations into a
   `*.marked.pdf` copy (the original is **never** overwritten), while app-only state
   (TODO status, tags, wire cache) lives in a `*.markup.db` SQLite sidecar. Existing
   PDF annotations (e.g. a colleague's markup) are imported with their real authors.
+  **Save As** (`Ctrl+Shift+S`) forks the whole markup to a new working file and
+  switches to it, leaving the original untouched.
 - **SHX / AutoCAD junk filter** — nuisance "SHX font could not be displayed" export
   comments are hidden (not deleted) and excluded from counts. Toggle "Show ignored"
   to reveal them. The pattern list is editable in Settings.
@@ -33,7 +39,8 @@ _© DSI Innovations, LLC 2026_
 - **TODO tab** — flag any comment/text box as a TODO; check off, edit inline, group by
   sheet/commenter, **click any column header to sort within groups** (with an ↑/↓
   indicator), and export to **Markdown** (GitHub task list) or **DOCX** (table with
-  ☐/☑ glyphs).
+  ☐/☑ glyphs). Checking a TODO off **strikes it through** both in the list and on the
+  mark itself for a quick visual audit.
 - **Wire Numbers tab** — extract, classify, spot-check and export wire numbers.
 - **Component Labels tab** — the same engine for **device/component tags** like
   `LT-10010` (family code + sheet/rung). Known family codes live in Settings

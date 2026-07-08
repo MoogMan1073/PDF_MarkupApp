@@ -16,10 +16,12 @@ from PySide6.QtWidgets import (
 
 from ..model.annotations import (
     Annotation, KIND_COMMENT, KIND_TEXTBOX, KIND_HIGHLIGHT, KIND_PEN,
+    KIND_RECT, KIND_ARROW, KIND_CALLOUT, KIND_CLOUD,
 )
 
 _KIND_ICON = {
     KIND_COMMENT: "💬", KIND_TEXTBOX: "🅣", KIND_HIGHLIGHT: "🖍", KIND_PEN: "✎",
+    KIND_RECT: "▭", KIND_ARROW: "↗", KIND_CALLOUT: "🗨", KIND_CLOUD: "☁",
 }
 _DATE = lambda iso: (iso or "")[:16].replace("T", " ")
 
@@ -49,7 +51,8 @@ class CommentPanel(QWidget):
 
         row = QHBoxLayout()
         self.type_filter = QComboBox()
-        self.type_filter.addItems(["All types", "Comment", "Text box", "Highlight", "Pen"])
+        self.type_filter.addItems(["All types", "Comment", "Text box", "Highlight",
+                                   "Pen", "Rectangle", "Arrow", "Callout", "Cloud"])
         self.type_filter.currentIndexChanged.connect(self.refresh)
         self.commenter_filter = QComboBox()
         self.commenter_filter.addItem("All commenters")
@@ -120,6 +123,7 @@ class CommentPanel(QWidget):
             0: None,
             1: {KIND_COMMENT}, 2: {KIND_TEXTBOX},
             3: {KIND_HIGHLIGHT}, 4: {KIND_PEN},
+            5: {KIND_RECT}, 6: {KIND_ARROW}, 7: {KIND_CALLOUT}, 8: {KIND_CLOUD},
         }[idx]
 
     def _refresh_commenters(self, anns):
@@ -137,8 +141,7 @@ class CommentPanel(QWidget):
         if self.store is None:
             return
         show_ignored = bool(self.config and self.config.show_ignored)
-        base = [a for a in self.store.visible(show_ignored)
-                if a.kind in (KIND_COMMENT, KIND_TEXTBOX, KIND_HIGHLIGHT, KIND_PEN)]
+        base = [a for a in self.store.visible(show_ignored) if a.shows_in_comments]
         self._refresh_commenters(base)
 
         kinds = self._included_kinds()

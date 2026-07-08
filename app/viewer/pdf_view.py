@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsItem
 from ..model.annotations import (
     Annotation, AnnotationStore,
     KIND_HIGHLIGHT, KIND_PEN, KIND_COMMENT, KIND_TEXTBOX, KIND_RECT, KIND_ARROW,
+    KIND_CALLOUT, KIND_CLOUD,
 )
 from .page_item import PageItem
 from .annotation_items import make_item
@@ -34,6 +35,7 @@ class PdfView(QGraphicsView):
     pageChanged = Signal(int)
     requestCommentEdit = Signal(object)   # Annotation
     requestTextEdit = Signal(object)      # Annotation
+    requestFillEdit = Signal(object)      # Annotation (rectangle fill)
     annotationActivated = Signal(object)  # Annotation (from a panel jump)
     requestTool = Signal(str)             # ask the window to switch tools
     regionPicked = Signal(int, object)    # page_index, QRectF (page points)
@@ -73,6 +75,10 @@ class PdfView(QGraphicsView):
         self._draft_start = None
         self._erasing = False
         self._erase_macro_open = False
+        # revision-cloud polygon in progress (click-to-add vertices)
+        self._cloud_pts = None            # list[(lx, ly)] or None
+        self._cloud_page = None           # (pno, page_item)
+        self._cloud_press = None          # (scene_pt) to tell a click from a drag
         # synchronous prompt for *new* comment/text-box text, set by the window.
         # signature: prompt(ann, is_textbox) -> (accepted: bool, text, todo)
         self.new_text_prompt = None
@@ -131,6 +137,14 @@ class PdfView(QGraphicsView):
         self._page_items = []
         self._item_by_ann = {}
         self.undo_stack.clear()
+        # scene.clear() destroyed the PageItems — drop any in-progress draw state
+        # that still references them (a half-drawn cloud polygon survives between
+        # clicks and would crash on the next click against a deleted page).
+        self._draft = None
+        self._draft_page = None
+        self._cloud_pts = None
+        self._cloud_page = None
+        self._cloud_press = None
         # scene.clear() destroyed any selection/search overlays — reset trackers
         self._text_sel_items = []
         self._selected_text = ""
@@ -345,6 +359,12 @@ class PdfView(QGraphicsView):
             super().dropEvent(event)
 
     def keyPressEvent(self, event):
+        # finishing an in-progress revision-cloud polygon
+        if self._cloud_pts is not None and event.key() in (
+                Qt.Key_Return, Qt.Key_Enter):
+            self._cloud_finish()
+            event.accept()
+            return
         if event.key() == Qt.Key_Space:
             self._space_down = True
             self.setCursor(Qt.OpenHandCursor)
@@ -361,6 +381,8 @@ class PdfView(QGraphicsView):
             return
         if self._region_pick or self._region_item is not None:
             self.cancel_region_pick()
+        if self._cloud_pts is not None:
+            self._cloud_cancel()
         if self._draft is not None:
             self._draft = None
             self._clear_preview()
@@ -452,6 +474,13 @@ class PdfView(QGraphicsView):
                 event.accept()
                 return
 
+        if event.button() == Qt.LeftButton and self.tool.current == T.TOOL_CLOUD:
+            # cloud is press-drag (freehand) OR click-to-add-vertices (polygon);
+            # decide on move/release, so just record the press here
+            self._cloud_press = self.mapToScene(event.position().toPoint())
+            event.accept()
+            return
+
         if event.button() == Qt.LeftButton and not self.tool.is_select():
             scene_pt = self.mapToScene(event.position().toPoint())
             if self._begin_draft(scene_pt):
@@ -508,6 +537,11 @@ class PdfView(QGraphicsView):
             self._update_draft(scene_pt)
             event.accept()
             return
+        if (self.tool.current == T.TOOL_CLOUD
+                and (event.buttons() & Qt.LeftButton)):
+            if self._cloud_on_move(self.mapToScene(event.position().toPoint())):
+                event.accept()
+                return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
@@ -529,7 +563,14 @@ class PdfView(QGraphicsView):
             event.accept()
             return
         if self._draft is not None:
+            was_cloud = self._draft.kind == KIND_CLOUD
             self._finish_draft()
+            if was_cloud:
+                self._cloud_press = None   # freehand done; no trailing vertex
+            event.accept()
+            return
+        if self.tool.current == T.TOOL_CLOUD:
+            self._cloud_on_release(self.mapToScene(event.position().toPoint()))
             event.accept()
             return
         super().mouseReleaseEvent(event)
@@ -591,17 +632,26 @@ class PdfView(QGraphicsView):
                                      color=self.tool.pen_color, width=self.tool.pen_width,
                                      author=author)
             return True
-        if tool in (T.TOOL_HIGHLIGHT, T.TOOL_RECT, T.TOOL_ARROW, T.TOOL_TEXTBOX):
+        if tool in (T.TOOL_HIGHLIGHT, T.TOOL_RECT, T.TOOL_ARROW, T.TOOL_TEXTBOX,
+                    T.TOOL_CALLOUT):
             kind = {T.TOOL_HIGHLIGHT: KIND_HIGHLIGHT, T.TOOL_RECT: KIND_RECT,
-                    T.TOOL_ARROW: KIND_ARROW, T.TOOL_TEXTBOX: KIND_TEXTBOX}[tool]
+                    T.TOOL_ARROW: KIND_ARROW, T.TOOL_TEXTBOX: KIND_TEXTBOX,
+                    T.TOOL_CALLOUT: KIND_CALLOUT}[tool]
+            text_like = kind in (KIND_TEXTBOX, KIND_CALLOUT)
             color = (self.tool.highlight_color if kind == KIND_HIGHLIGHT else
-                     self.tool.text_color if kind == KIND_TEXTBOX else self.tool.shape_color)
+                     self.tool.text_color if text_like else self.tool.shape_color)
+            fill, fill_op = None, 1.0
+            if kind == KIND_RECT:
+                fill, fill_op = self.tool.shape_fill, self.tool.shape_fill_opacity
+            elif text_like:
+                fill, fill_op = self.tool.text_fill, self.tool.text_fill_opacity
             self._draft = Annotation(page=pno, kind=kind, rect=(lx, ly, lx, ly),
                                      color=color, author=author,
                                      width=self.tool.shape_width,
                                      font_size=self.tool.font_size,
                                      bold=self.tool.bold, italic=self.tool.italic,
-                                     opacity=self.tool.highlight_opacity)
+                                     opacity=self.tool.highlight_opacity,
+                                     fill_color=fill, fill_opacity=fill_op)
             return True
         if tool == T.TOOL_ERASER:
             self._erasing = True
@@ -616,6 +666,13 @@ class PdfView(QGraphicsView):
         _, page = self._draft_page
         _lp = page.mapFromScene(scene_pt); lx, ly = _lp.x(), _lp.y()
         if self._draft.kind == KIND_PEN:
+            self._draft.points.append((lx, ly))
+        elif self._draft.kind == KIND_CLOUD:
+            # thin the freehand path so the scallop generator stays cheap
+            if self._draft.points:
+                px, py = self._draft.points[-1]
+                if abs(lx - px) + abs(ly - py) < 6:
+                    return
             self._draft.points.append((lx, ly))
         else:
             sx, sy = self._draft_start
@@ -646,7 +703,10 @@ class PdfView(QGraphicsView):
             return
         # discard degenerate marks
         degenerate = draft.kind == KIND_PEN and len(draft.points) < 2
-        if draft.kind in (KIND_HIGHLIGHT, KIND_RECT, KIND_ARROW, KIND_TEXTBOX):
+        if draft.kind == KIND_CLOUD and len(draft.points) < 3:
+            degenerate = True
+        if draft.kind in (KIND_HIGHLIGHT, KIND_RECT, KIND_ARROW, KIND_TEXTBOX,
+                          KIND_CALLOUT):
             x0, y0, x1, y1 = draft.rect
             if abs(x1 - x0) < 3 and abs(y1 - y0) < 3:
                 degenerate = True
@@ -656,9 +716,12 @@ class PdfView(QGraphicsView):
             self._clear_preview()
             return
 
-        # text boxes: prompt for text *before* committing (keep the live
-        # preview visible meanwhile); a cancel discards the box entirely.
-        if draft.kind == KIND_TEXTBOX:
+        # text boxes / callouts: prompt for text *before* committing (keep the
+        # live preview visible meanwhile); a cancel discards the mark entirely.
+        if draft.kind in (KIND_TEXTBOX, KIND_CALLOUT):
+            if draft.kind == KIND_CALLOUT and draft.callout_point is None:
+                x0, y0, x1, y1 = draft.rect
+                draft.callout_point = (min(x0, x1) - 36.0, max(y0, y1) + 36.0)
             draft.is_todo = self._default_todo()
             ok, text, todo = (True, "", draft.is_todo)
             if self.new_text_prompt is not None:
@@ -679,6 +742,101 @@ class PdfView(QGraphicsView):
 
     def _commit_new(self, ann: Annotation):
         self.push_command(AddAnnotationCommand(self, ann, f"Add {ann.kind}"))
+
+    # -- revision cloud (freehand drag OR click-polygon) ---------------------
+
+    def mouseDoubleClickEvent(self, event):
+        if (self.tool.current == T.TOOL_CLOUD and event.button() == Qt.LeftButton
+                and self._cloud_pts):
+            self._cloud_press = None
+            self._cloud_finish()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def _cloud_on_move(self, scene_pt: QPointF) -> bool:
+        """A drag with the cloud tool (and no polygon under way) starts a
+        freehand cloud.  Returns True when the gesture is handled."""
+        if self._cloud_press is None or self._cloud_pts:
+            return True  # mid-polygon: ignore drags (vertices are click-placed)
+        moved = (scene_pt - self._cloud_press).manhattanLength()
+        if moved <= 6:
+            return True  # not yet a drag
+        pno, page = self._page_at_scene(self._cloud_press)
+        if page is None:
+            return False
+        sp = page.mapFromScene(self._cloud_press)
+        cp = page.mapFromScene(scene_pt)
+        author = self.config.your_name if self.config else ""
+        self._draft_page = (pno, page)
+        self._draft_start = (sp.x(), sp.y())
+        self._draft = Annotation(page=pno, kind=KIND_CLOUD,
+                                 points=[(sp.x(), sp.y()), (cp.x(), cp.y())],
+                                 color=self.tool.shape_color,
+                                 width=self.tool.shape_width, author=author)
+        self._refresh_preview()
+        return True
+
+    def _cloud_on_release(self, scene_pt: QPointF):
+        """A click with the cloud tool places / closes a polygon vertex."""
+        if self._cloud_press is None:
+            return  # already consumed (e.g. by a double-click finish)
+        self._cloud_press = None
+        pno, page = self._page_at_scene(scene_pt)
+        if page is None:
+            return
+        lp = page.mapFromScene(scene_pt)
+        pt = (lp.x(), lp.y())
+        if self._cloud_pts and self._cloud_page and self._cloud_page[0] == pno:
+            first_scene = self._cloud_page[1].mapToScene(QPointF(*self._cloud_pts[0]))
+            if (len(self._cloud_pts) >= 3
+                    and (scene_pt - first_scene).manhattanLength() < 12):
+                self._cloud_finish()
+                return
+            self._cloud_pts.append(pt)
+        else:
+            self._cloud_pts = [pt]
+            self._cloud_page = (pno, page)
+        self._show_cloud_preview()
+
+    def _cloud_finish(self):
+        pts = self._cloud_pts
+        page_info = self._cloud_page
+        self._clear_cloud_preview()
+        self._cloud_pts = None
+        self._cloud_page = None
+        if not pts or len(pts) < 3 or page_info is None:
+            return
+        author = self.config.your_name if self.config else ""
+        ann = Annotation(page=page_info[0], kind=KIND_CLOUD, points=list(pts),
+                         color=self.tool.shape_color, width=self.tool.shape_width,
+                         author=author)
+        self._commit_new(ann)
+
+    def _cloud_cancel(self):
+        self._clear_cloud_preview()
+        self._cloud_pts = None
+        self._cloud_page = None
+        self._cloud_press = None
+
+    def _show_cloud_preview(self):
+        self._clear_cloud_preview()
+        if not self._cloud_pts or self._cloud_page is None:
+            return
+        pno, page = self._cloud_page
+        tmp = Annotation(page=pno, kind=KIND_CLOUD, points=list(self._cloud_pts),
+                         color=self.tool.shape_color, width=self.tool.shape_width)
+        item = make_item(tmp, self)
+        if item is not None:
+            item.setParentItem(page)
+            item.setZValue(12)
+            item.setOpacity(0.7)
+            self._item_by_ann["__cloudpreview__"] = item
+
+    def _clear_cloud_preview(self):
+        prev = self._item_by_ann.pop("__cloudpreview__", None)
+        if prev is not None:
+            self._scene.removeItem(prev)
 
     # -- erasing -------------------------------------------------------------
 
@@ -763,6 +921,10 @@ class PdfView(QGraphicsView):
         select = self.tool.is_select()
         item.setFlag(QGraphicsItem.ItemIsMovable, select)
         item.setFlag(QGraphicsItem.ItemIsSelectable, select)
+        if hasattr(item, "_refresh_note_badge"):
+            item._refresh_note_badge()
+        if hasattr(item, "_refresh_done_overlay"):
+            item._refresh_done_overlay()
         self._item_by_ann[ann.id] = item
 
     def _remove_item_for(self, ann: Annotation):
@@ -777,6 +939,10 @@ class PdfView(QGraphicsView):
             return
         if hasattr(item, "sync_from_model"):
             item.sync_from_model()
+        if hasattr(item, "_refresh_note_badge"):
+            item._refresh_note_badge()
+        if hasattr(item, "_refresh_done_overlay"):
+            item._refresh_done_overlay()
         item.update()
 
     def rebuild_all_items(self):
@@ -793,6 +959,14 @@ class PdfView(QGraphicsView):
 
     def edit_text_annotation(self, ann: Annotation):
         self.requestTextEdit.emit(ann)
+
+    def edit_note_annotation(self, ann: Annotation):
+        """Attach/edit a free note on a non-text mark (arrow, rect, …)."""
+        self.requestCommentEdit.emit(ann)
+
+    def edit_fill_annotation(self, ann: Annotation):
+        """Edit a rectangle's interior fill colour + opacity."""
+        self.requestFillEdit.emit(ann)
 
     # -- panel jump ----------------------------------------------------------
 

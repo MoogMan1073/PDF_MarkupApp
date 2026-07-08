@@ -25,6 +25,7 @@ import fitz  # PyMuPDF
 from .annotations import (
     Annotation, now_iso,
     KIND_HIGHLIGHT, KIND_PEN, KIND_COMMENT, KIND_TEXTBOX, KIND_RECT, KIND_ARROW,
+    KIND_CALLOUT, KIND_CLOUD,
 )
 
 # Seeded SHX / AutoCAD junk ignore-patterns (regex, may use inline (?i)).
@@ -45,6 +46,7 @@ _PDF_TYPE_TO_KIND = {
     "Ink": KIND_PEN,
     "Square": KIND_RECT,
     "Line": KIND_ARROW,
+    "Polygon": KIND_CLOUD,
 }
 
 
@@ -164,8 +166,36 @@ def load_pdf_annotations(
                     ann.points = pts
                 except Exception:
                     pass
+            if kind == KIND_CLOUD:
+                try:
+                    verts = annot.vertices or []
+                    ann.points = [tuple(fitz.Point(p[0], p[1]) * rotm) for p in verts]
+                except Exception:
+                    pass
             if kind == KIND_TEXTBOX:
                 ann.font_size = float(info.get("fontsize", 11) or 11)
+                # A FreeText's fill is stored in /C (reported under 'stroke'); its
+                # text colour lives in /DA (not exposed here) so default it black.
+                fc = _color_or_default(colors, "stroke", None)
+                if fc is not None:
+                    ann.fill_color = fc
+                    ann.color = (0.0, 0.0, 0.0)
+                    try:
+                        op = annot.opacity
+                        if op is not None and 0.0 <= float(op) <= 1.0:
+                            ann.fill_opacity = float(op)
+                    except Exception:
+                        pass
+            elif kind == KIND_RECT:
+                fill = _color_or_default(colors, "fill", None)   # /IC
+                if fill is not None:
+                    ann.fill_color = fill
+                    try:
+                        op = annot.opacity
+                        if op is not None and 0.0 <= float(op) <= 1.0:
+                            ann.fill_opacity = float(op)
+                    except Exception:
+                        pass
             # carry the /NM name so the sidecar can re-link app state
             name = info.get("name") or ""
             if name:
@@ -240,20 +270,77 @@ def write_annotations_to_pdf(doc: "fitz.Document", annotations: Iterable[Annotat
                 except Exception:
                     pass
             elif ann.kind == KIND_TEXTBOX:
-                annot = page.add_freetext_annot(
-                    rect, ann.text or "", fontsize=ann.font_size,
-                    text_color=ann.color, rotate=prot,
-                )
+                ft_kwargs = dict(fontsize=ann.font_size, text_color=ann.color,
+                                 rotate=prot)
+                if ann.fill_color is not None:
+                    ft_kwargs["fill_color"] = ann.fill_color
+                annot = page.add_freetext_annot(rect, ann.text or "", **ft_kwargs)
+                if ann.fill_color is not None and ann.fill_opacity < 1.0:
+                    try:
+                        annot.set_opacity(ann.fill_opacity)
+                    except Exception:
+                        pass
             elif ann.kind == KIND_RECT:
                 annot = page.add_rect_annot(rect)
-                annot.set_colors(stroke=ann.color)
+                if ann.fill_color is not None:
+                    annot.set_colors(stroke=ann.color, fill=ann.fill_color)
+                else:
+                    annot.set_colors(stroke=ann.color)
                 annot.set_border(width=ann.width)
+                if ann.fill_color is not None and ann.fill_opacity < 1.0:
+                    try:
+                        annot.set_opacity(ann.fill_opacity)
+                    except Exception:
+                        pass
             elif ann.kind == KIND_ARROW:
                 annot = page.add_line_annot(p0, p1)
                 annot.set_colors(stroke=ann.color)
                 annot.set_border(width=ann.width)
                 try:
                     annot.set_line_ends(fitz.PDF_ANNOT_LE_NONE, fitz.PDF_ANNOT_LE_OPEN_ARROW)
+                except Exception:
+                    pass
+            elif ann.kind == KIND_CALLOUT:
+                # a FreeText with a leader (CL) from the box to the tip point
+                tip = ann.callout_point or (x0 - 36.0, y1 + 36.0)
+                ax = min(max(tip[0], min(x0, x1)), max(x0, x1))
+                ay = min(max(tip[1], min(y0, y1)), max(y0, y1))
+                cl = [fitz.Point(tip[0], tip[1]) * derot,
+                      fitz.Point(ax, ay) * derot]
+                base_kwargs = dict(fontsize=ann.font_size, text_color=ann.color,
+                                   rotate=prot)
+                if ann.fill_color is not None:
+                    base_kwargs["fill_color"] = ann.fill_color
+                try:
+                    # the callout leader (CL/FreeTextCallout) needs PyMuPDF >= 1.25
+                    annot = page.add_freetext_annot(
+                        rect, ann.text or "", callout=cl,
+                        line_end=fitz.PDF_ANNOT_LE_OPEN_ARROW, **base_kwargs)
+                except TypeError:
+                    # older PyMuPDF: degrade to a plain text box (no leader)
+                    annot = page.add_freetext_annot(rect, ann.text or "",
+                                                    **base_kwargs)
+                if ann.fill_color is not None and ann.fill_opacity < 1.0:
+                    try:
+                        annot.set_opacity(ann.fill_opacity)
+                    except Exception:
+                        pass
+            elif ann.kind == KIND_CLOUD and ann.points and len(ann.points) >= 3:
+                poly = [tuple(fitz.Point(px, py) * derot) for px, py in ann.points]
+                annot = page.add_polygon_annot(poly)
+                annot.set_colors(stroke=ann.color)
+                try:
+                    annot.set_border(width=ann.width, clouds=2)  # revision-cloud BE
+                except Exception:
+                    annot.set_border(width=ann.width)
+            # A note attached to a non-text mark (highlight / pen / rect / arrow)
+            # should open as a genuine comment popup in Adobe / Chrome, not just
+            # sit in the annotation's /Contents.
+            if (annot is not None
+                    and ann.kind not in (KIND_COMMENT, KIND_TEXTBOX, KIND_CALLOUT)
+                    and (ann.text or "").strip()):
+                try:
+                    annot.set_popup(fitz.Rect(x0 + 20, y0, x0 + 220, y0 + 90) * derot)
                 except Exception:
                     pass
         except Exception:

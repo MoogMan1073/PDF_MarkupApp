@@ -20,8 +20,10 @@ KIND_COMMENT = "comment"      # sticky note (bubble icon)
 KIND_TEXTBOX = "textbox"      # FreeText rendered on the page
 KIND_RECT = "rect"
 KIND_ARROW = "arrow"
+KIND_CALLOUT = "callout"      # FreeText with a leader arrow to a target point
+KIND_CLOUD = "cloud"          # revision cloud (scalloped polygon, outline only)
 
-TEXT_KINDS = {KIND_COMMENT, KIND_TEXTBOX}
+TEXT_KINDS = {KIND_COMMENT, KIND_TEXTBOX, KIND_CALLOUT}
 
 
 def now_iso() -> str:
@@ -50,6 +52,14 @@ class Annotation:
     opacity: float = 0.4                         # highlights
     rotation: float = 0.0                        # degrees, clockwise, about centre
 
+    # interior fill for rectangles / text boxes (None = no fill / transparent).
+    # ``fill_opacity`` 1.0 gives a solid cover; a white opaque fill redacts.
+    fill_color: Optional[tuple] = None           # RGB 0..1, or None
+    fill_opacity: float = 1.0
+
+    # callout leader: the arrow-tip target point in page space (None until set)
+    callout_point: Optional[tuple] = None        # (x, y), or None
+
     # app-only state (synced to the SQLite sidecar, not the PDF)
     is_todo: bool = False
     todo_done: bool = False
@@ -68,6 +78,19 @@ class Annotation:
     @property
     def is_comment_like(self) -> bool:
         return self.kind in TEXT_KINDS
+
+    @property
+    def has_note(self) -> bool:
+        """True when a note/comment is attached (any mark kind can carry one)."""
+        return bool((self.text or "").strip())
+
+    @property
+    def shows_in_comments(self) -> bool:
+        """Whether this mark belongs in the Comments sidebar: the inherently
+        textual kinds, highlights/pen (historically listed), or any other mark
+        that has had a note attached."""
+        return (self.is_comment_like or self.kind in (KIND_HIGHLIGHT, KIND_PEN)
+                or self.has_note)
 
     def snippet(self, n: int = 60) -> str:
         t = " ".join((self.text or "").split())
@@ -90,6 +113,10 @@ class Annotation:
             clean["rect"] = tuple(clean["rect"])
         if "color" in clean and clean["color"] is not None:
             clean["color"] = tuple(clean["color"])
+        if clean.get("fill_color") is not None:
+            clean["fill_color"] = tuple(clean["fill_color"])
+        if clean.get("callout_point") is not None:
+            clean["callout_point"] = tuple(clean["callout_point"])
         return cls(**clean)
 
 

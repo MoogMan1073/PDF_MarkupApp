@@ -16,12 +16,12 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QGraphicsItem, QGraphicsRectItem, QGraphicsPathItem, QGraphicsObject,
-    QGraphicsEllipseItem, QStyle,
+    QGraphicsEllipseItem, QGraphicsLineItem, QStyle,
 )
 
 from ..model.annotations import (
     Annotation, KIND_HIGHLIGHT, KIND_PEN, KIND_COMMENT, KIND_TEXTBOX,
-    KIND_RECT, KIND_ARROW,
+    KIND_RECT, KIND_ARROW, KIND_CALLOUT, KIND_CLOUD,
 )
 from .command_stack import ModifyAnnotationCommand, capture
 
@@ -35,6 +35,46 @@ ANNOT_Z = 10.0
 def qcolor(rgb, alpha=255) -> QColor:
     r, g, b = rgb
     return QColor(int(r * 255), int(g * 255), int(b * 255), alpha)
+
+
+def fill_brush(ann):
+    """Interior brush for a rect / text box, or ``None`` when there is no fill."""
+    fc = getattr(ann, "fill_color", None)
+    if fc is None:
+        return None
+    alpha = int(max(0.0, min(1.0, getattr(ann, "fill_opacity", 1.0))) * 255)
+    if alpha <= 0:
+        return None
+    return QBrush(qcolor(fc, alpha))
+
+
+class _NoteBadge(QGraphicsEllipseItem):
+    """A small orange dot pinned to a mark's corner to flag that it carries a
+    note (highlights, pens, arrows and rectangles don't otherwise show text)."""
+
+    _R = 5.0
+
+    def __init__(self, parent):
+        super().__init__(-self._R, -self._R, 2 * self._R, 2 * self._R, parent)
+        self.setBrush(QBrush(QColor(232, 119, 46)))
+        self.setPen(QPen(QColor("white"), 1.0))
+        self.setZValue(70)
+        self.setAcceptedMouseButtons(Qt.NoButton)
+        self.setToolTip("Has a note — right-click ▸ Edit note…")
+
+
+class _DoneStrike(QGraphicsLineItem):
+    """A strikethrough line drawn across a mark whose TODO has been completed
+    (the on-sheet counterpart to the struck-out row in the TODO audit list)."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        pen = QPen(QColor(200, 40, 40), 2.5)
+        pen.setCapStyle(Qt.RoundCap)
+        self.setPen(pen)
+        self.setZValue(69)
+        self.setAcceptedMouseButtons(Qt.NoButton)
+        self.setToolTip("TODO completed")
 
 
 # --- selectable / movable base ---------------------------------------------
@@ -74,24 +114,36 @@ class _BaseMixin:
 
     def contextMenuEvent(self, event):
         from PySide6.QtWidgets import QMenu
+        ann = self.ann
         menu = QMenu()
-        show_act = menu.addAction("Show comment contents") if self.ann.is_comment_like else None
-        todo_act = menu.addAction("Reveal in TODO list") if self.ann.is_todo else None
-        cmt_act = menu.addAction("Reveal in Comments") if self.ann.is_comment_like else None
-        if show_act or todo_act or cmt_act:
+        show_act = menu.addAction("Show comment contents") if ann.is_comment_like else None
+        # Any non-text mark (highlight, pen, arrow, rectangle, …) can carry a note.
+        note_act = None
+        if not ann.is_comment_like:
+            note_act = menu.addAction("Edit note…" if ann.has_note else "Add note…")
+        # rectangles have no double-click editor, so expose fill here
+        fill_act = menu.addAction("Fill…") if ann.kind == KIND_RECT else None
+        todo_act = menu.addAction("Reveal in TODO list") if ann.is_todo else None
+        cmt_act = (menu.addAction("Reveal in Comments")
+                   if (ann.is_comment_like or ann.has_note) else None)
+        if any((show_act, note_act, fill_act, todo_act, cmt_act)):
             menu.addSeparator()
         del_act = menu.addAction("Delete")
         chosen = menu.exec(event.screenPos())
         if chosen is None:
             pass
         elif chosen == show_act:
-            self.view.show_comment_contents(self.ann)
+            self.view.show_comment_contents(ann)
+        elif chosen == note_act:
+            self.view.edit_note_annotation(ann)
+        elif chosen == fill_act:
+            self.view.edit_fill_annotation(ann)
         elif chosen == todo_act:
-            self.view.reveal_in_panel(self.ann, "todo")
+            self.view.reveal_in_panel(ann, "todo")
         elif chosen == cmt_act:
-            self.view.reveal_in_panel(self.ann, "comment")
+            self.view.reveal_in_panel(ann, "comment")
         elif chosen == del_act:
-            self.view.request_delete_annotation(self.ann)
+            self.view.request_delete_annotation(ann)
         event.accept()
 
     # subclasses override
@@ -100,6 +152,38 @@ class _BaseMixin:
 
     def sync_from_model(self):
         pass
+
+    def _refresh_note_badge(self):
+        """Show a small badge at the corner when a non-text mark carries a note
+        (comment/text-box already display their text)."""
+        if self.ann.is_comment_like:
+            return
+        want = self.ann.has_note
+        badge = getattr(self, "_note_badge", None)
+        if want and badge is None:
+            badge = _NoteBadge(self)
+            self._note_badge = badge
+        if badge is not None:
+            badge.setVisible(want)
+            if want:
+                br = self.boundingRect()
+                badge.setPos(br.right(), br.top())
+
+    def _refresh_done_overlay(self):
+        """Strike a line across the mark once its TODO is checked off, matching
+        the struck-out row in the TODO audit list."""
+        want = bool(getattr(self.ann, "is_todo", False)
+                    and getattr(self.ann, "todo_done", False))
+        line = getattr(self, "_done_strike", None)
+        if want and line is None:
+            line = _DoneStrike(self)
+            self._done_strike = line
+        if line is not None:
+            line.setVisible(want)
+            if want:
+                br = self.boundingRect()
+                y = br.center().y()
+                line.setLine(br.left(), y, br.right(), y)
 
 
 # --- rect-based, resizable --------------------------------------------------
@@ -304,11 +388,13 @@ class HighlightItem(ResizableRectItem):
 class RectShapeItem(ResizableRectItem):
     def paint(self, painter, option, widget=None):
         option.state &= ~QStyle.State_Selected
+        brush = fill_brush(self.ann)
         painter.setPen(QPen(qcolor(self.ann.color), self.ann.width))
-        painter.setBrush(Qt.NoBrush)
+        painter.setBrush(brush if brush is not None else Qt.NoBrush)
         painter.drawRect(self.rect())
         if self.isSelected():
             painter.setPen(QPen(QColor(30, 120, 230), 0, Qt.DashLine))
+            painter.setBrush(Qt.NoBrush)
             painter.drawRect(self.rect())
 
 
@@ -317,6 +403,12 @@ class TextBoxItem(ResizableRectItem):
 
     def paint(self, painter, option, widget=None):
         option.state &= ~QStyle.State_Selected
+        # opaque / translucent background behind the text (redaction cover)
+        brush = fill_brush(self.ann)
+        if brush is not None:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(brush)
+            painter.drawRect(self.rect())
         font = QFont("Helvetica", max(4, int(self.ann.font_size)))
         font.setBold(self.ann.bold)
         font.setItalic(self.ann.italic)
@@ -334,6 +426,143 @@ class TextBoxItem(ResizableRectItem):
     def mouseDoubleClickEvent(self, event):
         self.view.edit_text_annotation(self.ann)
         event.accept()
+
+
+# --- callout (text box + leader arrow) --------------------------------------
+
+
+class _LeaderTipHandle(QGraphicsEllipseItem):
+    """Draggable grip at the callout's arrow tip (target point)."""
+
+    _is_grip = True
+
+    def __init__(self, parent):
+        super().__init__(-HANDLE / 2, -HANDLE / 2, HANDLE, HANDLE, parent)
+        self.setBrush(QBrush(QColor(232, 119, 46)))
+        self.setPen(QPen(QColor("white"), 0))
+        self.setCursor(Qt.SizeAllCursor)
+        self.setZValue(61)
+        self.setVisible(False)
+
+    def mousePressEvent(self, event):
+        self.parentItem()._begin_tip()
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        self.parentItem()._tip_to(event.scenePos())
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self.parentItem()._end_tip()
+        event.accept()
+
+
+class CalloutItem(TextBoxItem):
+    """A text box with a leader arrow to a target point. The box behaves exactly
+    like a :class:`TextBoxItem` (move / resize / edit / fill); an extra grip at
+    the arrow tip repositions the leader. Callouts are not rotated."""
+
+    def __init__(self, ann: Annotation, view):
+        self._tip_handle = None
+        self._tip_snap = None
+        super().__init__(ann, view)
+        self._rotate_handle.setVisible(False)   # callouts don't rotate
+        self._tip_handle = _LeaderTipHandle(self)
+        self._place_tip()
+
+    # geometry --------------------------------------------------------------
+
+    def _default_tip(self):
+        x0, y0, x1, y1 = self.ann.rect
+        return (min(x0, x1) - 36.0, max(y0, y1) + 36.0)
+
+    def _tip_local(self) -> QPointF:
+        # Never persist a default here — writing the model during paint()/
+        # boundingRect() would freeze a new callout's tip at the tiny first-
+        # preview rect and defeat the final-rect default set on commit.
+        cp = self.ann.callout_point
+        if cp is None:
+            cp = self._default_tip()
+        tx, ty = cp
+        p = self.pos()
+        return QPointF(tx - p.x(), ty - p.y())
+
+    def sync_from_model(self):
+        self.ann.rotation = 0.0          # never rotate a callout
+        super().sync_from_model()
+        self._place_tip()
+
+    def _place_tip(self):
+        if self._tip_handle is not None:
+            self._tip_handle.setPos(self._tip_local())
+
+    def _place_handles(self):
+        super()._place_handles()
+        self._place_tip()
+
+    def itemChange(self, change, value):
+        res = super().itemChange(change, value)
+        if self._tip_handle is not None:
+            if change == QGraphicsItem.ItemSelectedHasChanged:
+                self._tip_handle.setVisible(bool(value))
+                self._rotate_handle.setVisible(False)
+            elif change == QGraphicsItem.ItemPositionHasChanged:
+                # the tip targets a fixed page point; as the box moves, re-place
+                # the grip so it stays on target instead of drifting with the box
+                self._place_tip()
+        return res
+
+    # tip drag --------------------------------------------------------------
+
+    def _begin_tip(self):
+        self._tip_snap = capture(self.ann)
+
+    def _tip_to(self, scene_pos):
+        local = self.mapFromScene(scene_pos)
+        p = self.pos()
+        self.ann.callout_point = (local.x() + p.x(), local.y() + p.y())
+        self.prepareGeometryChange()
+        self._place_tip()
+        self.update()
+
+    def _end_tip(self):
+        after = capture(self.ann)
+        if self._tip_snap is not None and after != self._tip_snap:
+            self.view.push_command(
+                ModifyAnnotationCommand(self.view, self.ann,
+                                        self._tip_snap, after, "Move callout"))
+        self._tip_snap = None
+        self.view.store.update(self.ann)
+
+    # rendering -------------------------------------------------------------
+
+    def _attach_point(self, tip: QPointF) -> QPointF:
+        """The point on the box border closest to ``tip``."""
+        r = self.rect()
+        return QPointF(min(max(tip.x(), r.left()), r.right()),
+                       min(max(tip.y(), r.top()), r.bottom()))
+
+    def boundingRect(self) -> QRectF:
+        r = QRectF(self.rect())
+        tip = self._tip_local()
+        return r.united(QRectF(tip.x() - 8, tip.y() - 8, 16, 16))
+
+    def paint(self, painter, option, widget=None):
+        # leader first (under the box), then the box + text on top
+        tip = self._tip_local()
+        attach = self._attach_point(tip)
+        pen = QPen(qcolor(self.ann.color), max(1.0, self.ann.width))
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawLine(attach, tip)
+        ang = math.atan2(tip.y() - attach.y(), tip.x() - attach.x())
+        ah = max(8.0, self.ann.width * 4)
+        for da in (math.radians(150), math.radians(-150)):
+            painter.drawLine(tip, QPointF(tip.x() + ah * math.cos(ang + da),
+                                          tip.y() + ah * math.sin(ang + da)))
+        super().paint(painter, option, widget)
 
 
 # --- pen stroke -------------------------------------------------------------
@@ -370,6 +599,88 @@ class PenItem(_BaseMixin, QGraphicsPathItem):
 
     def write_geometry_to_model(self):
         # translate points by the item's accumulated offset, then reset pos
+        dx, dy = self.pos().x(), self.pos().y()
+        if dx or dy:
+            self.ann.points = [(x + dx, y + dy) for x, y in self.ann.points]
+            self.setPos(0, 0)
+            self.sync_from_model()
+
+    def shape(self):
+        stroker = QPainterPathStroker()
+        stroker.setWidth(max(self.ann.width, 6.0))
+        return stroker.createStroke(self.path())
+
+    def paint(self, painter, option, widget=None):
+        option.state &= ~QStyle.State_Selected
+        super().paint(painter, option, widget)
+        if self.isSelected():
+            painter.setPen(QPen(QColor(30, 120, 230), 0, Qt.DashLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(self.boundingRect())
+
+
+# --- revision cloud ---------------------------------------------------------
+
+
+def cloud_path(points, radius: float = 9.0, closed: bool = True) -> QPainterPath:
+    """A scalloped (revision-cloud) path following ``points``.
+
+    Outward semicircular bumps are drawn along each edge; bump direction is away
+    from the polygon centroid so the scallops face outward.  ``closed`` links the
+    last point back to the first (used for finished clouds; open while drawing).
+    """
+    path = QPainterPath()
+    pts = [QPointF(x, y) for x, y in points]
+    if len(pts) < 2:
+        if pts:
+            path.addEllipse(pts[0], radius, radius)
+        return path
+    cx = sum(p.x() for p in pts) / len(pts)
+    cy = sum(p.y() for p in pts) / len(pts)
+    seq = pts + [pts[0]] if closed else pts
+    first = True
+    for i in range(len(seq) - 1):
+        a, b = seq[i], seq[i + 1]
+        seg_len = math.hypot(b.x() - a.x(), b.y() - a.y())
+        n = max(1, int(round(seg_len / (radius * 1.6))))
+        for k in range(n):
+            t0, t1 = k / n, (k + 1) / n
+            p0 = QPointF(a.x() + (b.x() - a.x()) * t0, a.y() + (b.y() - a.y()) * t0)
+            p1 = QPointF(a.x() + (b.x() - a.x()) * t1, a.y() + (b.y() - a.y()) * t1)
+            mid = QPointF((p0.x() + p1.x()) / 2, (p0.y() + p1.y()) / 2)
+            dx, dy = p1.x() - p0.x(), p1.y() - p0.y()
+            nlen = math.hypot(dx, dy) or 1.0
+            nx, ny = -dy / nlen, dx / nlen
+            if (mid.x() - cx) * nx + (mid.y() - cy) * ny < 0:
+                nx, ny = -nx, -ny
+            ctrl = QPointF(mid.x() + nx * radius, mid.y() + ny * radius)
+            if first:
+                path.moveTo(p0)
+                first = False
+            path.quadTo(ctrl, p1)
+    if closed:
+        path.closeSubpath()
+    return path
+
+
+class CloudItem(_BaseMixin, QGraphicsPathItem):
+    """An outline-only revision cloud following a freehand or polygon path."""
+
+    def __init__(self, ann: Annotation, view):
+        super().__init__()
+        self.init_base(ann, view)
+        self.sync_from_model()
+
+    def sync_from_model(self):
+        self.setPath(cloud_path(self.ann.points, radius=9.0, closed=True))
+        pen = QPen(qcolor(self.ann.color), max(1.0, self.ann.width))
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        self.setPen(pen)
+        self.setBrush(Qt.NoBrush)
+        self.setPos(0, 0)
+
+    def write_geometry_to_model(self):
         dx, dy = self.pos().x(), self.pos().y()
         if dx or dy:
             self.ann.points = [(x + dx, y + dy) for x, y in self.ann.points]
@@ -513,6 +824,8 @@ _FACTORY = {
     KIND_TEXTBOX: TextBoxItem,
     KIND_RECT: RectShapeItem,
     KIND_ARROW: ArrowItem,
+    KIND_CALLOUT: CalloutItem,
+    KIND_CLOUD: CloudItem,
 }
 
 
