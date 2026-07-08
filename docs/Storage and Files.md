@@ -20,6 +20,12 @@ Next to your PDF (`drawing.pdf`):
 Save with **File ▸ Save markup** (`Ctrl+S`). Use **Export annotated PDF…**
 (`Ctrl+Shift+E`) to write a copy anywhere.
 
+> [!tip] Save As — fork to a new working file
+> **File ▸ Save As…** (`Ctrl+Shift+S`) copies your current markup into a brand
+> new working file (its own `.pdf`, `.marked.pdf` and `.markup.db`) and switches
+> you to editing the **copy** — handy for a "what-if" revision or a per-reviewer
+> branch. The file you forked *from* is left completely untouched.
+
 > [!note] One database, one marked copy
 > There is only ever **one** `drawing.markup.db` and **one** `drawing.marked.pdf`
 > per drawing. If you open the `drawing.marked.pdf` itself, the app reuses the

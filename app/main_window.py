@@ -571,12 +571,18 @@ class MainWindow(QMainWindow):
 
         self.tool_group = QActionGroup(self)
         self.tool_group.setExclusive(True)
+        # tools grouped by purpose; None marks a separator between groups
         tool_defs = [
-            (T.TOOL_SELECT, "Select"), (T.TOOL_HIGHLIGHT, "Highlight"),
-            (T.TOOL_PEN, "Pen"), (T.TOOL_ERASER, "Eraser"),
+            (T.TOOL_SELECT, "Select"),
+            None,                                            # -- freehand markup
+            (T.TOOL_HIGHLIGHT, "Highlight"), (T.TOOL_PEN, "Pen"),
+            (T.TOOL_ERASER, "Eraser"),
+            None,                                            # -- text / notes
             (T.TOOL_COMMENT, "Comment"), (T.TOOL_TEXTBOX, "Text box"),
+            (T.TOOL_CALLOUT, "Callout"),
+            None,                                            # -- shapes
             (T.TOOL_RECT, "Rectangle"), (T.TOOL_ARROW, "Arrow"),
-            (T.TOOL_CALLOUT, "Callout"), (T.TOOL_CLOUD, "Cloud"),
+            (T.TOOL_CLOUD, "Cloud"),
         ]
         tool_tips = {
             T.TOOL_CALLOUT: "Callout: drag a box, type the note, then drag the "
@@ -584,7 +590,11 @@ class MainWindow(QMainWindow):
             T.TOOL_CLOUD: "Revision cloud: drag to draw freehand, or click "
                           "corners and double-click / Enter to close",
         }
-        for tool, label in tool_defs:
+        for entry in tool_defs:
+            if entry is None:
+                tb.addSeparator()
+                continue
+            tool, label = entry
             act = QAction(label, self, checkable=True)
             act.setData(tool)
             if tool in tool_tips:

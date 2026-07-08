@@ -4,6 +4,41 @@ All notable changes to **DSI Redline** are documented here. Versions are tagged
 `vX.Y.Z`; each tag triggers the Windows build that publishes the installer and a
 portable zip to the matching GitHub release.
 
+## v1.1.0
+
+Feature release from the user-group feedback sprint.
+
+New markup:
+
+- **Notes on any mark.** Any mark — highlight, pen, rectangle, arrow — can carry
+  a free note, not just comments and text boxes. Right-click a mark ▸ **Add
+  note… / Edit note…**; noted marks get a small orange corner badge, appear in
+  the Comments sidebar (now with **Rectangle / Arrow / Callout** filters), and
+  export as a real PDF comment popup that opens in Adobe / Chrome.
+- **Fill & opacity for rectangles and text boxes.** The new toolbar **Fill**
+  button sets an interior colour with an opacity from 0 (no fill) to a fully
+  opaque white **cover** that redacts what's beneath. Text boxes get a fill
+  control in their editor; rectangles expose **Fill…** on right-click. Fills
+  render on screen and in the exported PDF.
+- **Callout tool.** Draw a text box with a leader arrow: drag the box, type the
+  note, then drag the orange tip to point at the target. Exports as a genuine
+  PDF FreeText callout.
+- **Revision-cloud tool.** Mark non-rectangular areas with a scalloped cloud
+  (outline only). **Drag** to draw freehand, or **click** corners and
+  **double-click / Enter** to close (Esc cancels). Exports as a PDF polygon with
+  the standard cloud border effect.
+
+Workflow:
+
+- **TODO audit strikethrough.** Checking a TODO off strikes it through both on
+  the sheet (a line across the mark) and in the TODO list (a struck-out,
+  dimmed row).
+- **Save As — fork to a new working file** (`Ctrl+Shift+S`). Copies the current
+  markup into a brand-new working file and switches to editing it; the original
+  is left untouched.
+- **Toolbar reorganised** into logical groups: select · highlight / pen / eraser
+  · comment / text box / callout · rectangle / arrow / cloud.
+
 ## v1.0.3
 
 Bug fixes (found in pre-beta testing):
