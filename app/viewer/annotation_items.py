@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 
 from ..model.annotations import (
     Annotation, KIND_HIGHLIGHT, KIND_PEN, KIND_COMMENT, KIND_TEXTBOX,
-    KIND_RECT, KIND_ARROW,
+    KIND_RECT, KIND_ARROW, KIND_CALLOUT,
 )
 from .command_stack import ModifyAnnotationCommand, capture
 
@@ -398,6 +398,135 @@ class TextBoxItem(ResizableRectItem):
         event.accept()
 
 
+# --- callout (text box + leader arrow) --------------------------------------
+
+
+class _LeaderTipHandle(QGraphicsEllipseItem):
+    """Draggable grip at the callout's arrow tip (target point)."""
+
+    _is_grip = True
+
+    def __init__(self, parent):
+        super().__init__(-HANDLE / 2, -HANDLE / 2, HANDLE, HANDLE, parent)
+        self.setBrush(QBrush(QColor(232, 119, 46)))
+        self.setPen(QPen(QColor("white"), 0))
+        self.setCursor(Qt.SizeAllCursor)
+        self.setZValue(61)
+        self.setVisible(False)
+
+    def mousePressEvent(self, event):
+        self.parentItem()._begin_tip()
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        self.parentItem()._tip_to(event.scenePos())
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self.parentItem()._end_tip()
+        event.accept()
+
+
+class CalloutItem(TextBoxItem):
+    """A text box with a leader arrow to a target point. The box behaves exactly
+    like a :class:`TextBoxItem` (move / resize / edit / fill); an extra grip at
+    the arrow tip repositions the leader. Callouts are not rotated."""
+
+    def __init__(self, ann: Annotation, view):
+        self._tip_handle = None
+        self._tip_snap = None
+        super().__init__(ann, view)
+        self._rotate_handle.setVisible(False)   # callouts don't rotate
+        self._tip_handle = _LeaderTipHandle(self)
+        self._place_tip()
+
+    # geometry --------------------------------------------------------------
+
+    def _default_tip(self):
+        x0, y0, x1, y1 = self.ann.rect
+        return (min(x0, x1) - 36.0, max(y0, y1) + 36.0)
+
+    def _tip_local(self) -> QPointF:
+        if self.ann.callout_point is None:
+            self.ann.callout_point = self._default_tip()
+        tx, ty = self.ann.callout_point
+        p = self.pos()
+        return QPointF(tx - p.x(), ty - p.y())
+
+    def sync_from_model(self):
+        self.ann.rotation = 0.0          # never rotate a callout
+        super().sync_from_model()
+        self._place_tip()
+
+    def _place_tip(self):
+        if self._tip_handle is not None:
+            self._tip_handle.setPos(self._tip_local())
+
+    def _place_handles(self):
+        super()._place_handles()
+        self._place_tip()
+
+    def itemChange(self, change, value):
+        res = super().itemChange(change, value)
+        if (change == QGraphicsItem.ItemSelectedHasChanged
+                and self._tip_handle is not None):
+            self._tip_handle.setVisible(bool(value))
+            self._rotate_handle.setVisible(False)
+        return res
+
+    # tip drag --------------------------------------------------------------
+
+    def _begin_tip(self):
+        self._tip_snap = capture(self.ann)
+
+    def _tip_to(self, scene_pos):
+        local = self.mapFromScene(scene_pos)
+        p = self.pos()
+        self.ann.callout_point = (local.x() + p.x(), local.y() + p.y())
+        self.prepareGeometryChange()
+        self._place_tip()
+        self.update()
+
+    def _end_tip(self):
+        after = capture(self.ann)
+        if self._tip_snap is not None and after != self._tip_snap:
+            self.view.push_command(
+                ModifyAnnotationCommand(self.view, self.ann,
+                                        self._tip_snap, after, "Move callout"))
+        self._tip_snap = None
+        self.view.store.update(self.ann)
+
+    # rendering -------------------------------------------------------------
+
+    def _attach_point(self, tip: QPointF) -> QPointF:
+        """The point on the box border closest to ``tip``."""
+        r = self.rect()
+        return QPointF(min(max(tip.x(), r.left()), r.right()),
+                       min(max(tip.y(), r.top()), r.bottom()))
+
+    def boundingRect(self) -> QRectF:
+        r = QRectF(self.rect())
+        tip = self._tip_local()
+        return r.united(QRectF(tip.x() - 8, tip.y() - 8, 16, 16))
+
+    def paint(self, painter, option, widget=None):
+        # leader first (under the box), then the box + text on top
+        tip = self._tip_local()
+        attach = self._attach_point(tip)
+        pen = QPen(qcolor(self.ann.color), max(1.0, self.ann.width))
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawLine(attach, tip)
+        ang = math.atan2(tip.y() - attach.y(), tip.x() - attach.x())
+        ah = max(8.0, self.ann.width * 4)
+        for da in (math.radians(150), math.radians(-150)):
+            painter.drawLine(tip, QPointF(tip.x() + ah * math.cos(ang + da),
+                                          tip.y() + ah * math.sin(ang + da)))
+        super().paint(painter, option, widget)
+
+
 # --- pen stroke -------------------------------------------------------------
 
 
@@ -575,6 +704,7 @@ _FACTORY = {
     KIND_TEXTBOX: TextBoxItem,
     KIND_RECT: RectShapeItem,
     KIND_ARROW: ArrowItem,
+    KIND_CALLOUT: CalloutItem,
 }
 
 

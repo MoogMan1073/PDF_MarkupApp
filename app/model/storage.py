@@ -25,6 +25,7 @@ import fitz  # PyMuPDF
 from .annotations import (
     Annotation, now_iso,
     KIND_HIGHLIGHT, KIND_PEN, KIND_COMMENT, KIND_TEXTBOX, KIND_RECT, KIND_ARROW,
+    KIND_CALLOUT,
 )
 
 # Seeded SHX / AutoCAD junk ignore-patterns (regex, may use inline (?i)).
@@ -280,11 +281,29 @@ def write_annotations_to_pdf(doc: "fitz.Document", annotations: Iterable[Annotat
                     annot.set_line_ends(fitz.PDF_ANNOT_LE_NONE, fitz.PDF_ANNOT_LE_OPEN_ARROW)
                 except Exception:
                     pass
+            elif ann.kind == KIND_CALLOUT:
+                # a FreeText with a leader (CL) from the box to the tip point
+                tip = ann.callout_point or (x0 - 36.0, y1 + 36.0)
+                ax = min(max(tip[0], min(x0, x1)), max(x0, x1))
+                ay = min(max(tip[1], min(y0, y1)), max(y0, y1))
+                cl = [fitz.Point(tip[0], tip[1]) * derot,
+                      fitz.Point(ax, ay) * derot]
+                co_kwargs = dict(fontsize=ann.font_size, text_color=ann.color,
+                                 rotate=0, callout=cl,
+                                 line_end=fitz.PDF_ANNOT_LE_OPEN_ARROW)
+                if ann.fill_color is not None:
+                    co_kwargs["fill_color"] = ann.fill_color
+                annot = page.add_freetext_annot(rect, ann.text or "", **co_kwargs)
+                if ann.fill_color is not None and ann.fill_opacity < 1.0:
+                    try:
+                        annot.set_opacity(ann.fill_opacity)
+                    except Exception:
+                        pass
             # A note attached to a non-text mark (highlight / pen / rect / arrow)
             # should open as a genuine comment popup in Adobe / Chrome, not just
             # sit in the annotation's /Contents.
             if (annot is not None
-                    and ann.kind not in (KIND_COMMENT, KIND_TEXTBOX)
+                    and ann.kind not in (KIND_COMMENT, KIND_TEXTBOX, KIND_CALLOUT)
                     and (ann.text or "").strip()):
                 try:
                     annot.set_popup(fitz.Rect(x0 + 20, y0, x0 + 220, y0 + 90) * derot)

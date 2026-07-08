@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 from . import __app_name__, __version__, __copyright__, app_icon
 from .config import AppConfig
 from .model.document import Document
-from .model.annotations import Annotation, KIND_COMMENT, KIND_TEXTBOX
+from .model.annotations import Annotation, KIND_COMMENT, KIND_TEXTBOX, KIND_CALLOUT
 from .viewer.pdf_view import PdfView
 from .viewer import tools as T
 from .viewer.command_stack import ModifyAnnotationCommand, RemoveAnnotationCommand, capture
@@ -40,7 +40,9 @@ class TextEditDialog(QDialog):
         self.ann = ann
         self.is_textbox = is_textbox
         self._font_color = tuple(ann.color)
-        if is_textbox or ann.kind == KIND_TEXTBOX:
+        if ann.kind == KIND_CALLOUT:
+            title = "Edit callout"
+        elif is_textbox or ann.kind == KIND_TEXTBOX:
             title = "Edit text box"
         elif ann.kind == KIND_COMMENT:
             title = "Edit comment"
@@ -568,6 +570,7 @@ class MainWindow(QMainWindow):
             (T.TOOL_PEN, "Pen"), (T.TOOL_ERASER, "Eraser"),
             (T.TOOL_COMMENT, "Comment"), (T.TOOL_TEXTBOX, "Text box"),
             (T.TOOL_RECT, "Rectangle"), (T.TOOL_ARROW, "Arrow"),
+            (T.TOOL_CALLOUT, "Callout"),
         ]
         for tool, label in tool_defs:
             act = QAction(label, self, checkable=True)
@@ -712,7 +715,7 @@ class MainWindow(QMainWindow):
         return {
             T.TOOL_HIGHLIGHT: "highlight_color", T.TOOL_PEN: "pen_color",
             T.TOOL_TEXTBOX: "text_color", T.TOOL_RECT: "shape_color",
-            T.TOOL_ARROW: "shape_color",
+            T.TOOL_ARROW: "shape_color", T.TOOL_CALLOUT: "text_color",
         }.get(t, "pen_color")
 
     def _update_color_btn(self):
@@ -732,7 +735,7 @@ class MainWindow(QMainWindow):
         t = self.view.tool.current
         if t == T.TOOL_RECT:
             return "shape_fill", "shape_fill_opacity"
-        if t == T.TOOL_TEXTBOX:
+        if t in (T.TOOL_TEXTBOX, T.TOOL_CALLOUT):
             return "text_fill", "text_fill_opacity"
         return None, None
 

@@ -91,11 +91,15 @@ class TestFillExport(unittest.TestCase):
         d.close()
 
         d2 = fitz.open(mp)
-        fills = [(a.type[1], (a.colors or {}).get("fill")) for a in d2[0].annots()]
+        by_type = {a.type[1]: a for a in d2[0].annots()}
+        # rect fill is stored as the interior colour (/IC)
+        self.assertEqual(len(by_type["Square"].colors.get("fill") or []), 3)
+        # freetext fill is the annotation background (/C), rendered via /AP
+        self.assertEqual(len(by_type["FreeText"].colors.get("stroke") or []), 3)
         d2.close()
-        # both marks carry a fill colour in the PDF
-        self.assertTrue(all(f is not None for _, f in fills))
 
+        # rect fill round-trips straight out of the PDF; the text-box fill relies
+        # on the sidecar (a separate test), so only the rect is asserted here
         loaded = load_pdf_annotations(fitz.open(mp), DEFAULT_IGNORE_PATTERNS)
         by_kind = {a.kind: a for a in loaded}
         self.assertIsNotNone(by_kind[KIND_RECT].fill_color)
@@ -146,6 +150,20 @@ class TestFillExport(unittest.TestCase):
         rect = [a for a in doc2.store.all() if a.kind == KIND_RECT][0]
         self.assertEqual(rect.fill_color, (0.3, 0.6, 0.9))
         self.assertEqual(rect.fill_opacity, 0.5)
+        doc2.close()
+
+    def test_textbox_fill_persists_via_sidecar(self):
+        tmp = tempfile.mkdtemp()
+        src = os.path.join(tmp, "draw.pdf")
+        self._blank(src)
+        doc = Document(src); doc.load()
+        doc.store.add(Annotation(page=0, kind=KIND_TEXTBOX, rect=(10, 10, 190, 60),
+                                 color=(0, 0, 0), text="COVER",
+                                 fill_color=(1.0, 1.0, 1.0), fill_opacity=1.0))
+        doc.save(); doc.close()
+        doc2 = Document(src); doc2.load()
+        tb = [a for a in doc2.store.all() if a.kind == KIND_TEXTBOX][0]
+        self.assertEqual(tb.fill_color, (1.0, 1.0, 1.0))
         doc2.close()
 
 

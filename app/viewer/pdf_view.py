@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsItem
 from ..model.annotations import (
     Annotation, AnnotationStore,
     KIND_HIGHLIGHT, KIND_PEN, KIND_COMMENT, KIND_TEXTBOX, KIND_RECT, KIND_ARROW,
+    KIND_CALLOUT,
 )
 from .page_item import PageItem
 from .annotation_items import make_item
@@ -592,15 +593,18 @@ class PdfView(QGraphicsView):
                                      color=self.tool.pen_color, width=self.tool.pen_width,
                                      author=author)
             return True
-        if tool in (T.TOOL_HIGHLIGHT, T.TOOL_RECT, T.TOOL_ARROW, T.TOOL_TEXTBOX):
+        if tool in (T.TOOL_HIGHLIGHT, T.TOOL_RECT, T.TOOL_ARROW, T.TOOL_TEXTBOX,
+                    T.TOOL_CALLOUT):
             kind = {T.TOOL_HIGHLIGHT: KIND_HIGHLIGHT, T.TOOL_RECT: KIND_RECT,
-                    T.TOOL_ARROW: KIND_ARROW, T.TOOL_TEXTBOX: KIND_TEXTBOX}[tool]
+                    T.TOOL_ARROW: KIND_ARROW, T.TOOL_TEXTBOX: KIND_TEXTBOX,
+                    T.TOOL_CALLOUT: KIND_CALLOUT}[tool]
+            text_like = kind in (KIND_TEXTBOX, KIND_CALLOUT)
             color = (self.tool.highlight_color if kind == KIND_HIGHLIGHT else
-                     self.tool.text_color if kind == KIND_TEXTBOX else self.tool.shape_color)
+                     self.tool.text_color if text_like else self.tool.shape_color)
             fill, fill_op = None, 1.0
             if kind == KIND_RECT:
                 fill, fill_op = self.tool.shape_fill, self.tool.shape_fill_opacity
-            elif kind == KIND_TEXTBOX:
+            elif text_like:
                 fill, fill_op = self.tool.text_fill, self.tool.text_fill_opacity
             self._draft = Annotation(page=pno, kind=kind, rect=(lx, ly, lx, ly),
                                      color=color, author=author,
@@ -653,7 +657,8 @@ class PdfView(QGraphicsView):
             return
         # discard degenerate marks
         degenerate = draft.kind == KIND_PEN and len(draft.points) < 2
-        if draft.kind in (KIND_HIGHLIGHT, KIND_RECT, KIND_ARROW, KIND_TEXTBOX):
+        if draft.kind in (KIND_HIGHLIGHT, KIND_RECT, KIND_ARROW, KIND_TEXTBOX,
+                          KIND_CALLOUT):
             x0, y0, x1, y1 = draft.rect
             if abs(x1 - x0) < 3 and abs(y1 - y0) < 3:
                 degenerate = True
@@ -663,9 +668,12 @@ class PdfView(QGraphicsView):
             self._clear_preview()
             return
 
-        # text boxes: prompt for text *before* committing (keep the live
-        # preview visible meanwhile); a cancel discards the box entirely.
-        if draft.kind == KIND_TEXTBOX:
+        # text boxes / callouts: prompt for text *before* committing (keep the
+        # live preview visible meanwhile); a cancel discards the mark entirely.
+        if draft.kind in (KIND_TEXTBOX, KIND_CALLOUT):
+            if draft.kind == KIND_CALLOUT and draft.callout_point is None:
+                x0, y0, x1, y1 = draft.rect
+                draft.callout_point = (min(x0, x1) - 36.0, max(y0, y1) + 36.0)
             draft.is_todo = self._default_todo()
             ok, text, todo = (True, "", draft.is_todo)
             if self.new_text_prompt is not None:

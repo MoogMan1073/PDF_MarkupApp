@@ -16,12 +16,12 @@ from PySide6.QtWidgets import (
 
 from ..model.annotations import (
     Annotation, KIND_COMMENT, KIND_TEXTBOX, KIND_HIGHLIGHT, KIND_PEN,
-    KIND_RECT, KIND_ARROW,
+    KIND_RECT, KIND_ARROW, KIND_CALLOUT,
 )
 
 _KIND_ICON = {
     KIND_COMMENT: "💬", KIND_TEXTBOX: "🅣", KIND_HIGHLIGHT: "🖍", KIND_PEN: "✎",
-    KIND_RECT: "▭", KIND_ARROW: "↗",
+    KIND_RECT: "▭", KIND_ARROW: "↗", KIND_CALLOUT: "🗨",
 }
 _DATE = lambda iso: (iso or "")[:16].replace("T", " ")
 
@@ -52,7 +52,7 @@ class CommentPanel(QWidget):
         row = QHBoxLayout()
         self.type_filter = QComboBox()
         self.type_filter.addItems(["All types", "Comment", "Text box", "Highlight",
-                                   "Pen", "Rectangle", "Arrow"])
+                                   "Pen", "Rectangle", "Arrow", "Callout"])
         self.type_filter.currentIndexChanged.connect(self.refresh)
         self.commenter_filter = QComboBox()
         self.commenter_filter.addItem("All commenters")
@@ -123,7 +123,7 @@ class CommentPanel(QWidget):
             0: None,
             1: {KIND_COMMENT}, 2: {KIND_TEXTBOX},
             3: {KIND_HIGHLIGHT}, 4: {KIND_PEN},
-            5: {KIND_RECT}, 6: {KIND_ARROW},
+            5: {KIND_RECT}, 6: {KIND_ARROW}, 7: {KIND_CALLOUT},
         }[idx]
 
     def _refresh_commenters(self, anns):
