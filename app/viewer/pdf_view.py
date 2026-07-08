@@ -79,6 +79,7 @@ class PdfView(QGraphicsView):
         self._cloud_pts = None            # list[(lx, ly)] or None
         self._cloud_page = None           # (pno, page_item)
         self._cloud_press = None          # (scene_pt) to tell a click from a drag
+        self._cloud_rect = False          # Shift+drag -> rectangular cloud
         # synchronous prompt for *new* comment/text-box text, set by the window.
         # signature: prompt(ann, is_textbox) -> (accepted: bool, text, todo)
         self.new_text_prompt = None
@@ -475,9 +476,11 @@ class PdfView(QGraphicsView):
                 return
 
         if event.button() == Qt.LeftButton and self.tool.current == T.TOOL_CLOUD:
-            # cloud is press-drag (freehand) OR click-to-add-vertices (polygon);
-            # decide on move/release, so just record the press here
+            # cloud is press-drag (freehand, or Shift+drag = rectangle) OR
+            # click-to-add-vertices (polygon); decide on move/release, so just
+            # record the press (and whether Shift picks the rectangle mode) here
             self._cloud_press = self.mapToScene(event.position().toPoint())
+            self._cloud_rect = bool(event.modifiers() & Qt.ShiftModifier)
             event.accept()
             return
 
@@ -667,6 +670,10 @@ class PdfView(QGraphicsView):
         _lp = page.mapFromScene(scene_pt); lx, ly = _lp.x(), _lp.y()
         if self._draft.kind == KIND_PEN:
             self._draft.points.append((lx, ly))
+        elif self._draft.kind == KIND_CLOUD and self._cloud_rect:
+            # rectangle mode: the four bbox corners follow the drag
+            sx, sy = self._draft_start
+            self._draft.points = [(sx, sy), (lx, sy), (lx, ly), (sx, ly)]
         elif self._draft.kind == KIND_CLOUD:
             # thin the freehand path so the scallop generator stays cheap
             if self._draft.points:
@@ -770,8 +777,12 @@ class PdfView(QGraphicsView):
         author = self.config.your_name if self.config else ""
         self._draft_page = (pno, page)
         self._draft_start = (sp.x(), sp.y())
-        self._draft = Annotation(page=pno, kind=KIND_CLOUD,
-                                 points=[(sp.x(), sp.y()), (cp.x(), cp.y())],
+        if self._cloud_rect:
+            pts = [(sp.x(), sp.y()), (cp.x(), sp.y()),
+                   (cp.x(), cp.y()), (sp.x(), cp.y())]
+        else:
+            pts = [(sp.x(), sp.y()), (cp.x(), cp.y())]
+        self._draft = Annotation(page=pno, kind=KIND_CLOUD, points=pts,
                                  color=self.tool.shape_color,
                                  width=self.tool.shape_width, author=author)
         self._refresh_preview()
@@ -818,6 +829,7 @@ class PdfView(QGraphicsView):
         self._cloud_pts = None
         self._cloud_page = None
         self._cloud_press = None
+        self._cloud_rect = False
 
     def _show_cloud_preview(self):
         self._clear_cloud_preview()

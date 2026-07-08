@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QSpinBox, QLabel, QWidget, QDialogButtonBox, QDialog, QVBoxLayout,
     QHBoxLayout, QFormLayout, QLineEdit, QCheckBox, QComboBox, QPlainTextEdit,
     QColorDialog, QDoubleSpinBox, QPushButton, QGroupBox, QStatusBar,
-    QApplication,
+    QApplication, QSlider,
 )
 
 from . import __app_name__, __version__, __copyright__, app_icon
@@ -105,18 +105,13 @@ class TextEditDialog(QDialog):
             int(self._font_color[2] * 255))))
 
     def _pick_fill(self):
-        rgb = self._fill_color or (1.0, 1.0, 1.0)
-        alpha = int((self._fill_opacity if self._fill_color else 0.0) * 255)
-        start = QColor(int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255), alpha)
-        col = QColorDialog.getColor(start, self, "Box fill",
-                                    QColorDialog.ShowAlphaChannel)
-        if not col.isValid():
+        ok, color, opacity = FillDialog.ask(self, self._fill_color,
+                                            self._fill_opacity, "Box fill")
+        if not ok:
             return
-        if col.alpha() <= 0:
-            self._fill_color = None
-        else:
-            self._fill_color = (col.redF(), col.greenF(), col.blueF())
-            self._fill_opacity = col.alpha() / 255.0
+        self._fill_color = color
+        if color is not None:
+            self._fill_opacity = opacity
         self._update_fill_swatch()
 
     def _update_fill_swatch(self):
@@ -395,6 +390,95 @@ def _fill_swatch(rgb, opacity) -> QIcon:
     return QIcon(pm)
 
 
+class FillDialog(QDialog):
+    """Pick an interior fill: a colour plus a plain-language opacity slider
+    (clearer than a raw alpha channel), or 'No fill'."""
+
+    def __init__(self, color, opacity, parent=None, title="Fill"):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self._color = tuple(color) if color else (1.0, 1.0, 1.0)
+        lay = QVBoxLayout(self)
+
+        self.none_cb = QCheckBox("No fill (transparent)")
+        self.none_cb.setChecked(color is None)
+        self.none_cb.toggled.connect(self._on_none_toggled)
+        lay.addWidget(self.none_cb)
+
+        crow = QHBoxLayout()
+        self.color_btn = QPushButton("Colour…")
+        self.color_btn.clicked.connect(self._pick_color)
+        crow.addWidget(self.color_btn)
+        self.swatch = QLabel()
+        self.swatch.setFixedSize(48, 20)
+        crow.addWidget(self.swatch)
+        crow.addStretch(1)
+        lay.addLayout(crow)
+
+        srow = QHBoxLayout()
+        srow.addWidget(QLabel("Opacity:"))
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setRange(0, 100)
+        self.slider.setValue(int(round(max(0.0, min(1.0, opacity)) * 100)))
+        self.slider.valueChanged.connect(self._on_slider)
+        srow.addWidget(self.slider, 1)
+        self.pct = QLabel(f"{self.slider.value()}%")
+        self.pct.setFixedWidth(40)
+        srow.addWidget(self.pct)
+        lay.addLayout(srow)
+
+        hint = QLabel("0% = transparent · 100% = opaque cover")
+        hint.setStyleSheet("color: gray; font-size: 11px;")
+        lay.addWidget(hint)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self._on_none_toggled(self.none_cb.isChecked())
+        self._update_swatch()
+
+    def _on_none_toggled(self, none_on: bool):
+        for w in (self.color_btn, self.slider, self.pct):
+            w.setEnabled(not none_on)
+        self._update_swatch()
+
+    def _on_slider(self, v: int):
+        self.pct.setText(f"{v}%")
+        self._update_swatch()
+
+    def _pick_color(self):
+        rgb = self._color
+        col = QColorDialog.getColor(
+            QColor(int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255)),
+            self, "Fill colour")           # no alpha channel — opacity is the slider
+        if col.isValid():
+            self._color = (col.redF(), col.greenF(), col.blueF())
+            self._update_swatch()
+
+    def _update_swatch(self):
+        if self.none_cb.isChecked():
+            self.swatch.setPixmap(_fill_swatch(None, 0.0).pixmap(20, 20))
+        else:
+            self.swatch.setPixmap(
+                _fill_swatch(self._color, self.slider.value() / 100.0).pixmap(20, 20))
+
+    def result_fill(self):
+        """Return (color_tuple_or_None, opacity_float)."""
+        if self.none_cb.isChecked() or self.slider.value() <= 0:
+            return None, 1.0
+        return self._color, self.slider.value() / 100.0
+
+    @staticmethod
+    def ask(parent, color, opacity, title="Fill"):
+        """Show the dialog; return (accepted, color_or_None, opacity)."""
+        dlg = FillDialog(color, opacity, parent, title)
+        if dlg.exec() == QDialog.Accepted:
+            c, o = dlg.result_fill()
+            return True, c, o
+        return False, color, opacity
+
+
 # --- main window ------------------------------------------------------------
 
 
@@ -587,9 +671,12 @@ class MainWindow(QMainWindow):
         tool_tips = {
             T.TOOL_CALLOUT: "Callout: drag a box, type the note, then drag the "
                             "orange tip to point at the target",
-            T.TOOL_CLOUD: "Revision cloud: drag to draw freehand, or click "
-                          "corners and double-click / Enter to close",
+            T.TOOL_CLOUD: "Revision cloud: drag freehand, Shift+drag for a "
+                          "rectangle, or click corners and double-click / Enter "
+                          "to close",
         }
+        self._tool_actions = {}
+        n = 0
         for entry in tool_defs:
             if entry is None:
                 tb.addSeparator()
@@ -597,12 +684,22 @@ class MainWindow(QMainWindow):
             tool, label = entry
             act = QAction(label, self, checkable=True)
             act.setData(tool)
-            if tool in tool_tips:
+            # Ctrl+1..Ctrl+9 then Ctrl+0 select tools in toolbar order
+            n += 1
+            if n <= 10:
+                digit = 0 if n == 10 else n
+                key = QKeySequence(f"Ctrl+{digit}")
+                act.setShortcut(key)
+                tip = tool_tips.get(tool, label)
+                act.setToolTip(f"{tip}  (Ctrl+{digit})")
+                act.setStatusTip(act.toolTip())
+            elif tool in tool_tips:
                 act.setToolTip(tool_tips[tool])
                 act.setStatusTip(tool_tips[tool])
-            act.triggered.connect(lambda _=False, t=tool: self._set_tool(t))
+            act.triggered.connect(lambda _=False, t=tool: self._activate_tool(t))
             self.tool_group.addAction(act)
             tb.addAction(act)
+            self._tool_actions[tool] = act
             if tool == T.TOOL_SELECT:
                 act.setChecked(True)
         tb.addSeparator()
@@ -782,20 +879,12 @@ class MainWindow(QMainWindow):
             return
         rgb = getattr(self.view.tool, c_attr)
         op = getattr(self.view.tool, o_attr)
-        start = QColor(int((rgb or (1, 1, 1))[0] * 255),
-                       int((rgb or (1, 1, 1))[1] * 255),
-                       int((rgb or (1, 1, 1))[2] * 255),
-                       int((op if rgb is not None else 0.0) * 255))
-        col = QColorDialog.getColor(
-            start, self, "Fill colour & opacity",
-            QColorDialog.ShowAlphaChannel)
-        if not col.isValid():
+        ok, color, opacity = FillDialog.ask(self, rgb, op, "Fill")
+        if not ok:
             return
-        if col.alpha() <= 0:
-            setattr(self.view.tool, c_attr, None)           # no fill
-        else:
-            setattr(self.view.tool, c_attr, (col.redF(), col.greenF(), col.blueF()))
-            setattr(self.view.tool, o_attr, col.alpha() / 255.0)
+        setattr(self.view.tool, c_attr, color)
+        if color is not None:
+            setattr(self.view.tool, o_attr, opacity)
         self._update_fill_btn()
 
     # -- document lifecycle --------------------------------------------------
@@ -993,20 +1082,15 @@ class MainWindow(QMainWindow):
                 self.document.store.update(ann)
 
     def _edit_fill(self, ann: Annotation):
-        """Edit a rectangle's fill colour + opacity via the alpha colour dialog."""
+        """Edit a rectangle's fill colour + opacity (colour + opacity slider)."""
         before = capture(ann)
-        rgb = ann.fill_color or (1.0, 1.0, 1.0)
-        alpha = int((ann.fill_opacity if ann.fill_color else 0.0) * 255)
-        start = QColor(int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255), alpha)
-        col = QColorDialog.getColor(start, self, "Rectangle fill",
-                                    QColorDialog.ShowAlphaChannel)
-        if not col.isValid():
+        ok, color, opacity = FillDialog.ask(self, ann.fill_color, ann.fill_opacity,
+                                            "Rectangle fill")
+        if not ok:
             return
-        if col.alpha() <= 0:
-            ann.fill_color = None
-        else:
-            ann.fill_color = (col.redF(), col.greenF(), col.blueF())
-            ann.fill_opacity = col.alpha() / 255.0
+        ann.fill_color = color
+        if color is not None:
+            ann.fill_opacity = opacity
         after = capture(ann)
         if after != before:
             self.view.push_command(

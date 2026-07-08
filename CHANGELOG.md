@@ -10,23 +10,26 @@ Feature release from the user-group feedback sprint.
 
 New markup:
 
-- **Notes on any mark.** Any mark — highlight, pen, rectangle, arrow — can carry
-  a free note, not just comments and text boxes. Right-click a mark ▸ **Add
+- **Notes on any mark.** Any mark — highlight, pen, rectangle, arrow, cloud — can
+  carry a free note, not just comments and text boxes. Right-click a mark ▸ **Add
   note… / Edit note…**; noted marks get a small orange corner badge, appear in
-  the Comments sidebar (now with **Rectangle / Arrow / Callout** filters), and
-  export as a real PDF comment popup that opens in Adobe / Chrome.
+  the Comments sidebar (now with **Rectangle / Arrow / Callout / Cloud** filters),
+  and on export each note also becomes a **standalone sticky-note comment** so
+  it's visible in any viewer (Adobe, browsers, Preview).
 - **Fill & opacity for rectangles and text boxes.** The new toolbar **Fill**
-  button sets an interior colour with an opacity from 0 (no fill) to a fully
-  opaque white **cover** that redacts what's beneath. Text boxes get a fill
-  control in their editor; rectangles expose **Fill…** on right-click. Fills
+  button opens a colour picker with a plain **opacity slider** (0% = no fill →
+  100% = an opaque white **cover** that redacts what's beneath). Text boxes get a
+  fill control in their editor; rectangles expose **Fill…** on right-click. Fills
   render on screen and in the exported PDF.
 - **Callout tool.** Draw a text box with a leader arrow: drag the box, type the
   note, then drag the orange tip to point at the target. Exports as a genuine
   PDF FreeText callout.
-- **Revision-cloud tool.** Mark non-rectangular areas with a scalloped cloud
-  (outline only). **Drag** to draw freehand, or **click** corners and
-  **double-click / Enter** to close (Esc cancels). Exports as a PDF polygon with
-  the standard cloud border effect.
+- **Revision-cloud tool.** Mark areas with a scalloped cloud (outline only).
+  **Drag** to draw freehand, **Shift+drag** for a rectangle, or **click** corners
+  and **double-click / Enter** to close (Esc cancels). Exports as a PDF polygon
+  with the standard cloud border effect.
+- **Tool shortcuts.** `Ctrl+1`…`Ctrl+0` pick tools in toolbar order (Select →
+  Cloud).
 
 Workflow:
 

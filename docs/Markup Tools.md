@@ -27,20 +27,29 @@ comment / text box / callout · rectangle / arrow / cloud.
   calling out. The box still moves, resizes and edits like a text box.
 - **Rectangle** and **Arrow** — shapes with color + width. Rectangles also take a
   **Fill** (right-click ▸ *Fill…* to change it later).
-- **Cloud** — a revision cloud for non-rectangular areas, outline only. **Drag**
-  to draw it freehand, or **click** each corner and **double-click** (or press
-  **Enter**) to close the loop; **Esc** cancels.
+- **Cloud** — a revision cloud, outline only. **Drag** to draw it freehand,
+  **Shift+drag** for a rectangular cloud, or **click** each corner and
+  **double-click** (or press **Enter**) to close the loop; **Esc** cancels.
 
 Color, pen width, font size, **B**old and *I*talic apply to the active tool. The
-**Fill** button (colour + opacity) applies to rectangles and text boxes/callouts;
-drag alpha to 0 for no fill or to 100% for an opaque cover.
+**Fill** button applies to rectangles and text boxes/callouts and opens a small
+dialog with a colour picker and an **opacity slider** (0% = no fill, 100% = an
+opaque cover). Rectangles also expose **Fill…** on right-click.
+
+> [!tip] Tool shortcuts
+> Press **Ctrl + a number** to pick a tool in toolbar order: **Ctrl+1** Select,
+> **Ctrl+2** Highlight, **Ctrl+3** Pen, **Ctrl+4** Eraser, **Ctrl+5** Comment,
+> **Ctrl+6** Text box, **Ctrl+7** Callout, **Ctrl+8** Rectangle, **Ctrl+9** Arrow,
+> **Ctrl+0** Cloud.
 
 ## Notes on any mark
 
 Any mark — not just comments and text boxes — can carry a **note**. Right-click a
 highlight, pen stroke, rectangle, arrow or cloud and choose **Add note… /
-Edit note…**. Noted marks show a small orange badge, appear in the
-[[Comments Sidebar]], and export a real PDF comment popup.
+Edit note…**. Noted marks show a small orange badge and appear in the
+[[Comments Sidebar]]. On export, each note also becomes a **standalone
+sticky-note comment** so it's visible in any PDF viewer (Adobe, browsers,
+Preview), and it round-trips back onto its mark when reopened here.
 
 ## Move, resize, rotate
 
