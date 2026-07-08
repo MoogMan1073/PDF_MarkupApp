@@ -69,6 +69,19 @@ class Annotation:
     def is_comment_like(self) -> bool:
         return self.kind in TEXT_KINDS
 
+    @property
+    def has_note(self) -> bool:
+        """True when a note/comment is attached (any mark kind can carry one)."""
+        return bool((self.text or "").strip())
+
+    @property
+    def shows_in_comments(self) -> bool:
+        """Whether this mark belongs in the Comments sidebar: the inherently
+        textual kinds, highlights/pen (historically listed), or any other mark
+        that has had a note attached."""
+        return (self.kind in (KIND_COMMENT, KIND_TEXTBOX, KIND_HIGHLIGHT, KIND_PEN)
+                or self.has_note)
+
     def snippet(self, n: int = 60) -> str:
         t = " ".join((self.text or "").split())
         if not t:

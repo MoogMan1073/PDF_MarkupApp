@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 from . import __app_name__, __version__, __copyright__, app_icon
 from .config import AppConfig
 from .model.document import Document
-from .model.annotations import Annotation
+from .model.annotations import Annotation, KIND_COMMENT, KIND_TEXTBOX
 from .viewer.pdf_view import PdfView
 from .viewer import tools as T
 from .viewer.command_stack import ModifyAnnotationCommand, RemoveAnnotationCommand, capture
@@ -40,7 +40,14 @@ class TextEditDialog(QDialog):
         self.ann = ann
         self.is_textbox = is_textbox
         self._font_color = tuple(ann.color)
-        self.setWindowTitle("Edit text box" if is_textbox else "Edit comment")
+        if is_textbox or ann.kind == KIND_TEXTBOX:
+            title = "Edit text box"
+        elif ann.kind == KIND_COMMENT:
+            title = "Edit comment"
+        else:
+            # a free note attached to a highlight / arrow / rectangle / pen
+            title = "Edit note" if (ann.text or "").strip() else "Add note"
+        self.setWindowTitle(title)
         lay = QVBoxLayout(self)
         self.edit = QPlainTextEdit(ann.text or "")
         self.edit.setMinimumSize(320, 120)

@@ -763,6 +763,8 @@ class PdfView(QGraphicsView):
         select = self.tool.is_select()
         item.setFlag(QGraphicsItem.ItemIsMovable, select)
         item.setFlag(QGraphicsItem.ItemIsSelectable, select)
+        if hasattr(item, "_refresh_note_badge"):
+            item._refresh_note_badge()
         self._item_by_ann[ann.id] = item
 
     def _remove_item_for(self, ann: Annotation):
@@ -777,6 +779,8 @@ class PdfView(QGraphicsView):
             return
         if hasattr(item, "sync_from_model"):
             item.sync_from_model()
+        if hasattr(item, "_refresh_note_badge"):
+            item._refresh_note_badge()
         item.update()
 
     def rebuild_all_items(self):
@@ -793,6 +797,10 @@ class PdfView(QGraphicsView):
 
     def edit_text_annotation(self, ann: Annotation):
         self.requestTextEdit.emit(ann)
+
+    def edit_note_annotation(self, ann: Annotation):
+        """Attach/edit a free note on a non-text mark (arrow, rect, …)."""
+        self.requestCommentEdit.emit(ann)
 
     # -- panel jump ----------------------------------------------------------
 

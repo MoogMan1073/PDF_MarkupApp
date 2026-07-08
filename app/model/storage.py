@@ -256,6 +256,16 @@ def write_annotations_to_pdf(doc: "fitz.Document", annotations: Iterable[Annotat
                     annot.set_line_ends(fitz.PDF_ANNOT_LE_NONE, fitz.PDF_ANNOT_LE_OPEN_ARROW)
                 except Exception:
                     pass
+            # A note attached to a non-text mark (highlight / pen / rect / arrow)
+            # should open as a genuine comment popup in Adobe / Chrome, not just
+            # sit in the annotation's /Contents.
+            if (annot is not None
+                    and ann.kind not in (KIND_COMMENT, KIND_TEXTBOX)
+                    and (ann.text or "").strip()):
+                try:
+                    annot.set_popup(fitz.Rect(x0 + 20, y0, x0 + 220, y0 + 90) * derot)
+                except Exception:
+                    pass
         except Exception:
             annot = None
         if annot is not None:

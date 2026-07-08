@@ -37,6 +37,21 @@ def qcolor(rgb, alpha=255) -> QColor:
     return QColor(int(r * 255), int(g * 255), int(b * 255), alpha)
 
 
+class _NoteBadge(QGraphicsEllipseItem):
+    """A small orange dot pinned to a mark's corner to flag that it carries a
+    note (highlights, pens, arrows and rectangles don't otherwise show text)."""
+
+    _R = 5.0
+
+    def __init__(self, parent):
+        super().__init__(-self._R, -self._R, 2 * self._R, 2 * self._R, parent)
+        self.setBrush(QBrush(QColor(232, 119, 46)))
+        self.setPen(QPen(QColor("white"), 1.0))
+        self.setZValue(70)
+        self.setAcceptedMouseButtons(Qt.NoButton)
+        self.setToolTip("Has a note — right-click ▸ Edit note…")
+
+
 # --- selectable / movable base ---------------------------------------------
 
 
@@ -74,24 +89,32 @@ class _BaseMixin:
 
     def contextMenuEvent(self, event):
         from PySide6.QtWidgets import QMenu
+        ann = self.ann
         menu = QMenu()
-        show_act = menu.addAction("Show comment contents") if self.ann.is_comment_like else None
-        todo_act = menu.addAction("Reveal in TODO list") if self.ann.is_todo else None
-        cmt_act = menu.addAction("Reveal in Comments") if self.ann.is_comment_like else None
-        if show_act or todo_act or cmt_act:
+        show_act = menu.addAction("Show comment contents") if ann.is_comment_like else None
+        # Any non-text mark (highlight, pen, arrow, rectangle, …) can carry a note.
+        note_act = None
+        if not ann.is_comment_like:
+            note_act = menu.addAction("Edit note…" if ann.has_note else "Add note…")
+        todo_act = menu.addAction("Reveal in TODO list") if ann.is_todo else None
+        cmt_act = (menu.addAction("Reveal in Comments")
+                   if (ann.is_comment_like or ann.has_note) else None)
+        if any((show_act, note_act, todo_act, cmt_act)):
             menu.addSeparator()
         del_act = menu.addAction("Delete")
         chosen = menu.exec(event.screenPos())
         if chosen is None:
             pass
         elif chosen == show_act:
-            self.view.show_comment_contents(self.ann)
+            self.view.show_comment_contents(ann)
+        elif chosen == note_act:
+            self.view.edit_note_annotation(ann)
         elif chosen == todo_act:
-            self.view.reveal_in_panel(self.ann, "todo")
+            self.view.reveal_in_panel(ann, "todo")
         elif chosen == cmt_act:
-            self.view.reveal_in_panel(self.ann, "comment")
+            self.view.reveal_in_panel(ann, "comment")
         elif chosen == del_act:
-            self.view.request_delete_annotation(self.ann)
+            self.view.request_delete_annotation(ann)
         event.accept()
 
     # subclasses override
@@ -100,6 +123,22 @@ class _BaseMixin:
 
     def sync_from_model(self):
         pass
+
+    def _refresh_note_badge(self):
+        """Show a small badge at the corner when a non-text mark carries a note
+        (comment/text-box already display their text)."""
+        if self.ann.is_comment_like:
+            return
+        want = self.ann.has_note
+        badge = getattr(self, "_note_badge", None)
+        if want and badge is None:
+            badge = _NoteBadge(self)
+            self._note_badge = badge
+        if badge is not None:
+            badge.setVisible(want)
+            if want:
+                br = self.boundingRect()
+                badge.setPos(br.right(), br.top())
 
 
 # --- rect-based, resizable --------------------------------------------------
