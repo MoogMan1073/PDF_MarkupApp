@@ -477,9 +477,13 @@ class CalloutItem(TextBoxItem):
         return (min(x0, x1) - 36.0, max(y0, y1) + 36.0)
 
     def _tip_local(self) -> QPointF:
-        if self.ann.callout_point is None:
-            self.ann.callout_point = self._default_tip()
-        tx, ty = self.ann.callout_point
+        # Never persist a default here — writing the model during paint()/
+        # boundingRect() would freeze a new callout's tip at the tiny first-
+        # preview rect and defeat the final-rect default set on commit.
+        cp = self.ann.callout_point
+        if cp is None:
+            cp = self._default_tip()
+        tx, ty = cp
         p = self.pos()
         return QPointF(tx - p.x(), ty - p.y())
 

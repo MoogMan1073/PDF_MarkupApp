@@ -192,6 +192,33 @@ class TestCloudInteraction(unittest.TestCase):
         self.assertNotIn("__cloudpreview__", v._item_by_ann)
         self.assertEqual([a for a in v.store.all() if a.kind == KIND_CLOUD], [])
 
+    def test_opening_new_doc_clears_polygon_state(self):
+        import tempfile, fitz
+        win = self._win()
+        v = win.view
+        page = v._page_items[0]
+        # start a polygon (persists between clicks, references the current page)
+        pt = page.mapToScene(QPointF(50, 50))
+        v._cloud_press = pt
+        v._cloud_on_release(pt)
+        self.assertIsNotNone(v._cloud_page)
+        # open a different document without cancelling first
+        tmp = tempfile.mkdtemp()
+        src2 = os.path.join(tmp, "d2.pdf")
+        d = fitz.open(); d.new_page(width=400, height=300); d.save(src2); d.close()
+        from app.model.document import Document
+        doc2 = Document(src2); doc2.load()
+        v.set_document(doc2, v.config)
+        # stale state referencing the destroyed page must be gone (no crash)
+        self.assertIsNone(v._cloud_pts)
+        self.assertIsNone(v._cloud_page)
+        self.assertIsNone(v._cloud_press)
+        # a fresh cloud click on the new doc works without error
+        npt = v._page_items[0].mapToScene(QPointF(60, 60))
+        v._cloud_press = npt
+        v._cloud_on_release(npt)
+        self.assertEqual(len(v._cloud_pts), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

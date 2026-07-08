@@ -18,6 +18,7 @@ from app.model.document import Document
 
 try:
     from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QPointF
     _QT_OK = True
 except Exception:  # pragma: no cover
     _QT_OK = False
@@ -67,11 +68,13 @@ class TestCalloutItem(unittest.TestCase):
     def test_default_tip_when_unset(self):
         it = self._item(Annotation(page=0, kind=KIND_CALLOUT,
                                    rect=(100, 100, 220, 150), text="hi"))
-        # a tip is auto-placed below-left of the box
-        self.assertIsNotNone(it.ann.callout_point)
-        tx, ty = it.ann.callout_point
-        self.assertLess(tx, 100)
-        self.assertGreater(ty, 150)
+        # the visual default tip is below-left of the box, but is NOT persisted
+        # to the model on render (only committed drafts set callout_point)
+        self.assertIsNone(it.ann.callout_point)
+        tip = it._tip_local()                       # local = page-pos offset
+        p = it.pos()
+        self.assertLess(tip.x() + p.x(), 100)
+        self.assertGreater(tip.y() + p.y(), 150)
 
     def test_bounding_includes_tip(self):
         it = self._item(Annotation(page=0, kind=KIND_CALLOUT,
@@ -87,6 +90,17 @@ class TestCalloutItem(unittest.TestCase):
                                    rect=(100, 100, 220, 150), rotation=45.0))
         it.sync_from_model()
         self.assertEqual(it.ann.rotation, 0.0)
+
+    def test_tip_default_does_not_mutate_model(self):
+        # rendering a new callout (callout_point None) must NOT persist a default
+        # tip — otherwise it freezes to the tiny first-preview rect on commit
+        ann = Annotation(page=0, kind=KIND_CALLOUT, rect=(100, 100, 220, 150),
+                         text="x")
+        it = self._item(ann)
+        it.boundingRect()
+        it._tip_local()
+        it.paint  # (paint requires a painter; the queries above already call _tip_local)
+        self.assertIsNone(ann.callout_point)
 
 
 class TestCalloutExport(unittest.TestCase):
@@ -135,6 +149,39 @@ class TestCalloutExport(unittest.TestCase):
         self.assertEqual(c.callout_point, (60, 220))
         self.assertEqual(c.text, "SEE NOTE")
         doc2.close()
+
+
+@unittest.skipUnless(_QT_OK, "PySide6 not available")
+class TestCalloutDraft(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_tip_default_uses_final_box_not_preview(self):
+        import tempfile, fitz
+        from app.main_window import MainWindow
+        import app.viewer.tools as T
+        tmp = tempfile.mkdtemp()
+        src = os.path.join(tmp, "d.pdf")
+        d = fitz.open(); d.new_page(width=600, height=400); d.save(src); d.close()
+        win = MainWindow(); win.load_document(src)
+        v = win.view
+        v.tool.current = T.TOOL_CALLOUT
+        v.new_text_prompt = lambda ann, is_tb: (True, "note", False)  # no modal
+        page = v._page_items[0]
+        # press at (100,100); a tiny first preview renders here...
+        v._begin_draft(page.mapToScene(QPointF(100, 100)))
+        v._refresh_preview()                       # would freeze the tip pre-fix
+        # ...then drag out to a large box
+        v._update_draft(page.mapToScene(QPointF(320, 240)))
+        v._refresh_preview()
+        v._finish_draft()
+        callouts = [a for a in v.store.all() if a.kind == KIND_CALLOUT]
+        self.assertEqual(len(callouts), 1)
+        cp = callouts[0].callout_point
+        # default tip is below-left of the FINAL box (100,100)-(320,240)
+        self.assertLess(cp[0], 100)
+        self.assertGreater(cp[1], 240)
 
 
 @unittest.skipUnless(_QT_OK, "PySide6 not available")

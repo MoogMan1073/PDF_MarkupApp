@@ -137,6 +137,14 @@ class PdfView(QGraphicsView):
         self._page_items = []
         self._item_by_ann = {}
         self.undo_stack.clear()
+        # scene.clear() destroyed the PageItems — drop any in-progress draw state
+        # that still references them (a half-drawn cloud polygon survives between
+        # clicks and would crash on the next click against a deleted page).
+        self._draft = None
+        self._draft_page = None
+        self._cloud_pts = None
+        self._cloud_page = None
+        self._cloud_press = None
         # scene.clear() destroyed any selection/search overlays — reset trackers
         self._text_sel_items = []
         self._selected_text = ""

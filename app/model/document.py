@@ -244,7 +244,13 @@ class Document:
         self.sidecar_recreated = False
 
         # 3) persist all in-memory state to the new sidecar + write its marked PDF
-        return self.save(include_ignored=include_ignored)
+        out = self.save(include_ignored=include_ignored)
+        # If dest reused a pre-existing sidecar, its wire/component tables could
+        # hold foreign rows that save() only rewrites when we actually have some.
+        # Force them to mirror THIS document exactly (empty clears them).
+        self.sidecar.save_wires(self.wires)
+        self.sidecar.save_components(self.components)
+        return out
 
     # -- wire cache ----------------------------------------------------------
 

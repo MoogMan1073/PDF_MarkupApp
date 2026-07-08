@@ -174,8 +174,20 @@ def load_pdf_annotations(
                     pass
             if kind == KIND_TEXTBOX:
                 ann.font_size = float(info.get("fontsize", 11) or 11)
-            if kind in (KIND_RECT, KIND_TEXTBOX):
-                fill = _color_or_default(colors, "fill", None)
+                # A FreeText's fill is stored in /C (reported under 'stroke'); its
+                # text colour lives in /DA (not exposed here) so default it black.
+                fc = _color_or_default(colors, "stroke", None)
+                if fc is not None:
+                    ann.fill_color = fc
+                    ann.color = (0.0, 0.0, 0.0)
+                    try:
+                        op = annot.opacity
+                        if op is not None and 0.0 <= float(op) <= 1.0:
+                            ann.fill_opacity = float(op)
+                    except Exception:
+                        pass
+            elif kind == KIND_RECT:
+                fill = _color_or_default(colors, "fill", None)   # /IC
                 if fill is not None:
                     ann.fill_color = fill
                     try:
@@ -295,12 +307,19 @@ def write_annotations_to_pdf(doc: "fitz.Document", annotations: Iterable[Annotat
                 ay = min(max(tip[1], min(y0, y1)), max(y0, y1))
                 cl = [fitz.Point(tip[0], tip[1]) * derot,
                       fitz.Point(ax, ay) * derot]
-                co_kwargs = dict(fontsize=ann.font_size, text_color=ann.color,
-                                 rotate=0, callout=cl,
-                                 line_end=fitz.PDF_ANNOT_LE_OPEN_ARROW)
+                base_kwargs = dict(fontsize=ann.font_size, text_color=ann.color,
+                                   rotate=prot)
                 if ann.fill_color is not None:
-                    co_kwargs["fill_color"] = ann.fill_color
-                annot = page.add_freetext_annot(rect, ann.text or "", **co_kwargs)
+                    base_kwargs["fill_color"] = ann.fill_color
+                try:
+                    # the callout leader (CL/FreeTextCallout) needs PyMuPDF >= 1.25
+                    annot = page.add_freetext_annot(
+                        rect, ann.text or "", callout=cl,
+                        line_end=fitz.PDF_ANNOT_LE_OPEN_ARROW, **base_kwargs)
+                except TypeError:
+                    # older PyMuPDF: degrade to a plain text box (no leader)
+                    annot = page.add_freetext_annot(rect, ann.text or "",
+                                                    **base_kwargs)
                 if ann.fill_color is not None and ann.fill_opacity < 1.0:
                     try:
                         annot.set_opacity(ann.fill_opacity)

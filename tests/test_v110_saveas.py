@@ -95,6 +95,28 @@ class TestSaveAsFork(unittest.TestCase):
         self.assertEqual(os.path.basename(doc.path), "fork.pdf")
         doc.close()
 
+    def test_fork_does_not_inherit_stale_wires(self):
+        # forking onto a name whose .markup.db already holds foreign wire rows
+        # must not leak them into the fork (regression)
+        from app.model.storage import SidecarDB, sidecar_path
+        dest = os.path.join(self.tmp, "fork.pdf")
+        d = fitz.open(); d.new_page(width=400, height=300); d.save(dest); d.close()
+        stale = SidecarDB(sidecar_path(dest))
+        # a bare object with the attributes save_wires reads is enough
+        class _W:
+            label = "999"; sheet = 9; rung = 9; wire_index = 0
+            wire_type = "x"; page = 0; source = "text"; count = 1
+            included = True; flags = []
+        stale.save_wires([_W()])
+        stale.close()
+        # this document has no wires; fork onto the pre-seeded dest
+        doc = self._doc_with_marks()
+        doc.save_as(dest)
+        doc.close()
+        f = Document(dest); f.load()
+        self.assertEqual(f.wires, [])          # the stale wire row was cleared
+        f.close()
+
     def test_fork_from_marked_only_source(self):
         # a working file where only the .marked.pdf exists (original moved away)
         doc = self._doc_with_marks()

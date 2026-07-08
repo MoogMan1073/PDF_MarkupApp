@@ -122,6 +122,26 @@ class TestFillExport(unittest.TestCase):
         d2.close()
         self.assertTrue(opac and abs(opac[0] - 0.4) < 0.05)
 
+    def test_textbox_fill_roundtrips_via_pdf(self):
+        # a FreeText's fill lives in /C, so load_pdf_annotations must read it back
+        # (regression: it previously read the empty /IC 'fill' key)
+        tmp = tempfile.mkdtemp()
+        src = os.path.join(tmp, "d.pdf")
+        self._blank(src)
+        d = fitz.open(src)
+        write_annotations_to_pdf(d, [Annotation(page=0, kind=KIND_TEXTBOX,
+                                                rect=(50, 50, 200, 90), color=(1, 0, 0),
+                                                text="HI", fill_color=(1.0, 1.0, 0.0),
+                                                fill_opacity=1.0)])
+        mp = marked_pdf_path(src)
+        d.save(mp)
+        d.close()
+        loaded = load_pdf_annotations(fitz.open(mp), DEFAULT_IGNORE_PATTERNS)
+        tb = [a for a in loaded if a.kind == KIND_TEXTBOX][0]
+        self.assertIsNotNone(tb.fill_color)
+        for got, want in zip(tb.fill_color, (1.0, 1.0, 0.0)):
+            self.assertAlmostEqual(got, want, delta=0.02)
+
     def test_unfilled_rect_has_no_fill(self):
         tmp = tempfile.mkdtemp()
         src = os.path.join(tmp, "draw.pdf")
