@@ -91,6 +91,21 @@ class TestCalloutItem(unittest.TestCase):
         it.sync_from_model()
         self.assertEqual(it.ann.rotation, 0.0)
 
+    def test_tip_grip_follows_box_move(self):
+        # the tip targets a fixed page point; moving the box must keep the grip
+        # on target (re-placed on ItemPositionHasChanged), not drift with the box
+        it = self._item(Annotation(page=0, kind=KIND_CALLOUT,
+                                   rect=(100, 100, 220, 150), callout_point=(60, 220)))
+        it.setPos(it.pos().x() + 50, it.pos().y() + 30)   # move the box
+        # after the move, the grip's local pos matches the recomputed tip-local
+        grip = it._tip_handle.pos()
+        want = it._tip_local()
+        self.assertAlmostEqual(grip.x(), want.x(), delta=0.01)
+        self.assertAlmostEqual(grip.y(), want.y(), delta=0.01)
+        # and that puts the grip back on the fixed page target (60, 220)
+        self.assertAlmostEqual(grip.x() + it.pos().x(), 60, delta=0.01)
+        self.assertAlmostEqual(grip.y() + it.pos().y(), 220, delta=0.01)
+
     def test_tip_default_does_not_mutate_model(self):
         # rendering a new callout (callout_point None) must NOT persist a default
         # tip — otherwise it freezes to the tiny first-preview rect on commit

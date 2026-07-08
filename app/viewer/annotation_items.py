@@ -502,10 +502,14 @@ class CalloutItem(TextBoxItem):
 
     def itemChange(self, change, value):
         res = super().itemChange(change, value)
-        if (change == QGraphicsItem.ItemSelectedHasChanged
-                and self._tip_handle is not None):
-            self._tip_handle.setVisible(bool(value))
-            self._rotate_handle.setVisible(False)
+        if self._tip_handle is not None:
+            if change == QGraphicsItem.ItemSelectedHasChanged:
+                self._tip_handle.setVisible(bool(value))
+                self._rotate_handle.setVisible(False)
+            elif change == QGraphicsItem.ItemPositionHasChanged:
+                # the tip targets a fixed page point; as the box moves, re-place
+                # the grip so it stays on target instead of drifting with the box
+                self._place_tip()
         return res
 
     # tip drag --------------------------------------------------------------
