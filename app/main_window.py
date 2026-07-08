@@ -698,6 +698,9 @@ class MainWindow(QMainWindow):
 
     def _set_tool(self, tool):
         from PySide6.QtWidgets import QGraphicsView, QGraphicsItem
+        # abandon a half-drawn revision-cloud polygon when switching away
+        if getattr(self.view, "_cloud_pts", None) is not None:
+            self.view._cloud_cancel()
         self.view.tool.current = tool
         self.view.setDragMode(
             QGraphicsView.RubberBandDrag if tool == T.TOOL_SELECT

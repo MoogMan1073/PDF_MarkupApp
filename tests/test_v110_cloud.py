@@ -176,6 +176,22 @@ class TestCloudInteraction(unittest.TestCase):
         self.assertIsNone(v._cloud_pts)
         self.assertEqual([a for a in v.store.all() if a.kind == KIND_CLOUD], [])
 
+    def test_switching_tools_abandons_polygon(self):
+        import app.viewer.tools as T
+        win = self._win()
+        v = win.view
+        page = v._page_items[0]
+        for lx, ly in [(50, 50), (150, 50)]:
+            pt = page.mapToScene(QPointF(lx, ly))
+            v._cloud_press = pt
+            v._cloud_on_release(pt)
+        self.assertIsNotNone(v._cloud_pts)
+        self.assertIn("__cloudpreview__", v._item_by_ann)
+        win._set_tool(T.TOOL_SELECT)        # leaving the cloud tool mid-polygon
+        self.assertIsNone(v._cloud_pts)
+        self.assertNotIn("__cloudpreview__", v._item_by_ann)
+        self.assertEqual([a for a in v.store.all() if a.kind == KIND_CLOUD], [])
+
 
 if __name__ == "__main__":
     unittest.main()
