@@ -53,6 +53,8 @@ def _snapshot(ann: Annotation) -> dict:
         "text": ann.text,
         "opacity": ann.opacity,
         "rotation": ann.rotation,
+        "fill_color": tuple(ann.fill_color) if ann.fill_color is not None else None,
+        "fill_opacity": ann.fill_opacity,
     }
 
 
@@ -67,6 +69,9 @@ def _restore(ann: Annotation, snap: dict) -> None:
     ann.text = snap["text"]
     ann.opacity = snap["opacity"]
     ann.rotation = snap.get("rotation", 0.0)
+    fc = snap.get("fill_color")
+    ann.fill_color = tuple(fc) if fc is not None else None
+    ann.fill_opacity = snap.get("fill_opacity", 1.0)
 
 
 class ModifyAnnotationCommand(QUndoCommand):

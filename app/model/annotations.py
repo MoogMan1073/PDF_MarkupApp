@@ -50,6 +50,11 @@ class Annotation:
     opacity: float = 0.4                         # highlights
     rotation: float = 0.0                        # degrees, clockwise, about centre
 
+    # interior fill for rectangles / text boxes (None = no fill / transparent).
+    # ``fill_opacity`` 1.0 gives a solid cover; a white opaque fill redacts.
+    fill_color: Optional[tuple] = None           # RGB 0..1, or None
+    fill_opacity: float = 1.0
+
     # app-only state (synced to the SQLite sidecar, not the PDF)
     is_todo: bool = False
     todo_done: bool = False
@@ -103,6 +108,8 @@ class Annotation:
             clean["rect"] = tuple(clean["rect"])
         if "color" in clean and clean["color"] is not None:
             clean["color"] = tuple(clean["color"])
+        if clean.get("fill_color") is not None:
+            clean["fill_color"] = tuple(clean["fill_color"])
         return cls(**clean)
 
 

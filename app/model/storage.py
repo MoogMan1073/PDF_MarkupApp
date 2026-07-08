@@ -166,6 +166,16 @@ def load_pdf_annotations(
                     pass
             if kind == KIND_TEXTBOX:
                 ann.font_size = float(info.get("fontsize", 11) or 11)
+            if kind in (KIND_RECT, KIND_TEXTBOX):
+                fill = _color_or_default(colors, "fill", None)
+                if fill is not None:
+                    ann.fill_color = fill
+                    try:
+                        op = annot.opacity
+                        if op is not None and 0.0 <= float(op) <= 1.0:
+                            ann.fill_opacity = float(op)
+                    except Exception:
+                        pass
             # carry the /NM name so the sidecar can re-link app state
             name = info.get("name") or ""
             if name:
@@ -240,14 +250,28 @@ def write_annotations_to_pdf(doc: "fitz.Document", annotations: Iterable[Annotat
                 except Exception:
                     pass
             elif ann.kind == KIND_TEXTBOX:
-                annot = page.add_freetext_annot(
-                    rect, ann.text or "", fontsize=ann.font_size,
-                    text_color=ann.color, rotate=prot,
-                )
+                ft_kwargs = dict(fontsize=ann.font_size, text_color=ann.color,
+                                 rotate=prot)
+                if ann.fill_color is not None:
+                    ft_kwargs["fill_color"] = ann.fill_color
+                annot = page.add_freetext_annot(rect, ann.text or "", **ft_kwargs)
+                if ann.fill_color is not None and ann.fill_opacity < 1.0:
+                    try:
+                        annot.set_opacity(ann.fill_opacity)
+                    except Exception:
+                        pass
             elif ann.kind == KIND_RECT:
                 annot = page.add_rect_annot(rect)
-                annot.set_colors(stroke=ann.color)
+                if ann.fill_color is not None:
+                    annot.set_colors(stroke=ann.color, fill=ann.fill_color)
+                else:
+                    annot.set_colors(stroke=ann.color)
                 annot.set_border(width=ann.width)
+                if ann.fill_color is not None and ann.fill_opacity < 1.0:
+                    try:
+                        annot.set_opacity(ann.fill_opacity)
+                    except Exception:
+                        pass
             elif ann.kind == KIND_ARROW:
                 annot = page.add_line_annot(p0, p1)
                 annot.set_colors(stroke=ann.color)

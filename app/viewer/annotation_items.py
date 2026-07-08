@@ -37,6 +37,17 @@ def qcolor(rgb, alpha=255) -> QColor:
     return QColor(int(r * 255), int(g * 255), int(b * 255), alpha)
 
 
+def fill_brush(ann):
+    """Interior brush for a rect / text box, or ``None`` when there is no fill."""
+    fc = getattr(ann, "fill_color", None)
+    if fc is None:
+        return None
+    alpha = int(max(0.0, min(1.0, getattr(ann, "fill_opacity", 1.0))) * 255)
+    if alpha <= 0:
+        return None
+    return QBrush(qcolor(fc, alpha))
+
+
 class _NoteBadge(QGraphicsEllipseItem):
     """A small orange dot pinned to a mark's corner to flag that it carries a
     note (highlights, pens, arrows and rectangles don't otherwise show text)."""
@@ -96,10 +107,12 @@ class _BaseMixin:
         note_act = None
         if not ann.is_comment_like:
             note_act = menu.addAction("Edit note…" if ann.has_note else "Add note…")
+        # rectangles have no double-click editor, so expose fill here
+        fill_act = menu.addAction("Fill…") if ann.kind == KIND_RECT else None
         todo_act = menu.addAction("Reveal in TODO list") if ann.is_todo else None
         cmt_act = (menu.addAction("Reveal in Comments")
                    if (ann.is_comment_like or ann.has_note) else None)
-        if any((show_act, note_act, todo_act, cmt_act)):
+        if any((show_act, note_act, fill_act, todo_act, cmt_act)):
             menu.addSeparator()
         del_act = menu.addAction("Delete")
         chosen = menu.exec(event.screenPos())
@@ -109,6 +122,8 @@ class _BaseMixin:
             self.view.show_comment_contents(ann)
         elif chosen == note_act:
             self.view.edit_note_annotation(ann)
+        elif chosen == fill_act:
+            self.view.edit_fill_annotation(ann)
         elif chosen == todo_act:
             self.view.reveal_in_panel(ann, "todo")
         elif chosen == cmt_act:
@@ -343,11 +358,13 @@ class HighlightItem(ResizableRectItem):
 class RectShapeItem(ResizableRectItem):
     def paint(self, painter, option, widget=None):
         option.state &= ~QStyle.State_Selected
+        brush = fill_brush(self.ann)
         painter.setPen(QPen(qcolor(self.ann.color), self.ann.width))
-        painter.setBrush(Qt.NoBrush)
+        painter.setBrush(brush if brush is not None else Qt.NoBrush)
         painter.drawRect(self.rect())
         if self.isSelected():
             painter.setPen(QPen(QColor(30, 120, 230), 0, Qt.DashLine))
+            painter.setBrush(Qt.NoBrush)
             painter.drawRect(self.rect())
 
 
@@ -356,6 +373,12 @@ class TextBoxItem(ResizableRectItem):
 
     def paint(self, painter, option, widget=None):
         option.state &= ~QStyle.State_Selected
+        # opaque / translucent background behind the text (redaction cover)
+        brush = fill_brush(self.ann)
+        if brush is not None:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(brush)
+            painter.drawRect(self.rect())
         font = QFont("Helvetica", max(4, int(self.ann.font_size)))
         font.setBold(self.ann.bold)
         font.setItalic(self.ann.italic)

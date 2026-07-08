@@ -8,6 +8,7 @@ tool selection and the active style settings.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Optional
 
 TOOL_SELECT = "select"
 TOOL_HIGHLIGHT = "highlight"
@@ -42,6 +43,13 @@ class ToolState:
     shape_color: tuple = (0.10, 0.45, 0.90)
     shape_width: float = 1.5
     highlight_opacity: float = 0.4
+
+    # interior fill (None = no fill). Rectangles and text boxes each remember
+    # their own; opacity 1.0 gives a solid cover, white opaque redacts.
+    shape_fill: Optional[tuple] = None
+    shape_fill_opacity: float = 1.0
+    text_fill: Optional[tuple] = None
+    text_fill_opacity: float = 1.0
 
     eraser_mode: str = ERASER_OBJECT
 

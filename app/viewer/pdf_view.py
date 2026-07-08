@@ -34,6 +34,7 @@ class PdfView(QGraphicsView):
     pageChanged = Signal(int)
     requestCommentEdit = Signal(object)   # Annotation
     requestTextEdit = Signal(object)      # Annotation
+    requestFillEdit = Signal(object)      # Annotation (rectangle fill)
     annotationActivated = Signal(object)  # Annotation (from a panel jump)
     requestTool = Signal(str)             # ask the window to switch tools
     regionPicked = Signal(int, object)    # page_index, QRectF (page points)
@@ -596,12 +597,18 @@ class PdfView(QGraphicsView):
                     T.TOOL_ARROW: KIND_ARROW, T.TOOL_TEXTBOX: KIND_TEXTBOX}[tool]
             color = (self.tool.highlight_color if kind == KIND_HIGHLIGHT else
                      self.tool.text_color if kind == KIND_TEXTBOX else self.tool.shape_color)
+            fill, fill_op = None, 1.0
+            if kind == KIND_RECT:
+                fill, fill_op = self.tool.shape_fill, self.tool.shape_fill_opacity
+            elif kind == KIND_TEXTBOX:
+                fill, fill_op = self.tool.text_fill, self.tool.text_fill_opacity
             self._draft = Annotation(page=pno, kind=kind, rect=(lx, ly, lx, ly),
                                      color=color, author=author,
                                      width=self.tool.shape_width,
                                      font_size=self.tool.font_size,
                                      bold=self.tool.bold, italic=self.tool.italic,
-                                     opacity=self.tool.highlight_opacity)
+                                     opacity=self.tool.highlight_opacity,
+                                     fill_color=fill, fill_opacity=fill_op)
             return True
         if tool == T.TOOL_ERASER:
             self._erasing = True
@@ -801,6 +808,10 @@ class PdfView(QGraphicsView):
     def edit_note_annotation(self, ann: Annotation):
         """Attach/edit a free note on a non-text mark (arrow, rect, …)."""
         self.requestCommentEdit.emit(ann)
+
+    def edit_fill_annotation(self, ann: Annotation):
+        """Edit a rectangle's interior fill colour + opacity."""
+        self.requestFillEdit.emit(ann)
 
     # -- panel jump ----------------------------------------------------------
 

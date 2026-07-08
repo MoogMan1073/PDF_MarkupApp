@@ -56,6 +56,8 @@ class TextEditDialog(QDialog):
 
         # font styling — only meaningful for on-page text boxes
         if is_textbox:
+            self._fill_color = tuple(ann.fill_color) if ann.fill_color else None
+            self._fill_opacity = float(ann.fill_opacity)
             frow = QHBoxLayout()
             self.size_spin = QSpinBox(); self.size_spin.setRange(4, 96)
             self.size_spin.setValue(int(ann.font_size))
@@ -64,9 +66,15 @@ class TextEditDialog(QDialog):
             self.color_btn = QPushButton("Font color")
             self.color_btn.clicked.connect(self._pick_color)
             self._update_color_swatch()
+            self.fill_btn = QPushButton("Fill")
+            self.fill_btn.setToolTip("Box background — pick colour + opacity "
+                                     "(alpha 0 = none, 100% = opaque cover)")
+            self.fill_btn.clicked.connect(self._pick_fill)
+            self._update_fill_swatch()
             frow.addWidget(QLabel("Size:")); frow.addWidget(self.size_spin)
             frow.addWidget(self.bold_cb); frow.addWidget(self.italic_cb)
-            frow.addWidget(self.color_btn); frow.addStretch(1)
+            frow.addWidget(self.color_btn); frow.addWidget(self.fill_btn)
+            frow.addStretch(1)
             lay.addLayout(frow)
 
         self.todo = QCheckBox("Flag as TODO")
@@ -94,6 +102,24 @@ class TextEditDialog(QDialog):
             int(self._font_color[0] * 255), int(self._font_color[1] * 255),
             int(self._font_color[2] * 255))))
 
+    def _pick_fill(self):
+        rgb = self._fill_color or (1.0, 1.0, 1.0)
+        alpha = int((self._fill_opacity if self._fill_color else 0.0) * 255)
+        start = QColor(int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255), alpha)
+        col = QColorDialog.getColor(start, self, "Box fill",
+                                    QColorDialog.ShowAlphaChannel)
+        if not col.isValid():
+            return
+        if col.alpha() <= 0:
+            self._fill_color = None
+        else:
+            self._fill_color = (col.redF(), col.greenF(), col.blueF())
+            self._fill_opacity = col.alpha() / 255.0
+        self._update_fill_swatch()
+
+    def _update_fill_swatch(self):
+        self.fill_btn.setIcon(_fill_swatch(self._fill_color, self._fill_opacity))
+
     def eventFilter(self, obj, event):
         if obj is self.edit and event.type() == QEvent.KeyPress:
             if (event.key() in (Qt.Key_Return, Qt.Key_Enter)
@@ -114,6 +140,8 @@ class TextEditDialog(QDialog):
             "bold": self.bold_cb.isChecked(),
             "italic": self.italic_cb.isChecked(),
             "color": tuple(self._font_color),
+            "fill_color": tuple(self._fill_color) if self._fill_color else None,
+            "fill_opacity": float(self._fill_opacity),
         }
 
 
@@ -124,6 +152,9 @@ def _apply_font(ann: Annotation, fv) -> None:
     ann.bold = fv["bold"]
     ann.italic = fv["italic"]
     ann.color = tuple(fv["color"])
+    if "fill_color" in fv:
+        ann.fill_color = tuple(fv["fill_color"]) if fv["fill_color"] else None
+        ann.fill_opacity = fv["fill_opacity"]
 
 
 # --- settings dialog --------------------------------------------------------
@@ -340,6 +371,28 @@ def _swatch(color: QColor) -> QIcon:
     return QIcon(pm)
 
 
+def _fill_swatch(rgb, opacity) -> QIcon:
+    """Swatch for the Fill button: a checkerboard shows through translucent /
+    no-fill states so 'transparent' is visually distinct from 'white cover'."""
+    from PySide6.QtGui import QPainter, QColor as _QC
+    pm = QPixmap(16, 16)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    # grey checkerboard backdrop
+    for i in range(0, 16, 4):
+        for j in range(0, 16, 4):
+            shade = 200 if ((i + j) // 4) % 2 == 0 else 235
+            p.fillRect(i, j, 4, 4, _QC(shade, shade, shade))
+    if rgb is not None and opacity > 0:
+        a = int(max(0.0, min(1.0, opacity)) * 255)
+        p.fillRect(0, 0, 16, 16,
+                   _QC(int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255), a))
+    p.setPen(_QC(120, 120, 120))
+    p.drawRect(0, 0, 15, 15)
+    p.end()
+    return QIcon(pm)
+
+
 # --- main window ------------------------------------------------------------
 
 
@@ -365,6 +418,7 @@ class MainWindow(QMainWindow):
         self.view.config = self.config
         self.view.requestCommentEdit.connect(self._edit_comment)
         self.view.requestTextEdit.connect(self._edit_textbox)
+        self.view.requestFillEdit.connect(self._edit_fill)
         self.view.pageChanged.connect(self._on_page_changed)
         self.view.requestTool.connect(self._activate_tool)
         self.view.requestOpen.connect(self.load_document)   # drag/drop a PDF
@@ -529,6 +583,12 @@ class MainWindow(QMainWindow):
         self.color_btn = QPushButton("Color")
         self.color_btn.clicked.connect(self._pick_color)
         tb.addWidget(self.color_btn)
+        self.fill_btn = QPushButton("Fill")
+        self.fill_btn.setToolTip(
+            "Interior fill for rectangles & text boxes — pick a colour and "
+            "opacity (drag alpha to 0 for no fill, 100% for an opaque cover)")
+        self.fill_btn.clicked.connect(self._pick_fill)
+        tb.addWidget(self.fill_btn)
         tb.addWidget(QLabel(" Pen "))
         self.pen_width = QDoubleSpinBox(); self.pen_width.setRange(0.5, 20); self.pen_width.setValue(2.0)
         self.pen_width.valueChanged.connect(lambda v: setattr(self.view.tool, "pen_width", v))
@@ -574,6 +634,7 @@ class MainWindow(QMainWindow):
         self.page_total = QLabel(" / 0")
         tb.addWidget(self.page_total)
         self._update_color_btn()
+        self._update_fill_btn()
 
     # -- zoom % readout ------------------------------------------------------
 
@@ -620,6 +681,7 @@ class MainWindow(QMainWindow):
             it.setFlag(QGraphicsItem.ItemIsMovable, select)
             it.setFlag(QGraphicsItem.ItemIsSelectable, select)
         self._update_color_btn()
+        self._update_fill_btn()
 
     def _activate_tool(self, tool):
         """Programmatically switch tools and reflect it in the toolbar."""
@@ -664,6 +726,45 @@ class MainWindow(QMainWindow):
         if col.isValid():
             setattr(self.view.tool, attr, (col.redF(), col.greenF(), col.blueF()))
             self._update_color_btn()
+
+    def _active_fill_attrs(self):
+        """(color_attr, opacity_attr) for the fill-capable tool, else (None, None)."""
+        t = self.view.tool.current
+        if t == T.TOOL_RECT:
+            return "shape_fill", "shape_fill_opacity"
+        if t == T.TOOL_TEXTBOX:
+            return "text_fill", "text_fill_opacity"
+        return None, None
+
+    def _update_fill_btn(self):
+        c_attr, o_attr = self._active_fill_attrs()
+        enabled = c_attr is not None
+        self.fill_btn.setEnabled(enabled)
+        rgb = getattr(self.view.tool, c_attr) if enabled else None
+        op = getattr(self.view.tool, o_attr) if enabled else 0.0
+        self.fill_btn.setIcon(_fill_swatch(rgb, op))
+
+    def _pick_fill(self):
+        c_attr, o_attr = self._active_fill_attrs()
+        if c_attr is None:
+            return
+        rgb = getattr(self.view.tool, c_attr)
+        op = getattr(self.view.tool, o_attr)
+        start = QColor(int((rgb or (1, 1, 1))[0] * 255),
+                       int((rgb or (1, 1, 1))[1] * 255),
+                       int((rgb or (1, 1, 1))[2] * 255),
+                       int((op if rgb is not None else 0.0) * 255))
+        col = QColorDialog.getColor(
+            start, self, "Fill colour & opacity",
+            QColorDialog.ShowAlphaChannel)
+        if not col.isValid():
+            return
+        if col.alpha() <= 0:
+            setattr(self.view.tool, c_attr, None)           # no fill
+        else:
+            setattr(self.view.tool, c_attr, (col.redF(), col.greenF(), col.blueF()))
+            setattr(self.view.tool, o_attr, col.alpha() / 255.0)
+        self._update_fill_btn()
 
     # -- document lifecycle --------------------------------------------------
 
@@ -820,6 +921,26 @@ class MainWindow(QMainWindow):
                                             "Edit text"))
             elif todo != was_todo:
                 self.document.store.update(ann)
+
+    def _edit_fill(self, ann: Annotation):
+        """Edit a rectangle's fill colour + opacity via the alpha colour dialog."""
+        before = capture(ann)
+        rgb = ann.fill_color or (1.0, 1.0, 1.0)
+        alpha = int((ann.fill_opacity if ann.fill_color else 0.0) * 255)
+        start = QColor(int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255), alpha)
+        col = QColorDialog.getColor(start, self, "Rectangle fill",
+                                    QColorDialog.ShowAlphaChannel)
+        if not col.isValid():
+            return
+        if col.alpha() <= 0:
+            ann.fill_color = None
+        else:
+            ann.fill_color = (col.redF(), col.greenF(), col.blueF())
+            ann.fill_opacity = col.alpha() / 255.0
+        after = capture(ann)
+        if after != before:
+            self.view.push_command(
+                ModifyAnnotationCommand(self.view, ann, before, after, "Edit fill"))
 
     # -- navigation ----------------------------------------------------------
 
