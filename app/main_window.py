@@ -487,6 +487,12 @@ class MainWindow(QMainWindow):
         m_file = mb.addMenu("&File")
         self.act_open = m_file.addAction("&Open PDF…", self.open_pdf, QKeySequence.Open)
         self.act_save = m_file.addAction("&Save markup", self.save_markup, QKeySequence.Save)
+        self.act_save_as = m_file.addAction(
+            "Save &As… (fork working file)", self.save_as_fork,
+            QKeySequence("Ctrl+Shift+S"))
+        self.act_save_as.setToolTip(
+            "Copy this file's markup into a new working file and switch to it; "
+            "the original stays untouched.")
         self.act_export_pdf = m_file.addAction(
             "Export annotated PDF…", self.export_pdf, QKeySequence("Ctrl+Shift+E"))
         m_file.addSeparator()
@@ -862,6 +868,44 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "Save failed", str(e))
 
+    def save_as_fork(self):
+        """Fork the current markup to a new working file and switch to editing it."""
+        if self.document is None:
+            return
+        from .model.storage import original_pdf_path, sidecar_path
+        base = os.path.splitext(
+            os.path.basename(original_pdf_path(self.document.path)))[0]
+        start_dir = os.path.dirname(os.path.abspath(self.document.path))
+        suggested = os.path.join(start_dir, f"{base}-copy.pdf")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save As — fork to a new working file", suggested, "PDF (*.pdf)")
+        if not path:
+            return
+        if not path.lower().endswith(".pdf"):
+            path += ".pdf"
+
+        def _key(p):
+            return os.path.normcase(os.path.realpath(sidecar_path(p)))
+        if _key(path) == _key(self.document.path):
+            QMessageBox.information(
+                self, "Same file",
+                "That's the file you're already working on — choose a new name.")
+            return
+        try:
+            self.document.save_as(path)
+        except Exception as e:
+            QMessageBox.warning(self, "Save As failed", str(e))
+            return
+        new_path = self.document.path
+        self.tools_panel.set_default_pdf(new_path)
+        self.setWindowTitle(f"{__app_name__} — {os.path.basename(new_path)}")
+        self.statusBar().showMessage(
+            f"Forked to {os.path.basename(new_path)} — now editing the copy", 6000)
+        QMessageBox.information(
+            self, "Forked to a new working file",
+            f"Now working on “{os.path.basename(new_path)}”.\n"
+            f"The original file is unchanged.")
+
     def export_pdf(self):
         if self.document is None:
             return
@@ -997,7 +1041,7 @@ class MainWindow(QMainWindow):
         self.page_spin.blockSignals(False)
 
     def _update_actions_enabled(self, on: bool):
-        for a in (self.act_save, self.act_export_pdf):
+        for a in (self.act_save, self.act_save_as, self.act_export_pdf):
             a.setEnabled(on)
 
     def showEvent(self, event):
