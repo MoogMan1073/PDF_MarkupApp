@@ -570,11 +570,20 @@ class MainWindow(QMainWindow):
             (T.TOOL_PEN, "Pen"), (T.TOOL_ERASER, "Eraser"),
             (T.TOOL_COMMENT, "Comment"), (T.TOOL_TEXTBOX, "Text box"),
             (T.TOOL_RECT, "Rectangle"), (T.TOOL_ARROW, "Arrow"),
-            (T.TOOL_CALLOUT, "Callout"),
+            (T.TOOL_CALLOUT, "Callout"), (T.TOOL_CLOUD, "Cloud"),
         ]
+        tool_tips = {
+            T.TOOL_CALLOUT: "Callout: drag a box, type the note, then drag the "
+                            "orange tip to point at the target",
+            T.TOOL_CLOUD: "Revision cloud: drag to draw freehand, or click "
+                          "corners and double-click / Enter to close",
+        }
         for tool, label in tool_defs:
             act = QAction(label, self, checkable=True)
             act.setData(tool)
+            if tool in tool_tips:
+                act.setToolTip(tool_tips[tool])
+                act.setStatusTip(tool_tips[tool])
             act.triggered.connect(lambda _=False, t=tool: self._set_tool(t))
             self.tool_group.addAction(act)
             tb.addAction(act)
@@ -716,6 +725,7 @@ class MainWindow(QMainWindow):
             T.TOOL_HIGHLIGHT: "highlight_color", T.TOOL_PEN: "pen_color",
             T.TOOL_TEXTBOX: "text_color", T.TOOL_RECT: "shape_color",
             T.TOOL_ARROW: "shape_color", T.TOOL_CALLOUT: "text_color",
+            T.TOOL_CLOUD: "shape_color",
         }.get(t, "pen_color")
 
     def _update_color_btn(self):

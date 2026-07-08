@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 
 from ..model.annotations import (
     Annotation, KIND_HIGHLIGHT, KIND_PEN, KIND_COMMENT, KIND_TEXTBOX,
-    KIND_RECT, KIND_ARROW, KIND_CALLOUT,
+    KIND_RECT, KIND_ARROW, KIND_CALLOUT, KIND_CLOUD,
 )
 from .command_stack import ModifyAnnotationCommand, capture
 
@@ -581,6 +581,88 @@ class PenItem(_BaseMixin, QGraphicsPathItem):
             painter.drawRect(self.boundingRect())
 
 
+# --- revision cloud ---------------------------------------------------------
+
+
+def cloud_path(points, radius: float = 9.0, closed: bool = True) -> QPainterPath:
+    """A scalloped (revision-cloud) path following ``points``.
+
+    Outward semicircular bumps are drawn along each edge; bump direction is away
+    from the polygon centroid so the scallops face outward.  ``closed`` links the
+    last point back to the first (used for finished clouds; open while drawing).
+    """
+    path = QPainterPath()
+    pts = [QPointF(x, y) for x, y in points]
+    if len(pts) < 2:
+        if pts:
+            path.addEllipse(pts[0], radius, radius)
+        return path
+    cx = sum(p.x() for p in pts) / len(pts)
+    cy = sum(p.y() for p in pts) / len(pts)
+    seq = pts + [pts[0]] if closed else pts
+    first = True
+    for i in range(len(seq) - 1):
+        a, b = seq[i], seq[i + 1]
+        seg_len = math.hypot(b.x() - a.x(), b.y() - a.y())
+        n = max(1, int(round(seg_len / (radius * 1.6))))
+        for k in range(n):
+            t0, t1 = k / n, (k + 1) / n
+            p0 = QPointF(a.x() + (b.x() - a.x()) * t0, a.y() + (b.y() - a.y()) * t0)
+            p1 = QPointF(a.x() + (b.x() - a.x()) * t1, a.y() + (b.y() - a.y()) * t1)
+            mid = QPointF((p0.x() + p1.x()) / 2, (p0.y() + p1.y()) / 2)
+            dx, dy = p1.x() - p0.x(), p1.y() - p0.y()
+            nlen = math.hypot(dx, dy) or 1.0
+            nx, ny = -dy / nlen, dx / nlen
+            if (mid.x() - cx) * nx + (mid.y() - cy) * ny < 0:
+                nx, ny = -nx, -ny
+            ctrl = QPointF(mid.x() + nx * radius, mid.y() + ny * radius)
+            if first:
+                path.moveTo(p0)
+                first = False
+            path.quadTo(ctrl, p1)
+    if closed:
+        path.closeSubpath()
+    return path
+
+
+class CloudItem(_BaseMixin, QGraphicsPathItem):
+    """An outline-only revision cloud following a freehand or polygon path."""
+
+    def __init__(self, ann: Annotation, view):
+        super().__init__()
+        self.init_base(ann, view)
+        self.sync_from_model()
+
+    def sync_from_model(self):
+        self.setPath(cloud_path(self.ann.points, radius=9.0, closed=True))
+        pen = QPen(qcolor(self.ann.color), max(1.0, self.ann.width))
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        self.setPen(pen)
+        self.setBrush(Qt.NoBrush)
+        self.setPos(0, 0)
+
+    def write_geometry_to_model(self):
+        dx, dy = self.pos().x(), self.pos().y()
+        if dx or dy:
+            self.ann.points = [(x + dx, y + dy) for x, y in self.ann.points]
+            self.setPos(0, 0)
+            self.sync_from_model()
+
+    def shape(self):
+        stroker = QPainterPathStroker()
+        stroker.setWidth(max(self.ann.width, 6.0))
+        return stroker.createStroke(self.path())
+
+    def paint(self, painter, option, widget=None):
+        option.state &= ~QStyle.State_Selected
+        super().paint(painter, option, widget)
+        if self.isSelected():
+            painter.setPen(QPen(QColor(30, 120, 230), 0, Qt.DashLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(self.boundingRect())
+
+
 # --- arrow ------------------------------------------------------------------
 
 
@@ -705,6 +787,7 @@ _FACTORY = {
     KIND_RECT: RectShapeItem,
     KIND_ARROW: ArrowItem,
     KIND_CALLOUT: CalloutItem,
+    KIND_CLOUD: CloudItem,
 }
 
 

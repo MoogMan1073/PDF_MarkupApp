@@ -21,6 +21,7 @@ KIND_TEXTBOX = "textbox"      # FreeText rendered on the page
 KIND_RECT = "rect"
 KIND_ARROW = "arrow"
 KIND_CALLOUT = "callout"      # FreeText with a leader arrow to a target point
+KIND_CLOUD = "cloud"          # revision cloud (scalloped polygon, outline only)
 
 TEXT_KINDS = {KIND_COMMENT, KIND_TEXTBOX, KIND_CALLOUT}
 

@@ -25,7 +25,7 @@ import fitz  # PyMuPDF
 from .annotations import (
     Annotation, now_iso,
     KIND_HIGHLIGHT, KIND_PEN, KIND_COMMENT, KIND_TEXTBOX, KIND_RECT, KIND_ARROW,
-    KIND_CALLOUT,
+    KIND_CALLOUT, KIND_CLOUD,
 )
 
 # Seeded SHX / AutoCAD junk ignore-patterns (regex, may use inline (?i)).
@@ -46,6 +46,7 @@ _PDF_TYPE_TO_KIND = {
     "Ink": KIND_PEN,
     "Square": KIND_RECT,
     "Line": KIND_ARROW,
+    "Polygon": KIND_CLOUD,
 }
 
 
@@ -163,6 +164,12 @@ def load_pdf_annotations(
                         else:
                             pts.append(tuple(fitz.Point(stroke[0], stroke[1]) * rotm))
                     ann.points = pts
+                except Exception:
+                    pass
+            if kind == KIND_CLOUD:
+                try:
+                    verts = annot.vertices or []
+                    ann.points = [tuple(fitz.Point(p[0], p[1]) * rotm) for p in verts]
                 except Exception:
                     pass
             if kind == KIND_TEXTBOX:
@@ -299,6 +306,14 @@ def write_annotations_to_pdf(doc: "fitz.Document", annotations: Iterable[Annotat
                         annot.set_opacity(ann.fill_opacity)
                     except Exception:
                         pass
+            elif ann.kind == KIND_CLOUD and ann.points and len(ann.points) >= 3:
+                poly = [tuple(fitz.Point(px, py) * derot) for px, py in ann.points]
+                annot = page.add_polygon_annot(poly)
+                annot.set_colors(stroke=ann.color)
+                try:
+                    annot.set_border(width=ann.width, clouds=2)  # revision-cloud BE
+                except Exception:
+                    annot.set_border(width=ann.width)
             # A note attached to a non-text mark (highlight / pen / rect / arrow)
             # should open as a genuine comment popup in Adobe / Chrome, not just
             # sit in the annotation's /Contents.
