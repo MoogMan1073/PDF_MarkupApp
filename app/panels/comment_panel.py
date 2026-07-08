@@ -16,12 +16,12 @@ from PySide6.QtWidgets import (
 
 from ..model.annotations import (
     Annotation, KIND_COMMENT, KIND_TEXTBOX, KIND_HIGHLIGHT, KIND_PEN,
-    KIND_RECT, KIND_ARROW, KIND_CALLOUT,
+    KIND_RECT, KIND_ARROW, KIND_CALLOUT, KIND_CLOUD,
 )
 
 _KIND_ICON = {
     KIND_COMMENT: "💬", KIND_TEXTBOX: "🅣", KIND_HIGHLIGHT: "🖍", KIND_PEN: "✎",
-    KIND_RECT: "▭", KIND_ARROW: "↗", KIND_CALLOUT: "🗨",
+    KIND_RECT: "▭", KIND_ARROW: "↗", KIND_CALLOUT: "🗨", KIND_CLOUD: "☁",
 }
 _DATE = lambda iso: (iso or "")[:16].replace("T", " ")
 
