@@ -253,10 +253,22 @@ class TodoPanel(QWidget):
         it.setFlags(it.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsEditable)
         it.setCheckState(0, Qt.Checked if a.todo_done else Qt.Unchecked)
         it.setData(0, Qt.UserRole, a)
+        if a.todo_done:
+            self._apply_done_style(it)
         if isinstance(parent, QTreeWidget):
             parent.addTopLevelItem(it)
         else:
             parent.addChild(it)
+
+    def _apply_done_style(self, it: QTreeWidgetItem):
+        """Strike out and dim a completed TODO row (the list side of the audit)."""
+        from PySide6.QtGui import QBrush, QColor
+        dim = QBrush(QColor(140, 140, 140))
+        for col in range(self.tree.columnCount()):
+            f = it.font(col)
+            f.setStrikeOut(True)
+            it.setFont(col, f)
+            it.setForeground(col, dim)
 
     # -- interaction ---------------------------------------------------------
 

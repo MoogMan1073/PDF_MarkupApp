@@ -915,6 +915,8 @@ class PdfView(QGraphicsView):
         item.setFlag(QGraphicsItem.ItemIsSelectable, select)
         if hasattr(item, "_refresh_note_badge"):
             item._refresh_note_badge()
+        if hasattr(item, "_refresh_done_overlay"):
+            item._refresh_done_overlay()
         self._item_by_ann[ann.id] = item
 
     def _remove_item_for(self, ann: Annotation):
@@ -931,6 +933,8 @@ class PdfView(QGraphicsView):
             item.sync_from_model()
         if hasattr(item, "_refresh_note_badge"):
             item._refresh_note_badge()
+        if hasattr(item, "_refresh_done_overlay"):
+            item._refresh_done_overlay()
         item.update()
 
     def rebuild_all_items(self):

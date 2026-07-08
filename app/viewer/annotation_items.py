@@ -16,7 +16,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QGraphicsItem, QGraphicsRectItem, QGraphicsPathItem, QGraphicsObject,
-    QGraphicsEllipseItem, QStyle,
+    QGraphicsEllipseItem, QGraphicsLineItem, QStyle,
 )
 
 from ..model.annotations import (
@@ -61,6 +61,20 @@ class _NoteBadge(QGraphicsEllipseItem):
         self.setZValue(70)
         self.setAcceptedMouseButtons(Qt.NoButton)
         self.setToolTip("Has a note — right-click ▸ Edit note…")
+
+
+class _DoneStrike(QGraphicsLineItem):
+    """A strikethrough line drawn across a mark whose TODO has been completed
+    (the on-sheet counterpart to the struck-out row in the TODO audit list)."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        pen = QPen(QColor(200, 40, 40), 2.5)
+        pen.setCapStyle(Qt.RoundCap)
+        self.setPen(pen)
+        self.setZValue(69)
+        self.setAcceptedMouseButtons(Qt.NoButton)
+        self.setToolTip("TODO completed")
 
 
 # --- selectable / movable base ---------------------------------------------
@@ -154,6 +168,22 @@ class _BaseMixin:
             if want:
                 br = self.boundingRect()
                 badge.setPos(br.right(), br.top())
+
+    def _refresh_done_overlay(self):
+        """Strike a line across the mark once its TODO is checked off, matching
+        the struck-out row in the TODO audit list."""
+        want = bool(getattr(self.ann, "is_todo", False)
+                    and getattr(self.ann, "todo_done", False))
+        line = getattr(self, "_done_strike", None)
+        if want and line is None:
+            line = _DoneStrike(self)
+            self._done_strike = line
+        if line is not None:
+            line.setVisible(want)
+            if want:
+                br = self.boundingRect()
+                y = br.center().y()
+                line.setLine(br.left(), y, br.right(), y)
 
 
 # --- rect-based, resizable --------------------------------------------------
