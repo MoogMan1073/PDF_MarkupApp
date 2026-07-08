@@ -579,6 +579,12 @@ class MainWindow(QMainWindow):
             "the original stays untouched.")
         self.act_export_pdf = m_file.addAction(
             "Export annotated PDF…", self.export_pdf, QKeySequence("Ctrl+Shift+E"))
+        self.act_export_flat = m_file.addAction(
+            "Export flattened PDF (for sharing)…", self.export_flat)
+        self.act_export_flat.setToolTip(
+            "Bake the marks into the page so they render in every viewer "
+            "(browsers, Preview, thumbnails). Not re-editable — keep your "
+            "working file for edits.")
         m_file.addSeparator()
         m_file.addAction("Settings…", self.open_settings)
         m_file.addSeparator()
@@ -1021,6 +1027,29 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "Export failed", str(e))
 
+    def export_flat(self):
+        if self.document is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Export flattened PDF",
+                                              "flattened.pdf", "PDF (*.pdf)")
+        if not path:
+            return
+        if not path.lower().endswith(".pdf"):
+            path += ".pdf"
+        try:
+            baked = self.document.export_flattened_pdf(path)
+        except Exception as e:
+            QMessageBox.warning(self, "Export failed", str(e))
+            return
+        if baked:
+            self.statusBar().showMessage(
+                f"Exported flattened {os.path.basename(path)}", 5000)
+        else:
+            QMessageBox.information(
+                self, "Exported (not flattened)",
+                "This PyMuPDF build can't flatten annotations, so an annotated "
+                "copy was written instead.")
+
     def open_settings(self):
         dlg = SettingsDialog(self.config, self)
         if dlg.exec() == QDialog.Accepted:
@@ -1138,7 +1167,8 @@ class MainWindow(QMainWindow):
         self.page_spin.blockSignals(False)
 
     def _update_actions_enabled(self, on: bool):
-        for a in (self.act_save, self.act_save_as, self.act_export_pdf):
+        for a in (self.act_save, self.act_save_as, self.act_export_pdf,
+                  self.act_export_flat):
             a.setEnabled(on)
 
     def showEvent(self, event):

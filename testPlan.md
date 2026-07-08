@@ -80,6 +80,11 @@ callouts, revision clouds, TODO-audit strikethrough, Save As), plus a
 - [ ] `Ctrl+1`…`Ctrl+9` then `Ctrl+0` select the tools in toolbar order (Select → Cloud); the pressed tool's button highlights.
 - [ ] Hovering a tool button shows its shortcut in the tooltip.
 
+### B5 — Flattened export (for sharing)
+- [ ] **File ▸ Export flattened PDF (for sharing)…** writes a copy.
+- [ ] Open the flattened copy in a viewer that normally ignores annotations (a file-thumbnail preview, or a basic viewer) → **all marks show** (they're baked into the page).
+- [ ] Reopening the annotated `*.marked.pdf` **here** shows every mark (fills, clouds, callouts, notes) on the canvas.
+
 ---
 
 ## C. Regression checks (areas these changes touched)

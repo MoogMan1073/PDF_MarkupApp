@@ -113,6 +113,86 @@ class TestNotesAsStickyComments(unittest.TestCase):
         self.assertEqual(types, ["Square", "Text"])   # rect + its sticky note
 
 
+class TestFlattenedExport(unittest.TestCase):
+    def test_flatten_bakes_marks_into_content(self):
+        from app.model.document import Document
+        tmp = tempfile.mkdtemp()
+        src = os.path.join(tmp, "d.pdf")
+        d = fitz.open(); d.new_page(width=400, height=300); d.save(src); d.close()
+        doc = Document(src); doc.load()
+        doc.store.add(Annotation(page=0, kind=KIND_RECT, rect=(30, 30, 150, 90),
+                                 color=(1, 0, 0), fill_color=(0, 0.6, 1)))
+        doc.store.add(Annotation(page=0, kind=KIND_CLOUD, color=(1, 0, 0), width=1.5,
+                                 points=[(200, 150), (300, 140), (310, 220), (210, 230)]))
+        flat = os.path.join(tmp, "flat.pdf")
+        baked = doc.export_flattened_pdf(flat)
+        doc.close()
+        self.assertTrue(baked)
+        d2 = fitz.open(flat)
+        # no live annotations remain — they're page content now
+        self.assertEqual(sum(len(list(p.annots() or [])) for p in d2), 0)
+        # and they render with annots disabled (i.e. every viewer shows them)
+        pix = d2[0].get_pixmap(annots=False)
+        nonwhite = sum(1 for i in range(0, len(pix.samples), 3)
+                       if pix.samples[i] < 240 or pix.samples[i + 1] < 240
+                       or pix.samples[i + 2] < 240)
+        d2.close()
+        self.assertGreater(nonwhite, 500)
+
+
+@unittest.skipUnless(_QT_OK, "PySide6 not available")
+class TestReopenRendersMarks(unittest.TestCase):
+    """Guards the in-app reopen path: a saved .marked.pdf reloads its marks with
+    fill/points/note intact and builds the correct graphics items."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _round_trip(self, rotation):
+        from app.main_window import MainWindow
+        from app.model.document import Document
+        tmp = tempfile.mkdtemp()
+        src = os.path.join(tmp, "draw.pdf")
+        d = fitz.open(); pg = d.new_page(width=612, height=792)
+        if rotation:
+            pg.set_rotation(rotation)
+        d.save(src); d.close()
+        doc = Document(src); doc.load()
+        doc.store.add(Annotation(page=0, kind=KIND_RECT, rect=(60, 60, 260, 160),
+                                 color=(1, 0, 0), width=2, fill_color=(0, 0.6, 1),
+                                 fill_opacity=1.0))
+        doc.store.add(Annotation(page=0, kind=KIND_CLOUD, color=(1, 0, 0), width=1.5,
+                                 points=[(300, 300), (420, 290), (430, 420), (310, 430)]))
+        doc.store.add(Annotation(page=0, kind=KIND_HIGHLIGHT, rect=(60, 200, 260, 230),
+                                 color=(1, 1, 0), opacity=0.4, text="note"))
+        marked = doc.save(); doc.close()
+        win = MainWindow(); win.load_document(marked)
+        return win
+
+    def _check(self, win):
+        from app.viewer.annotation_items import (RectShapeItem, CloudItem,
+                                                 HighlightItem, fill_brush)
+        by_kind = {a.kind: a for a in win.document.store.all()}
+        # data survived the round-trip
+        self.assertEqual(by_kind[KIND_RECT].fill_color, (0, 0.6, 1))
+        self.assertEqual(len(by_kind[KIND_CLOUD].points), 4)
+        # the right graphics items exist and would paint
+        items = win.view._item_by_ann
+        rect_item = items[by_kind[KIND_RECT].id]
+        cloud_item = items[by_kind[KIND_CLOUD].id]
+        self.assertIsInstance(rect_item, RectShapeItem)
+        self.assertIsInstance(cloud_item, CloudItem)
+        self.assertIsNotNone(fill_brush(by_kind[KIND_RECT]))   # fill paints
+        self.assertFalse(cloud_item.path().isEmpty())          # scallops built
+
+    def test_reopen_unrotated(self):
+        self._check(self._round_trip(0))
+
+    def test_reopen_rotated(self):
+        self._check(self._round_trip(90))
+
+
 @unittest.skipUnless(_QT_OK, "PySide6 not available")
 class TestToolHotkeys(unittest.TestCase):
     @classmethod

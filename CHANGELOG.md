@@ -30,6 +30,9 @@ New markup:
   with the standard cloud border effect.
 - **Tool shortcuts.** `Ctrl+1`…`Ctrl+0` pick tools in toolbar order (Select →
   Cloud).
+- **Export flattened PDF (for sharing).** Bakes the marks into the page so they
+  render in **every** viewer — including ones that ignore annotations (some
+  built-in previews, file thumbnails). The working file stays editable.
 
 Workflow:
 

@@ -204,6 +204,32 @@ class Document:
         """Explicit 'Export annotated PDF…' to an arbitrary path."""
         return self.save(marked_path=out_path, include_ignored=include_ignored)
 
+    def export_flattened_pdf(self, out_path: str, include_ignored: bool = False) -> bool:
+        """Export a *flattened* copy: every mark is baked into the page content so
+        it renders in **any** viewer (browsers, Preview, thumbnails), not only
+        annotation-aware readers.  The result is not re-editable here — the
+        working file (sidecar) stays the source of truth.  Returns True if the
+        marks were actually flattened (False if this PyMuPDF lacks ``bake``, in
+        which case a normal annotated copy is written instead)."""
+        original = original_pdf_path(self.path)
+        if os.path.exists(original):
+            work = fitz.open(original)
+        else:
+            work = fitz.open(self.path)
+            if is_marked_pdf(self.path):
+                strip_annotations(work)
+        write_annotations_to_pdf(work, self.store.all(), include_ignored=include_ignored)
+        baked = False
+        if hasattr(work, "bake"):
+            try:
+                work.bake(annots=True, widgets=False)
+                baked = True
+            except Exception:
+                baked = False
+        work.save(out_path, garbage=3, deflate=True)
+        work.close()
+        return baked
+
     def save_as(self, dest_pdf: str, include_ignored: bool = False) -> str:
         """Fork the current markup into a NEW working file and switch to it.
 
