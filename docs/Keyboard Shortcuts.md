@@ -8,7 +8,9 @@ tags: [reference, basics]
 |----------|--------|
 | `Ctrl+O` | Open PDF (or **drag a PDF** onto the window) |
 | `Ctrl+S` | Save markup (`.marked.pdf` + sidecar) |
+| `Ctrl+Shift+S` | Save As… (fork to a new working file) |
 | `Ctrl+Shift+E` | Export annotated PDF… |
+| `Ctrl+1` … `Ctrl+0` | Pick a tool (Select, Highlight, Pen, Eraser, Comment, Text box, Callout, Rectangle, Arrow, Cloud) |
 | `Ctrl+F` | Find in document (search bar; `Enter` / `Shift+Enter` to step matches, `Esc` to close) |
 | `Ctrl+C` | Copy the selected text (drag over text with the **Select** tool) |
 | `Ctrl+Z` | Undo |

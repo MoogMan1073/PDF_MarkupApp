@@ -49,6 +49,11 @@ _PDF_TYPE_TO_KIND = {
     "Polygon": KIND_CLOUD,
 }
 
+# /NM suffix marking an auxiliary sticky-note we emit for a *noted* non-text mark
+# (so the note shows as a comment in every viewer). Skipped on reload — the note
+# text already round-trips on the parent mark's /Contents.
+_NOTE_SUFFIX = "#note"
+
 
 # --- date helpers -----------------------------------------------------------
 
@@ -138,6 +143,10 @@ def load_pdf_annotations(
             if kind is None:
                 continue
             info = annot.info or {}
+            # skip the auxiliary sticky-notes we emit for noted non-text marks —
+            # the note already lives on its parent mark's /Contents
+            if (info.get("name") or "").endswith(_NOTE_SUFFIX):
+                continue
             rect = annot.rect * rotm
             colors = annot.colors or {}
             ann = Annotation(
@@ -333,16 +342,6 @@ def write_annotations_to_pdf(doc: "fitz.Document", annotations: Iterable[Annotat
                     annot.set_border(width=ann.width, clouds=2)  # revision-cloud BE
                 except Exception:
                     annot.set_border(width=ann.width)
-            # A note attached to a non-text mark (highlight / pen / rect / arrow)
-            # should open as a genuine comment popup in Adobe / Chrome, not just
-            # sit in the annotation's /Contents.
-            if (annot is not None
-                    and ann.kind not in (KIND_COMMENT, KIND_TEXTBOX, KIND_CALLOUT)
-                    and (ann.text or "").strip()):
-                try:
-                    annot.set_popup(fitz.Rect(x0 + 20, y0, x0 + 220, y0 + 90) * derot)
-                except Exception:
-                    pass
         except Exception:
             annot = None
         if annot is not None:
@@ -352,6 +351,26 @@ def write_annotations_to_pdf(doc: "fitz.Document", annotations: Iterable[Annotat
             except Exception:
                 pass
             written += 1
+            # A note on a non-text mark (highlight / pen / rect / arrow / cloud)
+            # also gets a standalone sticky-note comment so it's visibly a comment
+            # in every viewer (Adobe, browsers, Preview). It carries a distinct
+            # /NM so it's skipped on reload — the note text already round-trips on
+            # the parent mark's /Contents.
+            if (ann.kind not in (KIND_COMMENT, KIND_TEXTBOX, KIND_CALLOUT)
+                    and (ann.text or "").strip()):
+                try:
+                    note_pt = fitz.Point(max(x0, x1), min(y0, y1)) * derot
+                    note = page.add_text_annot(note_pt, ann.text, icon="Comment")
+                    note.set_info({"title": ann.author or "", "content": ann.text})
+                    note.set_name(f"{ann.id}{_NOTE_SUFFIX}")
+                    try:
+                        note.set_popup(fitz.Rect(note_pt.x + 18, note_pt.y,
+                                                 note_pt.x + 218, note_pt.y + 90))
+                    except Exception:
+                        pass
+                    note.update()
+                except Exception:
+                    pass
     return written
 
 

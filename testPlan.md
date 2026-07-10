@@ -28,11 +28,12 @@ callouts, revision clouds, TODO-audit strikethrough, Save As), plus a
 - [ ] Open the **Comments** sidebar → the noted rectangle and arrow now appear (they don't before they're noted).
 - [ ] The **type filter** offers **Rectangle**, **Arrow** and **Callout**; picking one narrows the list.
 - [ ] Right-click a noted mark ▸ **Reveal in Comments** selects its row.
-- [ ] **Save markup**, then open the `*.marked.pdf` in Adobe/Chrome → the note shows as a **comment popup** on that mark.
+- [ ] **Save markup**, then open the `*.marked.pdf` in Adobe/Chrome → each note shows as a **sticky-note comment** (a comment icon you can click), and reopening the file here shows **no duplicate** comments.
 
 ### A2 — Opaque text box & rectangle (Fill + opacity)
 - [ ] Select the **Rectangle** tool → the toolbar **Fill** button is **enabled**; select **Pen** → it's **disabled**.
-- [ ] Click **Fill**, pick a colour, set opacity to **100%**, draw a rectangle → it's a **solid cover** (hides what's beneath).
+- [ ] Click **Fill** → the dialog shows a **colour picker + an opacity slider** (not a raw alpha channel); "No fill" is an explicit checkbox.
+- [ ] Pick a colour, set opacity to **100%**, draw a rectangle → it's a **solid cover** (hides what's beneath).
 - [ ] Set Fill opacity to ~**40%** and draw another → a **translucent** shaded box.
 - [ ] Right-click an existing rectangle ▸ **Fill…** → change its fill; the change sticks and is undoable.
 - [ ] With the **Text box** tool, set a **white 100% Fill**, draw a box over text, type a label → the text sits on an **opaque white cover**.
@@ -47,6 +48,7 @@ callouts, revision clouds, TODO-audit strikethrough, Save As), plus a
 
 ### A4 — Revision-cloud tool
 - [ ] Pick **Cloud**. **Drag** across an area → a **freehand** scalloped cloud (outline only).
+- [ ] **Shift+drag** → a **rectangular** scalloped cloud.
 - [ ] Pick **Cloud** again. **Click** several corners, then **double-click** (or press **Enter**) → the polygon **closes** into a cloud.
 - [ ] While mid-polygon, press **Esc** → it cancels (no mark left behind).
 - [ ] A cloud needs at least **3 points** — a couple of stray clicks don't make one.
@@ -73,6 +75,15 @@ callouts, revision clouds, TODO-audit strikethrough, Save As), plus a
 ### B3 — Toolbar reorganised
 - [ ] The toolbar reads in groups, separated by dividers: **Select** · Highlight / Pen / Eraser · Comment / Text box / Callout · Rectangle / Arrow / Cloud.
 - [ ] Every tool still selects and draws.
+
+### B4 — Tool hotkeys
+- [ ] `Ctrl+1`…`Ctrl+9` then `Ctrl+0` select the tools in toolbar order (Select → Cloud); the pressed tool's button highlights.
+- [ ] Hovering a tool button shows its shortcut in the tooltip.
+
+### B5 — Flattened export (for sharing)
+- [ ] **File ▸ Export flattened PDF (for sharing)…** writes a copy.
+- [ ] Open the flattened copy in a viewer that normally ignores annotations (a file-thumbnail preview, or a basic viewer) → **all marks show** (they're baked into the page).
+- [ ] Reopening the annotated `*.marked.pdf` **here** shows every mark (fills, clouds, callouts, notes) on the canvas.
 
 ---
 

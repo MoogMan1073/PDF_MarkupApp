@@ -53,9 +53,10 @@ class TestSaveAsFork(unittest.TestCase):
         self.assertTrue(os.path.exists(storage.marked_pdf_path(dest)))
         # the document now edits the fork
         self.assertEqual(os.path.abspath(doc.path), os.path.abspath(dest))
-        # the pristine copy carries no baked annotations; the marked copy carries 2
+        # the pristine copy carries no baked annotations; the marked copy carries
+        # the rect + its note's sticky comment + the cloud = 3
         self.assertEqual(_annot_count(dest), 0)
-        self.assertEqual(_annot_count(storage.marked_pdf_path(dest)), 2)
+        self.assertEqual(_annot_count(storage.marked_pdf_path(dest)), 3)
         doc.close()
 
     def test_fork_carries_marks_and_sheets(self):

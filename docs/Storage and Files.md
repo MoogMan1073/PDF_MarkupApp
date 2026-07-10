@@ -20,6 +20,13 @@ Next to your PDF (`drawing.pdf`):
 Save with **File ▸ Save markup** (`Ctrl+S`). Use **Export annotated PDF…**
 (`Ctrl+Shift+E`) to write a copy anywhere.
 
+> [!tip] Sharing to viewers that don't show annotations
+> Most PDF apps (Adobe, Chrome/Edge) render the exported marks fine. If you're
+> sharing to a viewer that ignores annotations — some built-in previews, file
+> thumbnails — use **File ▸ Export flattened PDF (for sharing)…**. It bakes the
+> marks into the page so they show **everywhere**. A flattened copy isn't
+> re-editable here, so keep your working file for edits.
+
 > [!tip] Save As — fork to a new working file
 > **File ▸ Save As…** (`Ctrl+Shift+S`) copies your current markup into a brand
 > new working file (its own `.pdf`, `.marked.pdf` and `.markup.db`) and switches

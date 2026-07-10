@@ -128,18 +128,20 @@ class TestNoteExport(unittest.TestCase):
         d.close()
 
         d2 = fitz.open(mp)
-        contents = {a.info.get("content") for a in d2[0].annots()}
-        self.assertIn("raise 6 in", contents)
-        self.assertIn("reroute", contents)
-        # both noted shapes carry a real comment popup
-        self.assertTrue(all(a.has_popup for a in d2[0].annots()))
+        # each note also becomes a standalone sticky-note comment (visible in any
+        # viewer), carrying the content and a popup
+        stickies = [a for a in d2[0].annots() if a.type[1] == "Text"]
+        contents = sorted(a.info.get("content") for a in stickies)
+        self.assertEqual(contents, ["raise 6 in", "reroute"])
+        self.assertTrue(all(a.has_popup for a in stickies))
         d2.close()
 
-        # the note round-trips back onto the same mark
+        # the note round-trips back onto the same mark (the sticky is skipped)
         loaded = load_pdf_annotations(fitz.open(mp), DEFAULT_IGNORE_PATTERNS)
         by_kind = {a.kind: a for a in loaded}
         self.assertEqual(by_kind[KIND_RECT].text, "raise 6 in")
         self.assertEqual(by_kind[KIND_ARROW].text, "reroute")
+        self.assertNotIn(KIND_COMMENT, by_kind)   # no duplicate comment on reload
 
     def test_unnoted_shape_has_no_popup(self):
         tmp = tempfile.mkdtemp()
