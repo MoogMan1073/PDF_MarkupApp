@@ -1,6 +1,6 @@
 """Brand palette + small stylesheet helpers (DSI Redline).
 
-Centralises the colours used by the iLovePDF-style PDF Tools workspace.  The
+Centralizes the colors used by the iLovePDF-style PDF Tools workspace.  The
 workspace uses a neutral dark-grey base so it blends with the rest of the app's
 panels, with the orange brand accent reserved for selection and the primary
 action button.

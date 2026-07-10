@@ -184,7 +184,7 @@ def load_pdf_annotations(
             if kind == KIND_TEXTBOX:
                 ann.font_size = float(info.get("fontsize", 11) or 11)
                 # A FreeText's fill is stored in /C (reported under 'stroke'); its
-                # text colour lives in /DA (not exposed here) so default it black.
+                # text color lives in /DA (not exposed here) so default it black.
                 fc = _color_or_default(colors, "stroke", None)
                 if fc is not None:
                     ann.fill_color = fc

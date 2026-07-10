@@ -45,7 +45,7 @@ class TestFillDialog(unittest.TestCase):
         d = FillDialog(None, 1.0)
         self.assertTrue(d.none_cb.isChecked())
         self.assertEqual(d.result_fill(), (None, 1.0))
-        # ticking No fill disables the colour + slider controls
+        # ticking No fill disables the color + slider controls
         d2 = FillDialog((1, 0, 0), 1.0)
         d2.none_cb.setChecked(True)
         self.assertFalse(d2.slider.isEnabled())

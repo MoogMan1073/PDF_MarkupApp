@@ -33,7 +33,7 @@ comment / text box / callout · rectangle / arrow / cloud.
 
 Color, pen width, font size, **B**old and *I*talic apply to the active tool. The
 **Fill** button applies to rectangles and text boxes/callouts and opens a small
-dialog with a colour picker and an **opacity slider** (0% = no fill, 100% = an
+dialog with a color picker and an **opacity slider** (0% = no fill, 100% = an
 opaque cover). Rectangles also expose **Fill…** on right-click.
 
 > [!tip] Tool shortcuts

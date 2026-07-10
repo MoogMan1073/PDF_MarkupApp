@@ -1,6 +1,6 @@
 """v1.1.0 Phase 2: interior fill + opacity for rectangles and text boxes.
 
-A rectangle or text box can carry a fill colour with an opacity from 0 (no
+A rectangle or text box can carry a fill color with an opacity from 0 (no
 fill) to 1 (an opaque cover that redacts what's beneath). Fills render on the
 canvas, export to the PDF, and round-trip through the sidecar and the PDF.
 """
@@ -92,7 +92,7 @@ class TestFillExport(unittest.TestCase):
 
         d2 = fitz.open(mp)
         by_type = {a.type[1]: a for a in d2[0].annots()}
-        # rect fill is stored as the interior colour (/IC)
+        # rect fill is stored as the interior color (/IC)
         self.assertEqual(len(by_type["Square"].colors.get("fill") or []), 3)
         # freetext fill is the annotation background (/C), rendered via /AP
         self.assertEqual(len(by_type["FreeText"].colors.get("stroke") or []), 3)

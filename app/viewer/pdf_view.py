@@ -977,7 +977,7 @@ class PdfView(QGraphicsView):
         self.requestCommentEdit.emit(ann)
 
     def edit_fill_annotation(self, ann: Annotation):
-        """Edit a rectangle's interior fill colour + opacity."""
+        """Edit a rectangle's interior fill color + opacity."""
         self.requestFillEdit.emit(ann)
 
     # -- panel jump ----------------------------------------------------------

@@ -17,7 +17,7 @@ New markup:
   and on export each note also becomes a **standalone sticky-note comment** so
   it's visible in any viewer (Adobe, browsers, Preview).
 - **Fill & opacity for rectangles and text boxes.** The new toolbar **Fill**
-  button opens a colour picker with a plain **opacity slider** (0% = no fill →
+  button opens a color picker with a plain **opacity slider** (0% = no fill →
   100% = an opaque white **cover** that redacts what's beneath). Text boxes get a
   fill control in their editor; rectangles expose **Fill…** on right-click. Fills
   render on screen and in the exported PDF.

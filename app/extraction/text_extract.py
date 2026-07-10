@@ -1,6 +1,6 @@
 """Text-layer extraction via PyMuPDF.
 
-Pulls words with bounding rects, font and colour, and (best-effort) the
+Pulls words with bounding rects, font and color, and (best-effort) the
 optional-content layer (OCG) each token belongs to.  Kept GUI-free.
 """
 

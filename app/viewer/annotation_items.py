@@ -417,7 +417,7 @@ class TextBoxItem(ResizableRectItem):
         painter.drawText(self.rect().adjusted(2, 2, -2, -2),
                          Qt.TextWordWrap | Qt.AlignLeft | Qt.AlignTop,
                          self.ann.text or "")
-        # dashed border matches the text colour (blue only while selected)
+        # dashed border matches the text color (blue only while selected)
         border = QColor(30, 120, 230) if self.isSelected() else qcolor(self.ann.color)
         painter.setPen(QPen(border, 0, Qt.DashLine))
         painter.setBrush(Qt.NoBrush)

@@ -69,7 +69,7 @@ class TextEditDialog(QDialog):
             self.color_btn.clicked.connect(self._pick_color)
             self._update_color_swatch()
             self.fill_btn = QPushButton("Fill")
-            self.fill_btn.setToolTip("Box background — pick colour + opacity "
+            self.fill_btn.setToolTip("Box background — pick color + opacity "
                                      "(alpha 0 = none, 100% = opaque cover)")
             self.fill_btn.clicked.connect(self._pick_fill)
             self._update_fill_swatch()
@@ -391,7 +391,7 @@ def _fill_swatch(rgb, opacity) -> QIcon:
 
 
 class FillDialog(QDialog):
-    """Pick an interior fill: a colour plus a plain-language opacity slider
+    """Pick an interior fill: a color plus a plain-language opacity slider
     (clearer than a raw alpha channel), or 'No fill'."""
 
     def __init__(self, color, opacity, parent=None, title="Fill"):
@@ -406,7 +406,7 @@ class FillDialog(QDialog):
         lay.addWidget(self.none_cb)
 
         crow = QHBoxLayout()
-        self.color_btn = QPushButton("Colour…")
+        self.color_btn = QPushButton("Color…")
         self.color_btn.clicked.connect(self._pick_color)
         crow.addWidget(self.color_btn)
         self.swatch = QLabel()
@@ -451,7 +451,7 @@ class FillDialog(QDialog):
         rgb = self._color
         col = QColorDialog.getColor(
             QColor(int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255)),
-            self, "Fill colour")           # no alpha channel — opacity is the slider
+            self, "Fill color")           # no alpha channel — opacity is the slider
         if col.isValid():
             self._color = (col.redF(), col.greenF(), col.blueF())
             self._update_swatch()
@@ -716,7 +716,7 @@ class MainWindow(QMainWindow):
         tb.addWidget(self.color_btn)
         self.fill_btn = QPushButton("Fill")
         self.fill_btn.setToolTip(
-            "Interior fill for rectangles & text boxes — pick a colour and "
+            "Interior fill for rectangles & text boxes — pick a color and "
             "opacity (drag alpha to 0 for no fill, 100% for an opaque cover)")
         self.fill_btn.clicked.connect(self._pick_fill)
         tb.addWidget(self.fill_btn)
@@ -1111,7 +1111,7 @@ class MainWindow(QMainWindow):
                 self.document.store.update(ann)
 
     def _edit_fill(self, ann: Annotation):
-        """Edit a rectangle's fill colour + opacity (colour + opacity slider)."""
+        """Edit a rectangle's fill color + opacity (color + opacity slider)."""
         before = capture(ann)
         ok, color, opacity = FillDialog.ask(self, ann.fill_color, ann.fill_opacity,
                                             "Rectangle fill")
