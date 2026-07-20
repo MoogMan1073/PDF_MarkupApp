@@ -239,6 +239,8 @@ def write_annotations_to_pdf(doc: "fitz.Document", annotations: Iterable[Annotat
     Returns the number of annotations written.
     """
     written = 0
+    # write in stacking order so higher-z marks are added last (drawn on top)
+    annotations = sorted(annotations, key=lambda a: getattr(a, "z_order", 0.0))
     for ann in annotations:
         if ann.ignored and not include_ignored:
             continue

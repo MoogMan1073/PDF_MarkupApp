@@ -68,6 +68,9 @@ class Annotation:
     # callout leader: the arrow-tip target point in page space (None until set)
     callout_point: Optional[tuple] = None        # (x, y), or None
 
+    # stacking order among marks on the same page (higher = drawn on top)
+    z_order: float = 0.0
+
     # app-only state (synced to the SQLite sidecar, not the PDF)
     is_todo: bool = False
     todo_done: bool = False
@@ -123,7 +126,8 @@ class Annotation:
     def translate(self, dx: float, dy: float) -> None:
         """Shift the whole mark's geometry by ``(dx, dy)`` page points."""
         x0, y0, x1, y1 = self.rect
-        self.rect = (x0 + dx, y0 + dy, x1 + dx, y1 + dy)
+        if (x0, y0, x1, y1) != (0.0, 0.0, 0.0, 0.0):   # skip a point-only mark's unused rect
+            self.rect = (x0 + dx, y0 + dy, x1 + dx, y1 + dy)
         if self.points:
             self.points = [(px + dx, py + dy) for px, py in self.points]
         if self.callout_point is not None:

@@ -82,11 +82,23 @@ font** — not its text or size on the page), use the **format painter**:
 > next one you draw **inherits those settings** — so you don't re-declare them for
 > every mark. (The text itself is never carried over.)
 
+## Stacking order (which mark is on top)
+
+Right-click any mark ▸ **Order** to change how overlapping marks stack:
+
+- **Bring to Front** / **Send to Back** — jump to the very top or bottom.
+- **Bring Forward** / **Send Backward** — move one step.
+
+The order is undoable, persists with your markup, and is honoured in the exported
+PDF.
+
 ## Editing an existing mark while a draw tool is active
 
 If you click an **existing** mark while a drawing tool is selected, DSI Redline
 asks whether you want to **Edit existing** or **Draw new**. Choosing *Edit*
-switches you to the Select tool with that mark selected, so you can adjust it.
+switches you to the Select tool with that mark selected. Choosing **Draw new**
+lets you place the new object right away — the prompt asks **once** and won't
+interrupt again while you draw it.
 
 ## Live preview
 

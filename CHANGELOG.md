@@ -17,6 +17,12 @@ portable zip to the matching GitHub release.
 - **Sticky styles.** Setting a colour, opacity, fill or font on a new text box or
   callout is remembered as the default for the next one, so styles don't have to
   be re-declared for every mark (the text content is never carried over).
+- **Stacking order.** Right-click a mark ▸ **Order** to **Bring to Front**,
+  **Bring Forward**, **Send Backward** or **Send to Back** (undoable; the order
+  persists and is honoured in the exported PDF).
+- **Smoother "Draw new".** Choosing **Draw new** when starting a mark on top of an
+  existing one no longer re-prompts as you place the object — the pop-up asks
+  once, then you draw freely.
 
 ## v1.1.0
 

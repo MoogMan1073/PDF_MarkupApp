@@ -139,8 +139,15 @@ class _BaseMixin:
             if self.view.can_paste():
                 paste_act = menu.addAction("Paste\tCtrl+V")
 
-        if any((show_act, note_act, fill_act, todo_act, cmt_act, copy_act)):
-            menu.addSeparator()
+        # stacking order (any mark)
+        menu.addSeparator()
+        order_menu = menu.addMenu("Order")
+        front_act = order_menu.addAction("Bring to Front")
+        up_act = order_menu.addAction("Bring Forward")
+        down_act = order_menu.addAction("Send Backward")
+        back_act = order_menu.addAction("Send to Back")
+
+        menu.addSeparator()
         del_act = menu.addAction("Delete")
         chosen = menu.exec(event.screenPos())
         if chosen is None:
@@ -163,6 +170,14 @@ class _BaseMixin:
             self.view.paste_format(ann)
         elif chosen == paste_act:
             self.view.paste_clipboard()
+        elif chosen == front_act:
+            self.view.reorder_annotation(ann, "front")
+        elif chosen == up_act:
+            self.view.reorder_annotation(ann, "up")
+        elif chosen == down_act:
+            self.view.reorder_annotation(ann, "down")
+        elif chosen == back_act:
+            self.view.reorder_annotation(ann, "back")
         elif chosen == del_act:
             self.view.request_delete_annotation(ann)
         event.accept()

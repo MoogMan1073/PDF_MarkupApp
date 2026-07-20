@@ -21,10 +21,10 @@ from ..model.annotations import (
     KIND_CALLOUT, KIND_CLOUD, COPYABLE_KINDS,
 )
 from .page_item import PageItem
-from .annotation_items import make_item
+from .annotation_items import make_item, ANNOT_Z
 from .command_stack import (
     QUndoStack, AddAnnotationCommand, RemoveAnnotationCommand,
-    ModifyAnnotationCommand, capture,
+    ModifyAnnotationCommand, ReorderCommand, capture,
 )
 from . import tools as T
 
@@ -88,6 +88,9 @@ class PdfView(QGraphicsView):
         # synchronous prompt for *new* comment/text-box text, set by the window.
         # signature: prompt(ann, is_textbox) -> (accepted: bool, text, todo)
         self.new_text_prompt = None
+        # one-shot: skip the existing-mark prompt on the next draw press (set
+        # after the user chose "Draw new", so placing the object isn't re-prompted)
+        self._suppress_existing_prompt = False
         # prompt when a drawing tool clicks an existing mark, set by the window.
         # signature: prompt(ann) -> "edit" | "new" | "cancel"
         self.existing_mark_prompt = None
@@ -399,6 +402,7 @@ class PdfView(QGraphicsView):
             self._clear_preview()
         if self._erasing:
             self._end_erase()
+        self._suppress_existing_prompt = False
         self._clear_text_selection()
         self._scene.clearSelection()
 
@@ -629,9 +633,13 @@ class PdfView(QGraphicsView):
         tool = self.tool.current
 
         # Clicking an existing mark with a drawing tool: ask edit vs draw-new.
+        # The prompt is a one-shot: after "Draw new", the *next* press draws
+        # without re-asking, so the modal never interrupts the placing gesture.
         if tool != T.TOOL_ERASER:
             existing = self._annotation_item_at(scene_pt)
-            if existing is not None:
+            suppress = self._suppress_existing_prompt
+            self._suppress_existing_prompt = False   # consumed by this press
+            if existing is not None and not suppress:
                 choice = "new"
                 if self.existing_mark_prompt is not None:
                     choice = self.existing_mark_prompt(existing.ann)
@@ -641,7 +649,10 @@ class PdfView(QGraphicsView):
                     self.requestTool.emit(T.TOOL_SELECT)
                     existing.setSelected(True)
                     return True
-                # choice == "new": fall through and draw a new mark
+                # choice == "new": don't draw on this modal-interrupted press —
+                # let the user press again to place the object, without a re-prompt
+                self._suppress_existing_prompt = True
+                return True
 
         if tool == T.TOOL_COMMENT:
             ann = Annotation(page=pno, kind=KIND_COMMENT, rect=(lx, ly, lx + 18, ly + 18),
@@ -772,6 +783,7 @@ class PdfView(QGraphicsView):
         return bool(self.config and getattr(self.config, "treat_all_as_todo", False))
 
     def _commit_new(self, ann: Annotation):
+        self._assign_top_z(ann)
         self.push_command(AddAnnotationCommand(self, ann, f"Add {ann.kind}"))
 
     # -- revision cloud (freehand drag OR click-polygon) ---------------------
@@ -953,7 +965,7 @@ class PdfView(QGraphicsView):
         if item is None:
             return
         item.setParentItem(self._page_items[ann.page])
-        item.setZValue(10)  # draw marks above the page bitmap (z=1)
+        item.setZValue(ANNOT_Z + ann.z_order)  # marks stack above the page (z=1)
         select = self.tool.is_select()
         item.setFlag(QGraphicsItem.ItemIsMovable, select)
         item.setFlag(QGraphicsItem.ItemIsSelectable, select)
@@ -979,7 +991,48 @@ class PdfView(QGraphicsView):
             item._refresh_note_badge()
         if hasattr(item, "_refresh_done_overlay"):
             item._refresh_done_overlay()
+        item.setZValue(ANNOT_Z + ann.z_order)
         item.update()
+
+    def apply_z_order(self, ann: Annotation):
+        """Reflect a mark's ``z_order`` on its graphics item's stacking."""
+        item = self._item_by_ann.get(ann.id)
+        if item is not None:
+            item.setZValue(ANNOT_Z + ann.z_order)
+
+    def _assign_top_z(self, ann: Annotation):
+        """Put a newly-created mark on top of the others on its page."""
+        peers = [a for a in self.store.all()
+                 if a.page == ann.page and a.id != ann.id]
+        ann.z_order = max((a.z_order for a in peers), default=0.0) + 1.0
+
+    def reorder_annotation(self, ann: Annotation, where: str):
+        """Restack ``ann`` among the marks on its page (undoable).
+        ``where`` is 'front' | 'back' | 'up' | 'down'."""
+        page_marks = [a for a in self.store.all() if a.page == ann.page]
+        if len(page_marks) < 2:
+            return
+        ordered = sorted(page_marks, key=lambda a: a.z_order)  # stable = visual order
+        idx = next((i for i, a in enumerate(ordered) if a is ann), -1)
+        if idx < 0:
+            return
+        if where == "front":
+            ordered.append(ordered.pop(idx))
+        elif where == "back":
+            ordered.insert(0, ordered.pop(idx))
+        elif where == "up" and idx < len(ordered) - 1:
+            ordered[idx], ordered[idx + 1] = ordered[idx + 1], ordered[idx]
+        elif where == "down" and idx > 0:
+            ordered[idx], ordered[idx - 1] = ordered[idx - 1], ordered[idx]
+        else:
+            return
+        before = {a.id: a.z_order for a in page_marks}
+        after = {a.id: float(i) for i, a in enumerate(ordered)}
+        if before == after:
+            return
+        labels = {"front": "Bring to front", "back": "Send to back",
+                  "up": "Bring forward", "down": "Send backward"}
+        self.push_command(ReorderCommand(self, before, after, labels[where]))
 
     def rebuild_all_items(self):
         for item in list(self._item_by_ann.values()):
@@ -1174,6 +1227,7 @@ class PdfView(QGraphicsView):
                 place(a)
                 if self.config is not None and getattr(self.config, "your_name", ""):
                     a.author = self.config.your_name
+                self._assign_top_z(a)          # pasted marks land on top
                 self.push_command(AddAnnotationCommand(self, a, "Paste"))
                 new_ids.append(a.id)
         finally:

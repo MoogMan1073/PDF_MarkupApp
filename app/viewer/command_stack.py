@@ -41,6 +41,30 @@ class RemoveAnnotationCommand(QUndoCommand):
         self.view.store.add(self.ann)
 
 
+class ReorderCommand(QUndoCommand):
+    """Change the stacking (z) order of marks on a page.  ``before`` / ``after``
+    map annotation-id -> z_order for every mark whose order changed."""
+
+    def __init__(self, view, before: dict, after: dict, text: str = "Reorder"):
+        super().__init__(text)
+        self.view = view
+        self.before = dict(before)
+        self.after = dict(after)
+
+    def _apply(self, mapping: dict):
+        for aid, z in mapping.items():
+            ann = self.view.store.get(aid)
+            if ann is not None:
+                ann.z_order = z
+                self.view.apply_z_order(ann)
+
+    def redo(self):
+        self._apply(self.after)
+
+    def undo(self):
+        self._apply(self.before)
+
+
 def _snapshot(ann: Annotation) -> dict:
     return {
         "rect": tuple(ann.rect),
