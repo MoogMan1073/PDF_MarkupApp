@@ -528,6 +528,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.tabs)
 
         self.todo_panel.activated.connect(self._jump_to)
+        self.todo_panel.authorEditRequested.connect(self._edit_author)
         self.wire_panel.activated.connect(self._jump_to)        # double-click → drawing
         self.component_panel.activated.connect(self._jump_to)
 
@@ -546,6 +547,7 @@ class MainWindow(QMainWindow):
         self.comment_panel = CommentPanel()
         self.comment_panel.activated.connect(self._jump_to)
         self.comment_panel.deleteRequested.connect(self._delete_annotation)
+        self.comment_panel.authorEditRequested.connect(self._edit_author)
         dock = QDockWidget("Comments", self)
         dock.setObjectName("CommentDock")
         dock.setWidget(self.comment_panel)
@@ -1148,6 +1150,57 @@ class MainWindow(QMainWindow):
         if after != before:
             self.view.push_command(
                 ModifyAnnotationCommand(self.view, ann, before, after, "Edit fill"))
+
+    def _edit_author(self, ann: Annotation):
+        """Change who a mark is by (double-clicking the By / Commenter column):
+        confirm first, then edit the name.  Undoable; offers to rename every mark
+        by that person when more than one shares the name."""
+        from PySide6.QtWidgets import QInputDialog
+        if self.document is None:
+            return
+        current = ann.author or ""
+        same = [a for a in self.document.store.all() if (a.author or "") == current]
+        scope_all = False
+        if current and len(same) > 1:
+            box = QMessageBox(self)
+            box.setWindowTitle("Change commenter")
+            box.setIcon(QMessageBox.Question)
+            box.setText(f"Change the commenter name?\n\nCurrently “{current}”.")
+            one_btn = box.addButton("This mark only", QMessageBox.AcceptRole)
+            all_btn = box.addButton(f"All {len(same)} by “{current}”",
+                                    QMessageBox.AcceptRole)
+            box.addButton(QMessageBox.Cancel)
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked not in (one_btn, all_btn):
+                return
+            scope_all = clicked is all_btn
+        else:
+            resp = QMessageBox.question(
+                self, "Change commenter",
+                f"Change the commenter name for this {ann.kind}?\n\n"
+                f"Currently “{current or '(none)'}”.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if resp != QMessageBox.Yes:
+                return
+        new, ok = QInputDialog.getText(self, "Commenter name", "Name:", text=current)
+        if not ok:
+            return
+        new = new.strip()
+        if new == current:
+            return
+        targets = same if scope_all else [ann]
+        self.view.undo_stack.beginMacro("Change commenter")
+        try:
+            for a in targets:
+                before = capture(a)
+                a.author = new
+                after = capture(a)
+                if after != before:
+                    self.view.push_command(ModifyAnnotationCommand(
+                        self.view, a, before, after, "Change commenter"))
+        finally:
+            self.view.undo_stack.endMacro()
 
     # -- navigation ----------------------------------------------------------
 

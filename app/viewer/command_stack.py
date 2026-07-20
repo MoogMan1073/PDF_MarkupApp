@@ -75,6 +75,7 @@ def _snapshot(ann: Annotation) -> dict:
         "bold": ann.bold,
         "italic": ann.italic,
         "text": ann.text,
+        "author": ann.author,
         "opacity": ann.opacity,
         "rotation": ann.rotation,
         "fill_color": tuple(ann.fill_color) if ann.fill_color is not None else None,
@@ -93,6 +94,7 @@ def _restore(ann: Annotation, snap: dict) -> None:
     ann.bold = snap["bold"]
     ann.italic = snap["italic"]
     ann.text = snap["text"]
+    ann.author = snap.get("author", ann.author)
     ann.opacity = snap["opacity"]
     ann.rotation = snap.get("rotation", 0.0)
     fc = snap.get("fill_color")

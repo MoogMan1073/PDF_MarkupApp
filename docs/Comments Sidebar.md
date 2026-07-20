@@ -25,6 +25,13 @@ shows `☐` (open) or `✓` (done).
 
 The list updates live as you add or edit marks.
 
+## Change who a mark is by
+
+**Double-click a name in the *By* column** to change the commenter. You'll be
+asked to confirm, then to type the new name — and if several marks share that
+name (e.g. imported `AutoCAD` comments), you can rename **all of them at once**.
+It's undoable. (The same works on the **Commenter** column in the [[TODO]] tab.)
+
 ## Delete a comment
 
 From the list — each asks you to confirm first, and each is undoable

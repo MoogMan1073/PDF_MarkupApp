@@ -23,6 +23,9 @@ portable zip to the matching GitHub release.
 - **Smoother "Draw new".** Choosing **Draw new** when starting a mark on top of an
   existing one no longer re-prompts as you place the object — the pop-up asks
   once, then you draw freely.
+- **Rename a commenter.** Double-click a name in the Comments **By** column (or the
+  TODO **Commenter** column) to change who a mark is by — after a confirm, with an
+  option to rename every mark by that person at once. Undoable.
 
 ## v1.1.0
 
