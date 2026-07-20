@@ -6,6 +6,12 @@ portable zip to the matching GitHub release.
 
 ## v1.2.0
 
+- **Movable tabs.** The five main panes (Viewer, TODO, Wire Numbers, Component
+  Labels, PDF Tools) are now floatable, dockable panels — like the Comments and
+  Navigation sidebars. Drag a tab's title bar to **pop it into its own window**
+  (e.g. the TODO list on a second monitor) or **dock it to another edge**;
+  closed panes reopen from **View ▸ Panes**, and **View ▸ Reset panel layout**
+  restores the default. The layout is remembered between sessions.
 - **Copy & paste marks.** Text boxes, callouts, rectangles, arrows and clouds can
   be copied (**`Ctrl+C`** or right-click ▸ **Copy**) and pasted (**`Ctrl+V`**, or
   right-click empty canvas ▸ **Paste … here**). Multi-select copies together;

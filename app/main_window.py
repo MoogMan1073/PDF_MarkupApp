@@ -1,4 +1,5 @@
-"""Main window: Viewer | TODO | Wire Numbers tabs, toolbar, comment dock,
+"""Main window: Viewer / TODO / Wire Numbers / Component Labels / PDF Tools
+panes (tabified, floatable dock widgets), toolbar, comment + navigation docks,
 settings dialog (Phases 1-9 integration)."""
 
 from __future__ import annotations
@@ -482,6 +483,67 @@ class FillDialog(QDialog):
 # --- main window ------------------------------------------------------------
 
 
+# Bumped whenever the dock set changes so QMainWindow.restoreState() rejects
+# (and we fall back to the default arrangement) layouts saved by an older build
+# that didn't have these docks — e.g. the earlier QTabWidget central widget.
+_UI_STATE_VERSION = 2
+
+
+class _MainDocks:
+    """A thin ``QTabWidget``-compatible facade over the tabified main dock
+    widgets (Viewer / TODO / Wire Numbers / Component Labels / PDF Tools).
+
+    The five main panes used to live in a ``QTabWidget`` central widget. They
+    now live in floatable, dockable ``QDockWidget``s — like the Comments /
+    Navigation panels — so any tab can be pulled into its own window or docked
+    elsewhere. This shim lets the rest of the window keep calling
+    ``tabs.setCurrentWidget(w)`` / ``tabs.currentWidget()`` unchanged, and
+    tracks which pane is "current" by watching the docks' visibility.
+    """
+
+    def __init__(self, window):
+        self._window = window
+        self._docks = {}          # panel widget -> QDockWidget
+        self._order = []          # panel widgets, in tab order
+        self._current = None
+
+    def add(self, widget, title, object_name):
+        dock = QDockWidget(title, self._window)
+        dock.setObjectName(object_name)
+        dock.setWidget(widget)
+        dock.setAllowedAreas(Qt.AllDockWidgetAreas)
+        dock.visibilityChanged.connect(
+            lambda vis, w=widget: self._on_visibility(w, vis))
+        self._docks[widget] = dock
+        self._order.append(widget)
+        if self._current is None:
+            self._current = widget
+        return dock
+
+    def _on_visibility(self, widget, visible):
+        # A dock reports visible when it becomes the raised tab (or is floated /
+        # revealed). Track that as the "current" pane so currentWidget() follows
+        # the user clicking between tabs, not just explicit setCurrentWidget().
+        if visible:
+            self._current = widget
+
+    def dock_for(self, widget):
+        return self._docks.get(widget)
+
+    def setCurrentWidget(self, widget):
+        dock = self._docks.get(widget)
+        if dock is None:
+            return
+        self._current = widget
+        dock.show()
+        dock.raise_()
+
+    def currentWidget(self):
+        if self._current in self._docks:
+            return self._current
+        return self._order[0] if self._order else None
+
+
 class MainWindow(QMainWindow):
     def __init__(self, on_progress=None):
         super().__init__()
@@ -515,17 +577,10 @@ class MainWindow(QMainWindow):
         self.view.existing_mark_prompt = self._prompt_existing_mark
 
         self._progress("Setting up the wire-number engine…", 75)
-        self.tabs = QTabWidget()
-        self.tabs.addTab(self.view, "Viewer")
         self.todo_panel = TodoPanel()
         self.wire_panel = WirePanel()
         self.component_panel = ComponentPanel()
         self.tools_panel = ToolsPanel(self)
-        self.tabs.addTab(self.todo_panel, "TODO")
-        self.tabs.addTab(self.wire_panel, "Wire Numbers")
-        self.tabs.addTab(self.component_panel, "Component Labels")
-        self.tabs.addTab(self.tools_panel, "PDF Tools")
-        self.setCentralWidget(self.tabs)
 
         self.todo_panel.activated.connect(self._jump_to)
         self.todo_panel.authorEditRequested.connect(self._edit_author)
@@ -555,6 +610,37 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
         self.comment_dock = dock
 
+        # The five main panes (Viewer / TODO / Wire Numbers / Component Labels /
+        # PDF Tools) live in tabified, floatable dock widgets — like the
+        # Comments / Navigation panels — so any tab can be dragged into its own
+        # standalone window or docked elsewhere on screen. A zero-size, hidden
+        # central widget keeps QMainWindow satisfied while the docks fill the
+        # frame; ``self.tabs`` is a QTabWidget-compatible facade over them.
+        central = QWidget()
+        central.setMaximumSize(0, 0)
+        self.setCentralWidget(central)
+        self._central_stub = central
+
+        self.tabs = _MainDocks(self)
+        view_dock = self.tabs.add(self.view, "Viewer", "ViewerDock")
+        todo_dock = self.tabs.add(self.todo_panel, "TODO", "TodoDock")
+        wire_dock = self.tabs.add(self.wire_panel, "Wire Numbers", "WireDock")
+        comp_dock = self.tabs.add(self.component_panel, "Component Labels",
+                                  "ComponentDock")
+        tools_dock = self.tabs.add(self.tools_panel, "PDF Tools", "PdfToolsDock")
+        # Lay them out as one tab group between the Navigation (left) and
+        # Comments (right) docks: [nav | main-tabs | comments]. Both horizontal
+        # splits must happen *before* the tabify loop — splitDockWidget against
+        # an already-tabbed dock adds a new tab instead of a neighbour, so we
+        # carve out view_dock's column (and re-home the Comments dock beside it)
+        # while it's still a lone dock, then tab the other panes onto it.
+        self.splitDockWidget(nav_dock, view_dock, Qt.Horizontal)
+        self.splitDockWidget(view_dock, self.comment_dock, Qt.Horizontal)
+        for d in (todo_dock, wire_dock, comp_dock, tools_dock):
+            self.tabifyDockWidget(view_dock, d)
+        self.main_docks = [view_dock, todo_dock, wire_dock, comp_dock, tools_dock]
+        self.tabs.setCurrentWidget(self.view)   # Viewer is the default tab
+
         self._progress("Assembling the toolbar…", 92)
         self.setStatusBar(QStatusBar())
         self._build_menu()
@@ -563,7 +649,7 @@ class MainWindow(QMainWindow):
 
         # Remember the freshly-built default arrangement (for "Reset panel
         # layout"), then apply whatever layout the user left last session.
-        self._default_state = self.saveState()
+        self._default_state = self.saveState(_UI_STATE_VERSION)
         self._restore_ui_state()
 
     # -- menu / toolbar ------------------------------------------------------
@@ -616,6 +702,11 @@ class MainWindow(QMainWindow):
             "Toggle navigation panel",
             lambda: self.nav_dock.setVisible(not self.nav_dock.isVisible()))
         act_nav.setShortcut("F9")
+        # Show/hide (and re-open a closed) main pane. Each dock has a close
+        # button, so these bring one back after it's been closed or floated away.
+        m_panes = m_view.addMenu("Panes")
+        for d in self.main_docks:
+            m_panes.addAction(d.toggleViewAction())
         m_view.addSeparator()
         m_view.addAction("Reset panel layout", self.reset_layout)
 
@@ -1276,7 +1367,7 @@ class MainWindow(QMainWindow):
             state = self.config.s.value("ui/window_state")
             if geo:
                 self.restoreGeometry(geo)
-            if state and self.restoreState(state):
+            if state and self.restoreState(state, _UI_STATE_VERSION):
                 self._state_restored = True
         except Exception:
             self._state_restored = False
@@ -1284,18 +1375,21 @@ class MainWindow(QMainWindow):
     def _save_ui_state(self):
         try:
             self.config.s.setValue("ui/geometry", self.saveGeometry())
-            self.config.s.setValue("ui/window_state", self.saveState())
+            self.config.s.setValue("ui/window_state",
+                                   self.saveState(_UI_STATE_VERSION))
             self.config.s.sync()
         except Exception:
             pass
 
     def reset_layout(self):
-        """Restore the panes to their default docked arrangement."""
+        """Restore the panes to their default docked arrangement — re-docking
+        any floated tab or sidebar and re-tabbing the main panes together."""
         if getattr(self, "_default_state", None) is not None:
-            self.restoreState(self._default_state)
-        for d in (self.nav_dock, self.comment_dock):
+            self.restoreState(self._default_state, _UI_STATE_VERSION)
+        for d in [self.nav_dock, self.comment_dock] + getattr(self, "main_docks", []):
             d.setFloating(False)
             d.show()
+        self.tabs.setCurrentWidget(self.view)
         self._init_dock_sizes()
 
     def closeEvent(self, event):
