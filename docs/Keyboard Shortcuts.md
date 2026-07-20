@@ -12,7 +12,8 @@ tags: [reference, basics]
 | `Ctrl+Shift+E` | Export annotated PDF… |
 | `Ctrl+1` … `Ctrl+0` | Pick a tool (Select, Highlight, Pen, Eraser, Comment, Text box, Callout, Rectangle, Arrow, Cloud) |
 | `Ctrl+F` | Find in document (search bar; `Enter` / `Shift+Enter` to step matches, `Esc` to close) |
-| `Ctrl+C` | Copy the selected text (drag over text with the **Select** tool) |
+| `Ctrl+C` | Copy the selected mark(s) — or, with no mark selected, the selected text |
+| `Ctrl+V` | Paste the copied mark(s) onto the current page |
 | `Ctrl+Z` | Undo |
 | `Ctrl+Shift+Z` | Redo |
 | `Ctrl` + scroll | Zoom in / out |

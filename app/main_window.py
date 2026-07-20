@@ -1079,9 +1079,32 @@ class MainWindow(QMainWindow):
         dlg = TextEditDialog(ann, self, is_textbox=is_textbox)
         if dlg.exec() == QDialog.Accepted:
             text, todo = dlg.values()
-            _apply_font(ann, dlg.font_values())
+            fv = dlg.font_values()
+            _apply_font(ann, fv)
+            self._remember_text_style(fv)   # sticky style for the next new mark
             return True, text, todo
         return False, "", False
+
+    def _remember_text_style(self, fv) -> None:
+        """Feed a just-created text box / callout's colour, font and fill back into
+        the tool defaults, so the next new one inherits them (never the text)."""
+        if not fv:
+            return
+        t = self.view.tool
+        t.text_color = tuple(fv["color"])
+        t.font_size = fv["font_size"]
+        t.bold = fv["bold"]
+        t.italic = fv["italic"]
+        if "fill_color" in fv:
+            t.text_fill = tuple(fv["fill_color"]) if fv["fill_color"] else None
+            t.text_fill_opacity = fv["fill_opacity"]
+        # reflect the remembered values in the toolbar controls
+        for w, val in ((self.font_size, int(t.font_size)),):
+            w.blockSignals(True); w.setValue(val); w.blockSignals(False)
+        for w, val in ((self.bold, t.bold), (self.italic, t.italic)):
+            w.blockSignals(True); w.setChecked(val); w.blockSignals(False)
+        self._update_color_btn()
+        self._update_fill_btn()
 
     def _delete_annotation(self, ann: Annotation):
         """Delete a mark (already user-confirmed) via the undo stack."""

@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 __app_name__ = "DSI Redline"
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 __copyright__ = "© DSI Innovations, LLC 2026"
 
 

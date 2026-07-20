@@ -4,6 +4,20 @@ All notable changes to **DSI Redline** are documented here. Versions are tagged
 `vX.Y.Z`; each tag triggers the Windows build that publishes the installer and a
 portable zip to the matching GitHub release.
 
+## v1.2.0
+
+- **Copy & paste marks.** Text boxes, callouts, rectangles, arrows and clouds can
+  be copied (**`Ctrl+C`** or right-click ▸ **Copy**) and pasted (**`Ctrl+V`**, or
+  right-click empty canvas ▸ **Paste … here**). Multi-select copies together;
+  repeated pastes cascade so they don't stack; pasted marks land selected and are
+  undoable as one step.
+- **Format painter.** Right-click ▸ **Copy formatting** then **Paste formatting**
+  onto another mark **of the same type** to transfer its colour, opacity, fill,
+  border width and font — without touching the target's text or geometry.
+- **Sticky styles.** Setting a colour, opacity, fill or font on a new text box or
+  callout is remembered as the default for the next one, so styles don't have to
+  be re-declared for every mark (the text content is never carried over).
+
 ## v1.1.0
 
 Feature release from the user-group feedback sprint.
