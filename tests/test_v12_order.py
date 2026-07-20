@@ -59,6 +59,30 @@ class TestDrawNewOnce(_Base):
         self.assertFalse(v._suppress_existing_prompt)
         self.assertIsNotNone(v._draft)
 
+    def test_offpage_press_consumes_flag(self):
+        # a stray press that misses a page must not leave the one-shot armed,
+        # or a later legitimate prompt would be silently skipped
+        win = self._win(); v = win.view
+        v.tool.current = T.TOOL_RECT
+        mark = Annotation(page=0, kind=KIND_RECT, rect=(40, 40, 200, 160))
+        v.store.add(mark)
+        v.existing_mark_prompt = lambda ann: "new"
+        over = v._page_items[0].mapToScene(QPointF(120, 100))
+        v._begin_draft(over)                       # choose "new" -> arms the flag
+        self.assertTrue(v._suppress_existing_prompt)
+        off = QPointF(-5000, -5000)                # far outside any page
+        self.assertFalse(v._begin_draft(off))      # misses a page
+        self.assertFalse(v._suppress_existing_prompt)   # but still consumed the flag
+
+    def test_right_click_clears_suppression(self):
+        from PySide6.QtGui import QContextMenuEvent
+        from PySide6.QtCore import QPoint
+        win = self._win(); v = win.view
+        v._suppress_existing_prompt = True
+        ev = QContextMenuEvent(QContextMenuEvent.Mouse, QPoint(5, 5))
+        v.contextMenuEvent(ev)
+        self.assertFalse(v._suppress_existing_prompt)
+
     def test_edit_choice_does_not_arm_suppression(self):
         win = self._win(); v = win.view
         v.tool.current = T.TOOL_RECT

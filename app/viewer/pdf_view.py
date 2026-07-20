@@ -413,6 +413,8 @@ class PdfView(QGraphicsView):
         super().keyReleaseEvent(event)
 
     def contextMenuEvent(self, event):
+        # a right-click is not the placing gesture, so drop any armed "draw new"
+        self._suppress_existing_prompt = False
         # A mark under the cursor shows its own menu; on empty canvas offer Paste.
         scene_pt = self.mapToScene(event.pos())
         if self._annotation_item_at(scene_pt) is not None or not self._obj_clip:
@@ -623,6 +625,11 @@ class PdfView(QGraphicsView):
                    for it in self._scene.items(scene_pt))
 
     def _begin_draft(self, scene_pt: QPointF) -> bool:
+        # The "Draw new" one-shot is consumed by *any* draw press, even one that
+        # misses a page — otherwise a stray off-page click would leave it armed
+        # and silently swallow a later edit/draw-new prompt.
+        suppress = self._suppress_existing_prompt
+        self._suppress_existing_prompt = False
         pno, page = self._page_at_scene(scene_pt)
         if page is None:
             return False
@@ -637,8 +644,6 @@ class PdfView(QGraphicsView):
         # without re-asking, so the modal never interrupts the placing gesture.
         if tool != T.TOOL_ERASER:
             existing = self._annotation_item_at(scene_pt)
-            suppress = self._suppress_existing_prompt
-            self._suppress_existing_prompt = False   # consumed by this press
             if existing is not None and not suppress:
                 choice = "new"
                 if self.existing_mark_prompt is not None:
@@ -1009,7 +1014,10 @@ class PdfView(QGraphicsView):
     def reorder_annotation(self, ann: Annotation, where: str):
         """Restack ``ann`` among the marks on its page (undoable).
         ``where`` is 'front' | 'back' | 'up' | 'down'."""
-        page_marks = [a for a in self.store.all() if a.page == ann.page]
+        # only reorder among the *visible* marks so a step never swaps with a
+        # hidden (ignored/SHX) mark and appears to do nothing
+        show_ignored = bool(self.config and self.config.show_ignored)
+        page_marks = [a for a in self.store.on_page(ann.page, show_ignored)]
         if len(page_marks) < 2:
             return
         ordered = sorted(page_marks, key=lambda a: a.z_order)  # stable = visual order
