@@ -79,6 +79,17 @@ class TestMainDocks(unittest.TestCase):
         # reset returns to the Viewer pane
         self.assertIs(win.tabs.currentWidget(), win.view)
 
+    def test_current_skips_a_closed_pane(self):
+        # If the tracked pane gets closed (e.g. a floated pane dismissed with
+        # its ✕), currentWidget() must not keep reporting it — otherwise a
+        # dropped PDF over the window could be silently swallowed.
+        win = self._win()
+        tools_dock = win.tabs.dock_for(win.tools_panel)
+        win.tabs._current = win.tools_panel      # force the stale pointer
+        tools_dock.close()                        # explicitly hidden
+        self.assertTrue(tools_dock.isHidden())
+        self.assertIsNot(win.tabs.currentWidget(), win.tools_panel)
+
     def test_each_pane_has_a_reopen_toggle(self):
         # A closed dock must be recoverable from a menu action.
         win = self._win()

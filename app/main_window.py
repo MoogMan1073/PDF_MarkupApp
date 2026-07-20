@@ -539,8 +539,19 @@ class _MainDocks:
         dock.raise_()
 
     def currentWidget(self):
-        if self._current in self._docks:
-            return self._current
+        # Return the tracked pane unless it's been closed/hidden (e.g. a floated
+        # pane the user closed with its ✕) — then fall back to a live pane so
+        # callers never treat a closed pane as the active one. isHidden() is used
+        # rather than isVisible() so this is correct before the window is shown
+        # (headless, nothing is "visible" yet) as well as after.
+        cur = self._current
+        dock = self._docks.get(cur)
+        if dock is not None and not dock.isHidden():
+            return cur
+        for w in self._order:
+            d = self._docks.get(w)
+            if d is not None and not d.isHidden():
+                return w
         return self._order[0] if self._order else None
 
 
