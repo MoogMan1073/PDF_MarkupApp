@@ -571,6 +571,45 @@ class SidecarDB:
             pass
 
 
+class NullSidecar:
+    """A no-op stand-in for :class:`SidecarDB` used when the sidecar database
+    can't be created — e.g. the PDF's name is too long or has characters the
+    filesystem/SQLite won't accept for the ``<name>.markup.db`` path.
+
+    It lets a document open for **viewing** (render / search / navigate) instead
+    of failing the whole open: every read returns empty and every write is
+    silently dropped, so no code path that expects a sidecar crashes. The UI
+    greys out the markup/persistence features and tells the user to rename the
+    file. Any real save is blocked upstream (see :meth:`Document.save`)."""
+
+    def load_annotations(self) -> list:
+        return []
+
+    def save_annotations(self, annotations: Iterable[Annotation]) -> None:
+        pass
+
+    def load_wires(self) -> list:
+        return []
+
+    def save_wires(self, wires: Iterable) -> None:
+        pass
+
+    def load_components(self) -> list:
+        return []
+
+    def save_components(self, components: Iterable) -> None:
+        pass
+
+    def set_meta(self, key: str, value: str) -> None:
+        pass
+
+    def get_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        return default
+
+    def close(self) -> None:
+        pass
+
+
 # --- path helpers -----------------------------------------------------------
 
 

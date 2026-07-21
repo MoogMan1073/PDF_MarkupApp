@@ -14,7 +14,7 @@ import fitz  # PyMuPDF
 
 from .annotations import Annotation, AnnotationStore
 from .storage import (
-    SidecarDB, load_pdf_annotations, write_annotations_to_pdf,
+    SidecarDB, NullSidecar, load_pdf_annotations, write_annotations_to_pdf,
     compile_ignore_patterns, text_is_ignored,
     marked_pdf_path, sidecar_path, original_pdf_path, is_marked_pdf,
     strip_annotations, DEFAULT_IGNORE_PATTERNS,
@@ -33,7 +33,19 @@ class Document:
         # sidecar is missing (e.g. the file was moved on its own), we create a
         # fresh one and flag it so the UI can tell the user.
         self.sidecar_recreated = is_marked_pdf(path) and not os.path.exists(sc_path)
-        self.sidecar = SidecarDB(sc_path)
+        # The PDF itself opened, but the sidecar path may be unusable (name too
+        # long, or characters the filesystem/SQLite reject). Rather than fail the
+        # whole open, fall back to a no-op sidecar so the file still opens for
+        # viewing; the UI greys out markup/persistence and explains why.
+        try:
+            self.sidecar = SidecarDB(sc_path)
+            self.sidecar_available = True
+            self.sidecar_error = ""
+        except Exception as e:
+            self.sidecar = NullSidecar()
+            self.sidecar_available = False
+            self.sidecar_error = str(e)
+            self.sidecar_recreated = False
         self.ignore_patterns = list(
             ignore_patterns if ignore_patterns is not None else DEFAULT_IGNORE_PATTERNS
         )
@@ -153,6 +165,11 @@ class Document:
 
         The original PDF is never overwritten.  Returns the marked PDF path.
         """
+        if not self.sidecar_available:
+            raise RuntimeError(
+                "This file has no markup database — its name is too long or uses "
+                "characters that can't be saved. Rename the file to something "
+                "shorter and simpler, then reopen it to enable saving.")
         out = marked_path or marked_pdf_path(self.path)
         # Base the write on the PRISTINE original when it's available, so re-saving
         # never doubles the marks; if only the .marked.pdf exists, strip its
@@ -199,6 +216,21 @@ class Document:
         self.sidecar.set_meta("source_pdf", os.path.basename(self.path))
         self._dirty = False
         return out
+
+    def annotated_fitz(self, include_ignored: bool = False) -> "fitz.Document":
+        """Return an **in-memory** ``fitz.Document`` with the current marks
+        written into its pages — for printing/preview. Never touches disk or the
+        sidecar, so it works even for a view-only file with no sidecar (its store
+        is simply empty). The caller owns the returned doc and must close it."""
+        original = original_pdf_path(self.path)
+        if os.path.exists(original):
+            work = fitz.open(original)
+        else:
+            work = fitz.open(self.path)
+            if is_marked_pdf(self.path):
+                strip_annotations(work)
+        write_annotations_to_pdf(work, self.store.all(), include_ignored=include_ignored)
+        return work
 
     def export_annotated_pdf(self, out_path: str, include_ignored: bool = False) -> str:
         """Explicit 'Export annotated PDF…' to an arbitrary path."""
@@ -267,6 +299,7 @@ class Document:
         self.path = dest
         self.fitz_doc = fitz.open(dest)
         self.sidecar = SidecarDB(sidecar_path(dest))
+        self.sidecar_available = True     # the fork lives at a usable path
         self.sidecar_recreated = False
 
         # 3) persist all in-memory state to the new sidecar + write its marked PDF

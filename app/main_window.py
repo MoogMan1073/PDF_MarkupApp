@@ -685,6 +685,12 @@ class MainWindow(QMainWindow):
             "(browsers, Preview, thumbnails). Not re-editable — keep your "
             "working file for edits.")
         m_file.addSeparator()
+        self.act_print = m_file.addAction(
+            "&Print…", self.print_document, QKeySequence.Print)   # Ctrl+P
+        self.act_print.setToolTip(
+            "Print the drawing (with its marks) to any installed printer via the "
+            "system print dialog.")
+        m_file.addSeparator()
         m_file.addAction("Settings…", self.open_settings)
         m_file.addSeparator()
         m_file.addAction("Quit", self.close, QKeySequence.Quit)
@@ -1068,6 +1074,11 @@ class MainWindow(QMainWindow):
         self.page_total.setText(f" / {doc.page_count}")
         self.setWindowTitle(f"{__app_name__} — {os.path.basename(path)}")
         self._update_actions_enabled(True)
+        # Edge case: the PDF opened for viewing, but its name can't back a
+        # markup database (too long, or unsupported characters), so markup and
+        # saving are turned off. Tell the user why and how to fix it.
+        if not doc.sidecar_available:
+            self._warn_no_sidecar(path)
         self.statusBar().showMessage(
             f"Opened {os.path.basename(path)} ({doc.page_count} pages, "
             f"{len(doc.store.all())} existing marks)", 6000)
@@ -1154,6 +1165,69 @@ class MainWindow(QMainWindow):
                 self, "Exported (not flattened)",
                 "This PyMuPDF build can't flatten annotations, so an annotated "
                 "copy was written instead.")
+
+    def print_document(self):
+        """Print the drawing (with its marks) through the system print dialog —
+        the Windows print spooler on Windows, CUPS elsewhere."""
+        if self.document is None:
+            return
+        from PySide6.QtPrintSupport import QPrinter, QPrintDialog
+        printer = QPrinter(QPrinter.HighResolution)
+        printer.setDocName(os.path.basename(self.document.path))
+        dlg = QPrintDialog(printer, self)
+        dlg.setWindowTitle("Print")
+        if self.document.page_count:
+            dlg.setMinMax(1, self.document.page_count)
+            dlg.setOption(QPrintDialog.PrintPageRange, True)
+        if dlg.exec() != QPrintDialog.Accepted:
+            return
+        try:
+            self._print_to(printer)
+            self.statusBar().showMessage(
+                f"Sent to {printer.printerName() or 'printer'}", 5000)
+        except Exception as e:
+            QMessageBox.warning(self, "Print failed", str(e))
+
+    def _print_to(self, printer):
+        """Paint each requested page (page bitmap + its marks) onto ``printer``,
+        fitted and centred on the sheet. Kept separate from the dialog so it can
+        be unit-tested against a PDF-output printer."""
+        from PySide6.QtGui import QPainter
+        work = self.document.annotated_fitz()
+        try:
+            first = printer.fromPage() or 1
+            last = printer.toPage() or work.page_count
+            first = max(1, first)
+            last = min(work.page_count, last)
+            painter = QPainter(printer)
+            try:
+                for n, i in enumerate(range(first - 1, last)):
+                    if n:
+                        printer.newPage()
+                    img = self._render_print_image(work[i], printer)
+                    target = painter.viewport()
+                    scaled = img.scaled(target.width(), target.height(),
+                                        Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    x = (target.width() - scaled.width()) // 2
+                    y = (target.height() - scaled.height()) // 2
+                    painter.drawImage(x, y, scaled)
+            finally:
+                painter.end()
+        finally:
+            work.close()
+
+    @staticmethod
+    def _render_print_image(page, printer, max_dpi: float = 200.0):
+        """Rasterise one fitz page (with baked annotations) to a QImage, capped
+        at ``max_dpi`` so a full-size E sheet stays a sane bitmap."""
+        import fitz
+        from PySide6.QtGui import QImage
+        dpi = min(float(printer.resolution()), max_dpi)
+        zoom = dpi / 72.0
+        pm = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False, annots=True)
+        img = QImage(pm.samples, pm.width, pm.height, pm.stride,
+                     QImage.Format_RGB888)
+        return img.copy()   # detach from the pixmap buffer before it's freed
 
     def open_settings(self):
         dlg = SettingsDialog(self.config, self)
@@ -1346,9 +1420,50 @@ class MainWindow(QMainWindow):
         self.page_spin.blockSignals(False)
 
     def _update_actions_enabled(self, on: bool):
+        # Markup + persistence need a working sidecar. When a document is open
+        # but its filename can't back one, keep view/find/nav (and PDF tools)
+        # alive but grey out saving, exporting and the drawing tools.
+        avail = (getattr(self.document, "sidecar_available", True)
+                 if self.document is not None else True)
+        markup = on and avail
         for a in (self.act_save, self.act_save_as, self.act_export_pdf,
                   self.act_export_flat):
-            a.setEnabled(on)
+            a.setEnabled(markup)
+        # Printing is a view operation (it just rasterises the pages + marks), so
+        # it stays available even when the file has no sidecar.
+        self.act_print.setEnabled(on)
+        # Only *block* the tools when a document is open without a sidecar;
+        # otherwise leave them as-is (startup with no document keeps them ready).
+        self._set_markup_tools_enabled(not (on and not avail))
+
+    def _set_markup_tools_enabled(self, enabled: bool):
+        """Enable/disable the drawing tools and their styling widgets. The
+        Select tool always stays available so the user can still click marks."""
+        for tool, act in getattr(self, "_tool_actions", {}).items():
+            act.setEnabled(enabled or tool == T.TOOL_SELECT)
+        for w in (self.color_btn, self.fill_btn, self.pen_width, self.font_size,
+                  self.bold, self.italic):
+            w.setEnabled(enabled)
+        if not enabled:
+            self._activate_tool(T.TOOL_SELECT)   # snap off any drawing tool
+
+    def _warn_no_sidecar(self, path):
+        """Explain why markup is greyed out for a file whose name can't back a
+        markup-database sidecar, and how to fix it."""
+        from .model.storage import sidecar_path
+        sc_name = os.path.basename(sidecar_path(path))
+        QMessageBox.warning(
+            self, "Markup turned off for this file",
+            f"“{os.path.basename(path)}” opened for viewing, but its markup "
+            f"tools are turned off.\n\n"
+            f"Its filename is too long or contains characters that can't be "
+            f"used to create the markup database it needs "
+            f"(“{sc_name}”), so drawing marks, notes, TODOs, wire/component "
+            f"caching and saving aren't available.\n\n"
+            f"You can still view, search, navigate and use the PDF tools.\n\n"
+            f"To turn markup back on, rename the file to something shorter and "
+            f"simpler — avoid very long names and the characters "
+            f"\\ / : * ? \" < > | — then open it again.")
 
     def showEvent(self, event):
         super().showEvent(event)

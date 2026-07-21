@@ -10,6 +10,7 @@ tags: [reference, basics]
 | `Ctrl+S` | Save markup (`.marked.pdf` + sidecar) |
 | `Ctrl+Shift+S` | Save As… (fork to a new working file) |
 | `Ctrl+Shift+E` | Export annotated PDF… |
+| `Ctrl+P` | Print the drawing (with marks) via the system print dialog |
 | `Ctrl+1` … `Ctrl+0` | Pick a tool (Select, Highlight, Pen, Eraser, Comment, Text box, Callout, Rectangle, Arrow, Cloud) |
 | `Ctrl+F` | Find in document (search bar; `Enter` / `Shift+Enter` to step matches, `Esc` to close) |
 | `Ctrl+C` | Copy the selected mark(s) — or, with no mark selected, the selected text |

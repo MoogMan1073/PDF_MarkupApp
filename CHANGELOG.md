@@ -6,6 +6,16 @@ portable zip to the matching GitHub release.
 
 ## v1.2.0
 
+- **Print (`Ctrl+P`).** Print the drawing — with its marks — to any installed
+  printer through the system print dialog (the Windows print spooler on Windows,
+  CUPS elsewhere), with page-range selection. Pages are fitted and centred on the
+  sheet.
+- **View-only mode for files that can't have a markup database.** If a PDF's
+  name is too long or contains characters that can't back its
+  `<name>.markup.db` sidecar, the file now still **opens for viewing** (view,
+  search, navigate, print, PDF tools) instead of failing to open. Markup and
+  saving are greyed out, and a popup explains why and how to fix it (rename the
+  file to something shorter/simpler and reopen).
 - **Movable tabs.** The five main panes (Viewer, TODO, Wire Numbers, Component
   Labels, PDF Tools) are now floatable, dockable panels — like the Comments and
   Navigation sidebars. Drag a tab's title bar to **pop it into its own window**

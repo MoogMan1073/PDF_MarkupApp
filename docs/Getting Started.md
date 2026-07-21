@@ -63,7 +63,13 @@ The **Comments** panel docks on the right of the Viewer — see
 - **File ▸ Save markup** (`Ctrl+S`) writes `<name>.marked.pdf` plus a
   `<name>.markup.db` sidecar. Your original PDF is never modified.
 - **File ▸ Export annotated PDF…** writes a standalone annotated copy anywhere.
+- **File ▸ Print…** (`Ctrl+P`) prints the drawing — with its marks — to any
+  installed printer through the system print dialog, with page-range selection.
 
 Full detail in [[Storage and Files]].
+
+> If a file's name is too long or has characters that can't back its markup
+> database, it opens **view-only** — you can still read, search and print it, but
+> markup and saving are off until you rename the file. See [[Storage and Files]].
 
 #basics
