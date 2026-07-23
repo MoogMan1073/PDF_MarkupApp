@@ -32,6 +32,7 @@ _DATE = lambda iso: (iso or "")[:16].replace("T", " ")
 
 class TodoPanel(QWidget):
     activated = Signal(object)
+    authorEditRequested = Signal(object)   # Annotation (double-clicked Commenter)
 
     # column layout
     COL_DONE, COL_TEXT, COL_PG, COL_SHEET, COL_COMMENTER, COL_DATE, COL_TAG = range(7)
@@ -308,6 +309,8 @@ class TodoPanel(QWidget):
             return  # group header
         if col in self._EDITABLE_COLS:
             self.tree.editItem(item, col)        # edit the cell, do not jump
+        elif col == self.COL_COMMENTER:
+            self.authorEditRequested.emit(a)     # change who the mark is by
         elif col == self.COL_PG:
             self.activated.emit(a)               # Pg is read-only -> jump to PDF
 

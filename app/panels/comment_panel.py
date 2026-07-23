@@ -32,6 +32,9 @@ class CommentPanel(QWidget):
     activated = Signal(object)       # Annotation
     todoToggled = Signal(object)     # Annotation
     deleteRequested = Signal(object)  # Annotation (already user-confirmed)
+    authorEditRequested = Signal(object)  # Annotation (double-clicked the "By" column)
+
+    _COL_BY = 3                      # the "By" (commenter) column
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -87,6 +90,7 @@ class CommentPanel(QWidget):
         self.tree.setRootIsDecorated(False)
         self.tree.setAlternatingRowColors(True)
         self.tree.itemClicked.connect(self._on_click)
+        self.tree.itemDoubleClicked.connect(self._on_double)
         self.tree.itemSelectionChanged.connect(self._update_delete_enabled)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
@@ -184,6 +188,12 @@ class CommentPanel(QWidget):
         ann = item.data(0, Qt.UserRole)
         if ann is not None:
             self.activated.emit(ann)
+
+    def _on_double(self, item, col):
+        # double-click the "By" column to change who the comment is by
+        ann = item.data(0, Qt.UserRole)
+        if ann is not None and col == self._COL_BY:
+            self.authorEditRequested.emit(ann)
 
     def _selected_annotation(self):
         items = self.tree.selectedItems()

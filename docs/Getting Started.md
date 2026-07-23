@@ -41,6 +41,20 @@ DSI Redline is organised into these tabs:
 4. **Component Labels** — extract and export device tags. See [[Component Labels]].
 5. **PDF Tools** — extract / split / delete / rotate / combine pages. See [[PDF Tools]].
 
+### Moving the tabs around
+
+Each of these tabs is a **movable pane** — just like the **Comments** and
+**Navigation** panels. **Drag a tab's title bar** to:
+
+- **pop it out into its own standalone window** (handy on a second monitor —
+  keep the TODO list open beside the drawing), or
+- **dock it to another edge** of the window, or split two panes side-by-side.
+
+Drop it back onto the tab strip to re-tab it with the others. If you close a
+pane with its **✕** button, bring it back from **View ▸ Panes**, and
+**View ▸ Reset panel layout** snaps everything back to the default arrangement.
+Your layout is remembered between sessions.
+
 The **Comments** panel docks on the right of the Viewer — see
 [[Comments Sidebar]].
 
@@ -49,7 +63,13 @@ The **Comments** panel docks on the right of the Viewer — see
 - **File ▸ Save markup** (`Ctrl+S`) writes `<name>.marked.pdf` plus a
   `<name>.markup.db` sidecar. Your original PDF is never modified.
 - **File ▸ Export annotated PDF…** writes a standalone annotated copy anywhere.
+- **File ▸ Print…** (`Ctrl+P`) prints the drawing — with its marks — to any
+  installed printer through the system print dialog, with page-range selection.
 
 Full detail in [[Storage and Files]].
+
+> If a file's name is too long or has characters that can't back its markup
+> database, it opens **view-only** — you can still read, search and print it, but
+> markup and saving are off until you rename the file. See [[Storage and Files]].
 
 #basics

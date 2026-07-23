@@ -41,6 +41,16 @@ Save with **File ▸ Save markup** (`Ctrl+S`). Use **Export annotated PDF…**
 > original `.markup.db` can't be found next to a `.marked.pdf` you open, a new
 > one is started and you're told.
 
+> [!warning] When a filename can't back a sidecar (view-only mode)
+> The sidecar lives right beside the PDF as `<name>.markup.db`. If the file's
+> name is **too long**, or contains characters the filesystem/database won't
+> accept, that sidecar can't be created. In that case the PDF still **opens for
+> viewing** — you can view, search, navigate, **print** (`Ctrl+P`) and use the
+> [[PDF Tools]] — but the **markup tools and saving are greyed out**, and a
+> popup explains why. To turn markup back on, **rename the file** to something
+> shorter and simpler (avoid very long names and the characters `\ / : * ? " < > |`)
+> and open it again.
+
 ## Opening a marked-up PDF from someone else
 
 When you open a PDF, DSI Redline imports any annotations already inside it

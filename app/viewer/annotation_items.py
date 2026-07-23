@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 
 from ..model.annotations import (
     Annotation, KIND_HIGHLIGHT, KIND_PEN, KIND_COMMENT, KIND_TEXTBOX,
-    KIND_RECT, KIND_ARROW, KIND_CALLOUT, KIND_CLOUD,
+    KIND_RECT, KIND_ARROW, KIND_CALLOUT, KIND_CLOUD, COPYABLE_KINDS,
 )
 from .command_stack import ModifyAnnotationCommand, capture
 
@@ -126,8 +126,28 @@ class _BaseMixin:
         todo_act = menu.addAction("Reveal in TODO list") if ann.is_todo else None
         cmt_act = (menu.addAction("Reveal in Comments")
                    if (ann.is_comment_like or ann.has_note) else None)
-        if any((show_act, note_act, fill_act, todo_act, cmt_act)):
+
+        # copy / paste (whole object) + copy / paste formatting, for the kinds
+        # that support it (text box, callout, rectangle, arrow, cloud)
+        copy_act = fmt_copy_act = fmt_paste_act = paste_act = None
+        if ann.kind in COPYABLE_KINDS:
             menu.addSeparator()
+            copy_act = menu.addAction("Copy\tCtrl+C")
+            fmt_copy_act = menu.addAction("Copy formatting")
+            fmt_paste_act = menu.addAction("Paste formatting")
+            fmt_paste_act.setEnabled(self.view.has_format_for(ann.kind))
+            if self.view.can_paste():
+                paste_act = menu.addAction("Paste\tCtrl+V")
+
+        # stacking order (any mark)
+        menu.addSeparator()
+        order_menu = menu.addMenu("Order")
+        front_act = order_menu.addAction("Bring to Front")
+        up_act = order_menu.addAction("Bring Forward")
+        down_act = order_menu.addAction("Send Backward")
+        back_act = order_menu.addAction("Send to Back")
+
+        menu.addSeparator()
         del_act = menu.addAction("Delete")
         chosen = menu.exec(event.screenPos())
         if chosen is None:
@@ -142,6 +162,22 @@ class _BaseMixin:
             self.view.reveal_in_panel(ann, "todo")
         elif chosen == cmt_act:
             self.view.reveal_in_panel(ann, "comment")
+        elif chosen == copy_act:
+            self.view.copy_annotation(ann)
+        elif chosen == fmt_copy_act:
+            self.view.copy_format(ann)
+        elif chosen == fmt_paste_act:
+            self.view.paste_format(ann)
+        elif chosen == paste_act:
+            self.view.paste_clipboard()
+        elif chosen == front_act:
+            self.view.reorder_annotation(ann, "front")
+        elif chosen == up_act:
+            self.view.reorder_annotation(ann, "up")
+        elif chosen == down_act:
+            self.view.reorder_annotation(ann, "down")
+        elif chosen == back_act:
+            self.view.reorder_annotation(ann, "back")
         elif chosen == del_act:
             self.view.request_delete_annotation(ann)
         event.accept()

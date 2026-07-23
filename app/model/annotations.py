@@ -25,6 +25,14 @@ KIND_CLOUD = "cloud"          # revision cloud (scalloped polygon, outline only)
 
 TEXT_KINDS = {KIND_COMMENT, KIND_TEXTBOX, KIND_CALLOUT}
 
+# Marks the user can copy / paste as whole objects.
+COPYABLE_KINDS = {KIND_TEXTBOX, KIND_CALLOUT, KIND_RECT, KIND_ARROW, KIND_CLOUD}
+
+# Visual-style fields carried by "copy formatting" / "paste formatting" — colour,
+# fill and text styling, but NOT the text content or the geometry.
+STYLE_FIELDS = ("color", "fill_color", "fill_opacity", "width", "opacity",
+                "font_size", "bold", "italic")
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
@@ -59,6 +67,9 @@ class Annotation:
 
     # callout leader: the arrow-tip target point in page space (None until set)
     callout_point: Optional[tuple] = None        # (x, y), or None
+
+    # stacking order among marks on the same page (higher = drawn on top)
+    z_order: float = 0.0
 
     # app-only state (synced to the SQLite sidecar, not the PDF)
     is_todo: bool = False
@@ -100,6 +111,38 @@ class Annotation:
 
     def touch(self) -> None:
         self.modified = now_iso()
+
+    # ---- copy / paste ------------------------------------------------------
+
+    def clone(self, *, new_id: bool = True) -> "Annotation":
+        """A deep copy of this mark.  ``new_id`` gives it a fresh id and
+        timestamps so it can be added as an independent new annotation (paste)."""
+        copy = Annotation.from_dict(self.to_dict())
+        if new_id:
+            copy.id = uuid.uuid4().hex
+            copy.created = copy.modified = now_iso()
+        return copy
+
+    def translate(self, dx: float, dy: float) -> None:
+        """Shift the whole mark's geometry by ``(dx, dy)`` page points."""
+        x0, y0, x1, y1 = self.rect
+        if (x0, y0, x1, y1) != (0.0, 0.0, 0.0, 0.0):   # skip a point-only mark's unused rect
+            self.rect = (x0 + dx, y0 + dy, x1 + dx, y1 + dy)
+        if self.points:
+            self.points = [(px + dx, py + dy) for px, py in self.points]
+        if self.callout_point is not None:
+            cx, cy = self.callout_point
+            self.callout_point = (cx + dx, cy + dy)
+
+    def style_dict(self) -> dict:
+        """The visual-style fields (for 'copy formatting') — no text, no geometry."""
+        return {f: getattr(self, f) for f in STYLE_FIELDS}
+
+    def apply_style(self, style: dict) -> None:
+        """Apply a :meth:`style_dict` onto this mark ('paste formatting')."""
+        for f in STYLE_FIELDS:
+            if f in style:
+                setattr(self, f, style[f])
 
     def to_dict(self) -> dict:
         return asdict(self)

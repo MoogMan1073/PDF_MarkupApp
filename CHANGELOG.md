@@ -4,6 +4,45 @@ All notable changes to **DSI Redline** are documented here. Versions are tagged
 `vX.Y.Z`; each tag triggers the Windows build that publishes the installer and a
 portable zip to the matching GitHub release.
 
+## v1.2.0
+
+- **Print (`Ctrl+P`).** Print the drawing — with its marks — to any installed
+  printer through the system print dialog (the Windows print spooler on Windows,
+  CUPS elsewhere), with page-range selection. Pages are fitted and centred on the
+  sheet.
+- **View-only mode for files that can't have a markup database.** If a PDF's
+  name is too long or contains characters that can't back its
+  `<name>.markup.db` sidecar, the file now still **opens for viewing** (view,
+  search, navigate, print, PDF tools) instead of failing to open. Markup and
+  saving are greyed out, and a popup explains why and how to fix it (rename the
+  file to something shorter/simpler and reopen).
+- **Movable tabs.** The five main panes (Viewer, TODO, Wire Numbers, Component
+  Labels, PDF Tools) are now floatable, dockable panels — like the Comments and
+  Navigation sidebars. Drag a tab's title bar to **pop it into its own window**
+  (e.g. the TODO list on a second monitor) or **dock it to another edge**;
+  closed panes reopen from **View ▸ Panes**, and **View ▸ Reset panel layout**
+  restores the default. The layout is remembered between sessions.
+- **Copy & paste marks.** Text boxes, callouts, rectangles, arrows and clouds can
+  be copied (**`Ctrl+C`** or right-click ▸ **Copy**) and pasted (**`Ctrl+V`**, or
+  right-click empty canvas ▸ **Paste … here**). Multi-select copies together;
+  repeated pastes cascade so they don't stack; pasted marks land selected and are
+  undoable as one step.
+- **Format painter.** Right-click ▸ **Copy formatting** then **Paste formatting**
+  onto another mark **of the same type** to transfer its colour, opacity, fill,
+  border width and font — without touching the target's text or geometry.
+- **Sticky styles.** Setting a colour, opacity, fill or font on a new text box or
+  callout is remembered as the default for the next one, so styles don't have to
+  be re-declared for every mark (the text content is never carried over).
+- **Stacking order.** Right-click a mark ▸ **Order** to **Bring to Front**,
+  **Bring Forward**, **Send Backward** or **Send to Back** (undoable; the order
+  persists and is honoured in the exported PDF).
+- **Smoother "Draw new".** Choosing **Draw new** when starting a mark on top of an
+  existing one no longer re-prompts as you place the object — the pop-up asks
+  once, then you draw freely.
+- **Rename a commenter.** Double-click a name in the Comments **By** column (or the
+  TODO **Commenter** column) to change who a mark is by — after a confirm, with an
+  option to rename every mark by that person at once. Undoable.
+
 ## v1.1.0
 
 Feature release from the user-group feedback sprint.

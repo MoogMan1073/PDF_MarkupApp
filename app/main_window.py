@@ -1,4 +1,5 @@
-"""Main window: Viewer | TODO | Wire Numbers tabs, toolbar, comment dock,
+"""Main window: Viewer / TODO / Wire Numbers / Component Labels / PDF Tools
+panes (tabified, floatable dock widgets), toolbar, comment + navigation docks,
 settings dialog (Phases 1-9 integration)."""
 
 from __future__ import annotations
@@ -482,6 +483,78 @@ class FillDialog(QDialog):
 # --- main window ------------------------------------------------------------
 
 
+# Bumped whenever the dock set changes so QMainWindow.restoreState() rejects
+# (and we fall back to the default arrangement) layouts saved by an older build
+# that didn't have these docks — e.g. the earlier QTabWidget central widget.
+_UI_STATE_VERSION = 2
+
+
+class _MainDocks:
+    """A thin ``QTabWidget``-compatible facade over the tabified main dock
+    widgets (Viewer / TODO / Wire Numbers / Component Labels / PDF Tools).
+
+    The five main panes used to live in a ``QTabWidget`` central widget. They
+    now live in floatable, dockable ``QDockWidget``s — like the Comments /
+    Navigation panels — so any tab can be pulled into its own window or docked
+    elsewhere. This shim lets the rest of the window keep calling
+    ``tabs.setCurrentWidget(w)`` / ``tabs.currentWidget()`` unchanged, and
+    tracks which pane is "current" by watching the docks' visibility.
+    """
+
+    def __init__(self, window):
+        self._window = window
+        self._docks = {}          # panel widget -> QDockWidget
+        self._order = []          # panel widgets, in tab order
+        self._current = None
+
+    def add(self, widget, title, object_name):
+        dock = QDockWidget(title, self._window)
+        dock.setObjectName(object_name)
+        dock.setWidget(widget)
+        dock.setAllowedAreas(Qt.AllDockWidgetAreas)
+        dock.visibilityChanged.connect(
+            lambda vis, w=widget: self._on_visibility(w, vis))
+        self._docks[widget] = dock
+        self._order.append(widget)
+        if self._current is None:
+            self._current = widget
+        return dock
+
+    def _on_visibility(self, widget, visible):
+        # A dock reports visible when it becomes the raised tab (or is floated /
+        # revealed). Track that as the "current" pane so currentWidget() follows
+        # the user clicking between tabs, not just explicit setCurrentWidget().
+        if visible:
+            self._current = widget
+
+    def dock_for(self, widget):
+        return self._docks.get(widget)
+
+    def setCurrentWidget(self, widget):
+        dock = self._docks.get(widget)
+        if dock is None:
+            return
+        self._current = widget
+        dock.show()
+        dock.raise_()
+
+    def currentWidget(self):
+        # Return the tracked pane unless it's been closed/hidden (e.g. a floated
+        # pane the user closed with its ✕) — then fall back to a live pane so
+        # callers never treat a closed pane as the active one. isHidden() is used
+        # rather than isVisible() so this is correct before the window is shown
+        # (headless, nothing is "visible" yet) as well as after.
+        cur = self._current
+        dock = self._docks.get(cur)
+        if dock is not None and not dock.isHidden():
+            return cur
+        for w in self._order:
+            d = self._docks.get(w)
+            if d is not None and not d.isHidden():
+                return w
+        return self._order[0] if self._order else None
+
+
 class MainWindow(QMainWindow):
     def __init__(self, on_progress=None):
         super().__init__()
@@ -515,19 +588,13 @@ class MainWindow(QMainWindow):
         self.view.existing_mark_prompt = self._prompt_existing_mark
 
         self._progress("Setting up the wire-number engine…", 75)
-        self.tabs = QTabWidget()
-        self.tabs.addTab(self.view, "Viewer")
         self.todo_panel = TodoPanel()
         self.wire_panel = WirePanel()
         self.component_panel = ComponentPanel()
         self.tools_panel = ToolsPanel(self)
-        self.tabs.addTab(self.todo_panel, "TODO")
-        self.tabs.addTab(self.wire_panel, "Wire Numbers")
-        self.tabs.addTab(self.component_panel, "Component Labels")
-        self.tabs.addTab(self.tools_panel, "PDF Tools")
-        self.setCentralWidget(self.tabs)
 
         self.todo_panel.activated.connect(self._jump_to)
+        self.todo_panel.authorEditRequested.connect(self._edit_author)
         self.wire_panel.activated.connect(self._jump_to)        # double-click → drawing
         self.component_panel.activated.connect(self._jump_to)
 
@@ -546,12 +613,44 @@ class MainWindow(QMainWindow):
         self.comment_panel = CommentPanel()
         self.comment_panel.activated.connect(self._jump_to)
         self.comment_panel.deleteRequested.connect(self._delete_annotation)
+        self.comment_panel.authorEditRequested.connect(self._edit_author)
         dock = QDockWidget("Comments", self)
         dock.setObjectName("CommentDock")
         dock.setWidget(self.comment_panel)
         dock.setAllowedAreas(Qt.AllDockWidgetAreas)
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
         self.comment_dock = dock
+
+        # The five main panes (Viewer / TODO / Wire Numbers / Component Labels /
+        # PDF Tools) live in tabified, floatable dock widgets — like the
+        # Comments / Navigation panels — so any tab can be dragged into its own
+        # standalone window or docked elsewhere on screen. A zero-size, hidden
+        # central widget keeps QMainWindow satisfied while the docks fill the
+        # frame; ``self.tabs`` is a QTabWidget-compatible facade over them.
+        central = QWidget()
+        central.setMaximumSize(0, 0)
+        self.setCentralWidget(central)
+        self._central_stub = central
+
+        self.tabs = _MainDocks(self)
+        view_dock = self.tabs.add(self.view, "Viewer", "ViewerDock")
+        todo_dock = self.tabs.add(self.todo_panel, "TODO", "TodoDock")
+        wire_dock = self.tabs.add(self.wire_panel, "Wire Numbers", "WireDock")
+        comp_dock = self.tabs.add(self.component_panel, "Component Labels",
+                                  "ComponentDock")
+        tools_dock = self.tabs.add(self.tools_panel, "PDF Tools", "PdfToolsDock")
+        # Lay them out as one tab group between the Navigation (left) and
+        # Comments (right) docks: [nav | main-tabs | comments]. Both horizontal
+        # splits must happen *before* the tabify loop — splitDockWidget against
+        # an already-tabbed dock adds a new tab instead of a neighbour, so we
+        # carve out view_dock's column (and re-home the Comments dock beside it)
+        # while it's still a lone dock, then tab the other panes onto it.
+        self.splitDockWidget(nav_dock, view_dock, Qt.Horizontal)
+        self.splitDockWidget(view_dock, self.comment_dock, Qt.Horizontal)
+        for d in (todo_dock, wire_dock, comp_dock, tools_dock):
+            self.tabifyDockWidget(view_dock, d)
+        self.main_docks = [view_dock, todo_dock, wire_dock, comp_dock, tools_dock]
+        self.tabs.setCurrentWidget(self.view)   # Viewer is the default tab
 
         self._progress("Assembling the toolbar…", 92)
         self.setStatusBar(QStatusBar())
@@ -561,7 +660,7 @@ class MainWindow(QMainWindow):
 
         # Remember the freshly-built default arrangement (for "Reset panel
         # layout"), then apply whatever layout the user left last session.
-        self._default_state = self.saveState()
+        self._default_state = self.saveState(_UI_STATE_VERSION)
         self._restore_ui_state()
 
     # -- menu / toolbar ------------------------------------------------------
@@ -585,6 +684,12 @@ class MainWindow(QMainWindow):
             "Bake the marks into the page so they render in every viewer "
             "(browsers, Preview, thumbnails). Not re-editable — keep your "
             "working file for edits.")
+        m_file.addSeparator()
+        self.act_print = m_file.addAction(
+            "&Print…", self.print_document, QKeySequence.Print)   # Ctrl+P
+        self.act_print.setToolTip(
+            "Print the drawing (with its marks) to any installed printer via the "
+            "system print dialog.")
         m_file.addSeparator()
         m_file.addAction("Settings…", self.open_settings)
         m_file.addSeparator()
@@ -614,6 +719,11 @@ class MainWindow(QMainWindow):
             "Toggle navigation panel",
             lambda: self.nav_dock.setVisible(not self.nav_dock.isVisible()))
         act_nav.setShortcut("F9")
+        # Show/hide (and re-open a closed) main pane. Each dock has a close
+        # button, so these bring one back after it's been closed or floated away.
+        m_panes = m_view.addMenu("Panes")
+        for d in self.main_docks:
+            m_panes.addAction(d.toggleViewAction())
         m_view.addSeparator()
         m_view.addAction("Reset panel layout", self.reset_layout)
 
@@ -804,6 +914,7 @@ class MainWindow(QMainWindow):
         # abandon a half-drawn revision-cloud polygon when switching away
         if getattr(self.view, "_cloud_pts", None) is not None:
             self.view._cloud_cancel()
+        self.view._suppress_existing_prompt = False
         self.view.tool.current = tool
         self.view.setDragMode(
             QGraphicsView.RubberBandDrag if tool == T.TOOL_SELECT
@@ -963,6 +1074,11 @@ class MainWindow(QMainWindow):
         self.page_total.setText(f" / {doc.page_count}")
         self.setWindowTitle(f"{__app_name__} — {os.path.basename(path)}")
         self._update_actions_enabled(True)
+        # Edge case: the PDF opened for viewing, but its name can't back a
+        # markup database (too long, or unsupported characters), so markup and
+        # saving are turned off. Tell the user why and how to fix it.
+        if not doc.sidecar_available:
+            self._warn_no_sidecar(path)
         self.statusBar().showMessage(
             f"Opened {os.path.basename(path)} ({doc.page_count} pages, "
             f"{len(doc.store.all())} existing marks)", 6000)
@@ -1050,6 +1166,69 @@ class MainWindow(QMainWindow):
                 "This PyMuPDF build can't flatten annotations, so an annotated "
                 "copy was written instead.")
 
+    def print_document(self):
+        """Print the drawing (with its marks) through the system print dialog —
+        the Windows print spooler on Windows, CUPS elsewhere."""
+        if self.document is None:
+            return
+        from PySide6.QtPrintSupport import QPrinter, QPrintDialog
+        printer = QPrinter(QPrinter.HighResolution)
+        printer.setDocName(os.path.basename(self.document.path))
+        dlg = QPrintDialog(printer, self)
+        dlg.setWindowTitle("Print")
+        if self.document.page_count:
+            dlg.setMinMax(1, self.document.page_count)
+            dlg.setOption(QPrintDialog.PrintPageRange, True)
+        if dlg.exec() != QPrintDialog.Accepted:
+            return
+        try:
+            self._print_to(printer)
+            self.statusBar().showMessage(
+                f"Sent to {printer.printerName() or 'printer'}", 5000)
+        except Exception as e:
+            QMessageBox.warning(self, "Print failed", str(e))
+
+    def _print_to(self, printer):
+        """Paint each requested page (page bitmap + its marks) onto ``printer``,
+        fitted and centred on the sheet. Kept separate from the dialog so it can
+        be unit-tested against a PDF-output printer."""
+        from PySide6.QtGui import QPainter
+        work = self.document.annotated_fitz()
+        try:
+            first = printer.fromPage() or 1
+            last = printer.toPage() or work.page_count
+            first = max(1, first)
+            last = min(work.page_count, last)
+            painter = QPainter(printer)
+            try:
+                for n, i in enumerate(range(first - 1, last)):
+                    if n:
+                        printer.newPage()
+                    img = self._render_print_image(work[i], printer)
+                    target = painter.viewport()
+                    scaled = img.scaled(target.width(), target.height(),
+                                        Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    x = (target.width() - scaled.width()) // 2
+                    y = (target.height() - scaled.height()) // 2
+                    painter.drawImage(x, y, scaled)
+            finally:
+                painter.end()
+        finally:
+            work.close()
+
+    @staticmethod
+    def _render_print_image(page, printer, max_dpi: float = 200.0):
+        """Rasterise one fitz page (with baked annotations) to a QImage, capped
+        at ``max_dpi`` so a full-size E sheet stays a sane bitmap."""
+        import fitz
+        from PySide6.QtGui import QImage
+        dpi = min(float(printer.resolution()), max_dpi)
+        zoom = dpi / 72.0
+        pm = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False, annots=True)
+        img = QImage(pm.samples, pm.width, pm.height, pm.stride,
+                     QImage.Format_RGB888)
+        return img.copy()   # detach from the pixmap buffer before it's freed
+
     def open_settings(self):
         dlg = SettingsDialog(self.config, self)
         if dlg.exec() == QDialog.Accepted:
@@ -1079,9 +1258,32 @@ class MainWindow(QMainWindow):
         dlg = TextEditDialog(ann, self, is_textbox=is_textbox)
         if dlg.exec() == QDialog.Accepted:
             text, todo = dlg.values()
-            _apply_font(ann, dlg.font_values())
+            fv = dlg.font_values()
+            _apply_font(ann, fv)
+            self._remember_text_style(fv)   # sticky style for the next new mark
             return True, text, todo
         return False, "", False
+
+    def _remember_text_style(self, fv) -> None:
+        """Feed a just-created text box / callout's colour, font and fill back into
+        the tool defaults, so the next new one inherits them (never the text)."""
+        if not fv:
+            return
+        t = self.view.tool
+        t.text_color = tuple(fv["color"])
+        t.font_size = fv["font_size"]
+        t.bold = fv["bold"]
+        t.italic = fv["italic"]
+        if "fill_color" in fv:
+            t.text_fill = tuple(fv["fill_color"]) if fv["fill_color"] else None
+            t.text_fill_opacity = fv["fill_opacity"]
+        # reflect the remembered values in the toolbar controls
+        for w, val in ((self.font_size, int(t.font_size)),):
+            w.blockSignals(True); w.setValue(val); w.blockSignals(False)
+        for w, val in ((self.bold, t.bold), (self.italic, t.italic)):
+            w.blockSignals(True); w.setChecked(val); w.blockSignals(False)
+        self._update_color_btn()
+        self._update_fill_btn()
 
     def _delete_annotation(self, ann: Annotation):
         """Delete a mark (already user-confirmed) via the undo stack."""
@@ -1125,6 +1327,57 @@ class MainWindow(QMainWindow):
             self.view.push_command(
                 ModifyAnnotationCommand(self.view, ann, before, after, "Edit fill"))
 
+    def _edit_author(self, ann: Annotation):
+        """Change who a mark is by (double-clicking the By / Commenter column):
+        confirm first, then edit the name.  Undoable; offers to rename every mark
+        by that person when more than one shares the name."""
+        from PySide6.QtWidgets import QInputDialog
+        if self.document is None:
+            return
+        current = ann.author or ""
+        same = [a for a in self.document.store.all() if (a.author or "") == current]
+        scope_all = False
+        if current and len(same) > 1:
+            box = QMessageBox(self)
+            box.setWindowTitle("Change commenter")
+            box.setIcon(QMessageBox.Question)
+            box.setText(f"Change the commenter name?\n\nCurrently “{current}”.")
+            one_btn = box.addButton("This mark only", QMessageBox.AcceptRole)
+            all_btn = box.addButton(f"All {len(same)} by “{current}”",
+                                    QMessageBox.AcceptRole)
+            box.addButton(QMessageBox.Cancel)
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked not in (one_btn, all_btn):
+                return
+            scope_all = clicked is all_btn
+        else:
+            resp = QMessageBox.question(
+                self, "Change commenter",
+                f"Change the commenter name for this {ann.kind}?\n\n"
+                f"Currently “{current or '(none)'}”.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if resp != QMessageBox.Yes:
+                return
+        new, ok = QInputDialog.getText(self, "Commenter name", "Name:", text=current)
+        if not ok:
+            return
+        new = new.strip()
+        if new == current:
+            return
+        targets = same if scope_all else [ann]
+        self.view.undo_stack.beginMacro("Change commenter")
+        try:
+            for a in targets:
+                before = capture(a)
+                a.author = new
+                after = capture(a)
+                if after != before:
+                    self.view.push_command(ModifyAnnotationCommand(
+                        self.view, a, before, after, "Change commenter"))
+        finally:
+            self.view.undo_stack.endMacro()
+
     # -- navigation ----------------------------------------------------------
 
     def _jump_to(self, obj):
@@ -1167,9 +1420,50 @@ class MainWindow(QMainWindow):
         self.page_spin.blockSignals(False)
 
     def _update_actions_enabled(self, on: bool):
+        # Markup + persistence need a working sidecar. When a document is open
+        # but its filename can't back one, keep view/find/nav (and PDF tools)
+        # alive but grey out saving, exporting and the drawing tools.
+        avail = (getattr(self.document, "sidecar_available", True)
+                 if self.document is not None else True)
+        markup = on and avail
         for a in (self.act_save, self.act_save_as, self.act_export_pdf,
                   self.act_export_flat):
-            a.setEnabled(on)
+            a.setEnabled(markup)
+        # Printing is a view operation (it just rasterises the pages + marks), so
+        # it stays available even when the file has no sidecar.
+        self.act_print.setEnabled(on)
+        # Only *block* the tools when a document is open without a sidecar;
+        # otherwise leave them as-is (startup with no document keeps them ready).
+        self._set_markup_tools_enabled(not (on and not avail))
+
+    def _set_markup_tools_enabled(self, enabled: bool):
+        """Enable/disable the drawing tools and their styling widgets. The
+        Select tool always stays available so the user can still click marks."""
+        for tool, act in getattr(self, "_tool_actions", {}).items():
+            act.setEnabled(enabled or tool == T.TOOL_SELECT)
+        for w in (self.color_btn, self.fill_btn, self.pen_width, self.font_size,
+                  self.bold, self.italic):
+            w.setEnabled(enabled)
+        if not enabled:
+            self._activate_tool(T.TOOL_SELECT)   # snap off any drawing tool
+
+    def _warn_no_sidecar(self, path):
+        """Explain why markup is greyed out for a file whose name can't back a
+        markup-database sidecar, and how to fix it."""
+        from .model.storage import sidecar_path
+        sc_name = os.path.basename(sidecar_path(path))
+        QMessageBox.warning(
+            self, "Markup turned off for this file",
+            f"“{os.path.basename(path)}” opened for viewing, but its markup "
+            f"tools are turned off.\n\n"
+            f"Its filename is too long or contains characters that can't be "
+            f"used to create the markup database it needs "
+            f"(“{sc_name}”), so drawing marks, notes, TODOs, wire/component "
+            f"caching and saving aren't available.\n\n"
+            f"You can still view, search, navigate and use the PDF tools.\n\n"
+            f"To turn markup back on, rename the file to something shorter and "
+            f"simpler — avoid very long names and the characters "
+            f"\\ / : * ? \" < > | — then open it again.")
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -1199,7 +1493,7 @@ class MainWindow(QMainWindow):
             state = self.config.s.value("ui/window_state")
             if geo:
                 self.restoreGeometry(geo)
-            if state and self.restoreState(state):
+            if state and self.restoreState(state, _UI_STATE_VERSION):
                 self._state_restored = True
         except Exception:
             self._state_restored = False
@@ -1207,18 +1501,21 @@ class MainWindow(QMainWindow):
     def _save_ui_state(self):
         try:
             self.config.s.setValue("ui/geometry", self.saveGeometry())
-            self.config.s.setValue("ui/window_state", self.saveState())
+            self.config.s.setValue("ui/window_state",
+                                   self.saveState(_UI_STATE_VERSION))
             self.config.s.sync()
         except Exception:
             pass
 
     def reset_layout(self):
-        """Restore the panes to their default docked arrangement."""
+        """Restore the panes to their default docked arrangement — re-docking
+        any floated tab or sidebar and re-tabbing the main panes together."""
         if getattr(self, "_default_state", None) is not None:
-            self.restoreState(self._default_state)
-        for d in (self.nav_dock, self.comment_dock):
+            self.restoreState(self._default_state, _UI_STATE_VERSION)
+        for d in [self.nav_dock, self.comment_dock] + getattr(self, "main_docks", []):
             d.setFloating(False)
             d.show()
+        self.tabs.setCurrentWidget(self.view)
         self._init_dock_sizes()
 
     def closeEvent(self, event):

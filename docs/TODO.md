@@ -19,6 +19,8 @@ appears here.
 - **Double-click a cell to edit it** — the **Text**, **Sheet** and **Tag**
   columns are editable. Double-clicking no longer jumps to the PDF, so you can
   edit without the view moving away.
+- **Double-click the Commenter** to change who the mark is by (confirm, then
+  edit; optionally rename everyone by that name). Undoable.
 - **Jump to the mark** in the [[Viewer]] (scrolls there and flashes) by either
   **right-clicking the row → "Go to in PDF"**, or **double-clicking the Pg
   cell** (the page number is read-only and kept as the quick-jump shortcut).

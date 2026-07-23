@@ -18,12 +18,13 @@ from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsItem
 from ..model.annotations import (
     Annotation, AnnotationStore,
     KIND_HIGHLIGHT, KIND_PEN, KIND_COMMENT, KIND_TEXTBOX, KIND_RECT, KIND_ARROW,
-    KIND_CALLOUT, KIND_CLOUD,
+    KIND_CALLOUT, KIND_CLOUD, COPYABLE_KINDS,
 )
 from .page_item import PageItem
-from .annotation_items import make_item
+from .annotation_items import make_item, ANNOT_Z
 from .command_stack import (
     QUndoStack, AddAnnotationCommand, RemoveAnnotationCommand,
+    ModifyAnnotationCommand, ReorderCommand, capture,
 )
 from . import tools as T
 
@@ -80,9 +81,16 @@ class PdfView(QGraphicsView):
         self._cloud_page = None           # (pno, page_item)
         self._cloud_press = None          # (scene_pt) to tell a click from a drag
         self._cloud_rect = False          # Shift+drag -> rectangular cloud
+        # copy / paste
+        self._obj_clip = []               # list of Annotation dicts (whole-mark copy)
+        self._obj_paste_n = 0             # cascading paste offset counter
+        self._fmt_clip = None             # {"kind": str, "style": dict} for format paint
         # synchronous prompt for *new* comment/text-box text, set by the window.
         # signature: prompt(ann, is_textbox) -> (accepted: bool, text, todo)
         self.new_text_prompt = None
+        # one-shot: skip the existing-mark prompt on the next draw press (set
+        # after the user chose "Draw new", so placing the object isn't re-prompted)
+        self._suppress_existing_prompt = False
         # prompt when a drawing tool clicks an existing mark, set by the window.
         # signature: prompt(ann) -> "edit" | "new" | "cancel"
         self.existing_mark_prompt = None
@@ -106,11 +114,16 @@ class PdfView(QGraphicsView):
         self._search_index = -1
         self._search_items = []          # highlight QGraphicsRectItems
 
-        # Ctrl+C copies the current text selection (only when the view has focus)
+        # Ctrl+C copies the selected mark(s), or the text selection (view focus)
         copy_sc = QShortcut(QKeySequence.Copy, self)
         copy_sc.setContext(Qt.WidgetWithChildrenShortcut)
         copy_sc.activated.connect(self.copy_selection)
         self._copy_sc = copy_sc
+        # Ctrl+V pastes copied marks
+        paste_sc = QShortcut(QKeySequence.Paste, self)
+        paste_sc.setContext(Qt.WidgetWithChildrenShortcut)
+        paste_sc.activated.connect(self.paste_clipboard)
+        self._paste_sc = paste_sc
 
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
@@ -389,6 +402,7 @@ class PdfView(QGraphicsView):
             self._clear_preview()
         if self._erasing:
             self._end_erase()
+        self._suppress_existing_prompt = False
         self._clear_text_selection()
         self._scene.clearSelection()
 
@@ -397,6 +411,22 @@ class PdfView(QGraphicsView):
             self._space_down = False
             self.unsetCursor()
         super().keyReleaseEvent(event)
+
+    def contextMenuEvent(self, event):
+        # a right-click is not the placing gesture, so drop any armed "draw new"
+        self._suppress_existing_prompt = False
+        # A mark under the cursor shows its own menu; on empty canvas offer Paste.
+        scene_pt = self.mapToScene(event.pos())
+        if self._annotation_item_at(scene_pt) is not None or not self._obj_clip:
+            super().contextMenuEvent(event)
+            return
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        n = len(self._obj_clip)
+        act = menu.addAction(f"Paste {n} mark{'s' if n != 1 else ''} here")
+        if menu.exec(event.globalPos()) is act:
+            self._paste_at(scene_pt)
+        event.accept()
 
     def _page_at_scene(self, scene_pt: QPointF):
         for i, item in enumerate(self._page_items):
@@ -595,6 +625,11 @@ class PdfView(QGraphicsView):
                    for it in self._scene.items(scene_pt))
 
     def _begin_draft(self, scene_pt: QPointF) -> bool:
+        # The "Draw new" one-shot is consumed by *any* draw press, even one that
+        # misses a page — otherwise a stray off-page click would leave it armed
+        # and silently swallow a later edit/draw-new prompt.
+        suppress = self._suppress_existing_prompt
+        self._suppress_existing_prompt = False
         pno, page = self._page_at_scene(scene_pt)
         if page is None:
             return False
@@ -605,9 +640,11 @@ class PdfView(QGraphicsView):
         tool = self.tool.current
 
         # Clicking an existing mark with a drawing tool: ask edit vs draw-new.
+        # The prompt is a one-shot: after "Draw new", the *next* press draws
+        # without re-asking, so the modal never interrupts the placing gesture.
         if tool != T.TOOL_ERASER:
             existing = self._annotation_item_at(scene_pt)
-            if existing is not None:
+            if existing is not None and not suppress:
                 choice = "new"
                 if self.existing_mark_prompt is not None:
                     choice = self.existing_mark_prompt(existing.ann)
@@ -617,7 +654,10 @@ class PdfView(QGraphicsView):
                     self.requestTool.emit(T.TOOL_SELECT)
                     existing.setSelected(True)
                     return True
-                # choice == "new": fall through and draw a new mark
+                # choice == "new": don't draw on this modal-interrupted press —
+                # let the user press again to place the object, without a re-prompt
+                self._suppress_existing_prompt = True
+                return True
 
         if tool == T.TOOL_COMMENT:
             ann = Annotation(page=pno, kind=KIND_COMMENT, rect=(lx, ly, lx + 18, ly + 18),
@@ -748,6 +788,7 @@ class PdfView(QGraphicsView):
         return bool(self.config and getattr(self.config, "treat_all_as_todo", False))
 
     def _commit_new(self, ann: Annotation):
+        self._assign_top_z(ann)
         self.push_command(AddAnnotationCommand(self, ann, f"Add {ann.kind}"))
 
     # -- revision cloud (freehand drag OR click-polygon) ---------------------
@@ -929,7 +970,7 @@ class PdfView(QGraphicsView):
         if item is None:
             return
         item.setParentItem(self._page_items[ann.page])
-        item.setZValue(10)  # draw marks above the page bitmap (z=1)
+        item.setZValue(ANNOT_Z + ann.z_order)  # marks stack above the page (z=1)
         select = self.tool.is_select()
         item.setFlag(QGraphicsItem.ItemIsMovable, select)
         item.setFlag(QGraphicsItem.ItemIsSelectable, select)
@@ -955,7 +996,51 @@ class PdfView(QGraphicsView):
             item._refresh_note_badge()
         if hasattr(item, "_refresh_done_overlay"):
             item._refresh_done_overlay()
+        item.setZValue(ANNOT_Z + ann.z_order)
         item.update()
+
+    def apply_z_order(self, ann: Annotation):
+        """Reflect a mark's ``z_order`` on its graphics item's stacking."""
+        item = self._item_by_ann.get(ann.id)
+        if item is not None:
+            item.setZValue(ANNOT_Z + ann.z_order)
+
+    def _assign_top_z(self, ann: Annotation):
+        """Put a newly-created mark on top of the others on its page."""
+        peers = [a for a in self.store.all()
+                 if a.page == ann.page and a.id != ann.id]
+        ann.z_order = max((a.z_order for a in peers), default=0.0) + 1.0
+
+    def reorder_annotation(self, ann: Annotation, where: str):
+        """Restack ``ann`` among the marks on its page (undoable).
+        ``where`` is 'front' | 'back' | 'up' | 'down'."""
+        # only reorder among the *visible* marks so a step never swaps with a
+        # hidden (ignored/SHX) mark and appears to do nothing
+        show_ignored = bool(self.config and self.config.show_ignored)
+        page_marks = [a for a in self.store.on_page(ann.page, show_ignored)]
+        if len(page_marks) < 2:
+            return
+        ordered = sorted(page_marks, key=lambda a: a.z_order)  # stable = visual order
+        idx = next((i for i, a in enumerate(ordered) if a is ann), -1)
+        if idx < 0:
+            return
+        if where == "front":
+            ordered.append(ordered.pop(idx))
+        elif where == "back":
+            ordered.insert(0, ordered.pop(idx))
+        elif where == "up" and idx < len(ordered) - 1:
+            ordered[idx], ordered[idx + 1] = ordered[idx + 1], ordered[idx]
+        elif where == "down" and idx > 0:
+            ordered[idx], ordered[idx - 1] = ordered[idx - 1], ordered[idx]
+        else:
+            return
+        before = {a.id: a.z_order for a in page_marks}
+        after = {a.id: float(i) for i, a in enumerate(ordered)}
+        if before == after:
+            return
+        labels = {"front": "Bring to front", "back": "Send to back",
+                  "up": "Bring forward", "down": "Send backward"}
+        self.push_command(ReorderCommand(self, before, after, labels[where]))
 
     def rebuild_all_items(self):
         for item in list(self._item_by_ann.values()):
@@ -1075,11 +1160,142 @@ class PdfView(QGraphicsView):
         self._text_sel_start = None
 
     def copy_selection(self):
-        """Copy the current text selection to the clipboard (Ctrl+C)."""
+        """Ctrl+C: copy the selected mark(s) if any, else the text selection."""
+        marks = self._selected_copyable_marks()
+        if marks:
+            self.copy_marks(marks)
+            return
         if self._selected_text:
             from PySide6.QtWidgets import QApplication
             QApplication.clipboard().setText(self._selected_text)
             self.selectionInfo.emit(f"Copied {len(self._selected_text)} characters")
+
+    # -- copy / paste marks --------------------------------------------------
+
+    def _selected_copyable_marks(self) -> list:
+        out = []
+        for it in self._scene.selectedItems():
+            a = getattr(it, "ann", None)
+            if a is not None and a.kind in COPYABLE_KINDS:
+                out.append(a)
+        return out
+
+    def _current_page_index(self) -> int:
+        """The page nearest the middle of the viewport (0 if none)."""
+        if not self._page_items:
+            return 0
+        mid = self._visible_scene_rect().center().y()
+        for i, item in enumerate(self._page_items):
+            r = self._page_scene_rect(item)
+            if r.top() <= mid <= r.bottom():
+                return i
+        return 0
+
+    def copy_marks(self, anns: list):
+        """Copy whole marks to the in-app clipboard (for paste)."""
+        anns = [a for a in anns if a.kind in COPYABLE_KINDS]
+        if not anns:
+            return
+        self._obj_clip = [a.to_dict() for a in anns]
+        self._obj_paste_n = 0
+        self.selectionInfo.emit(
+            f"Copied {len(anns)} mark{'s' if len(anns) != 1 else ''}")
+
+    def copy_annotation(self, ann: Annotation):
+        """Right-click Copy: copy this mark, or the whole selection if it's part
+        of a multi-selection."""
+        sel = self._selected_copyable_marks()
+        self.copy_marks(sel if (ann in sel and len(sel) > 1) else [ann])
+
+    def can_paste(self) -> bool:
+        return bool(self._obj_clip)
+
+    def _anchor_of(self, ann: Annotation):
+        """The geometric top-left of a mark (used to place a paste at the cursor)."""
+        xs, ys = [], []
+        x0, y0, x1, y1 = ann.rect
+        if (x0, y0, x1, y1) != (0.0, 0.0, 0.0, 0.0):
+            xs += [x0, x1]; ys += [y0, y1]
+        for px, py in ann.points:
+            xs.append(px); ys.append(py)
+        if not xs:
+            return 0.0, 0.0
+        return min(xs), min(ys)
+
+    def _paste_annotations(self, place):
+        """Clone every clipboard mark, let ``place(ann)`` position it, and commit
+        them as one undo step; the pasted marks end up selected."""
+        if not self._obj_clip:
+            return
+        new_ids = []
+        self.undo_stack.beginMacro("Paste")
+        try:
+            for d in self._obj_clip:
+                a = Annotation.from_dict(d).clone(new_id=True)
+                place(a)
+                if self.config is not None and getattr(self.config, "your_name", ""):
+                    a.author = self.config.your_name
+                self._assign_top_z(a)          # pasted marks land on top
+                self.push_command(AddAnnotationCommand(self, a, "Paste"))
+                new_ids.append(a.id)
+        finally:
+            self.undo_stack.endMacro()
+        self._scene.clearSelection()
+        for aid in new_ids:
+            it = self._item_by_ann.get(aid)
+            if it is not None:
+                it.setSelected(True)
+
+    def paste_clipboard(self):
+        """Ctrl+V: paste onto the current page, cascaded so repeated pastes don't
+        stack exactly."""
+        if not self._obj_clip:
+            return
+        self._obj_paste_n += 1
+        off = 14.0 * self._obj_paste_n
+        page_no = self._current_page_index()
+
+        def place(a):
+            if a.page < 0 or a.page >= len(self._page_items):
+                a.page = page_no
+            a.translate(off, off)
+        self._paste_annotations(place)
+
+    def _paste_at(self, scene_pt: QPointF):
+        """Right-click 'Paste here': anchor the paste at the clicked point."""
+        pno, page = self._page_at_scene(scene_pt)
+        if page is None:
+            self.paste_clipboard()
+            return
+        lp = page.mapFromScene(scene_pt)
+        ax, ay = self._anchor_of(Annotation.from_dict(self._obj_clip[0]))
+        dx, dy = lp.x() - ax, lp.y() - ay
+
+        def place(a):
+            a.page = pno
+            a.translate(dx, dy)
+        self._paste_annotations(place)
+
+    # -- copy / paste formatting (format painter) ----------------------------
+
+    def copy_format(self, ann: Annotation):
+        """Remember this mark's visual style for 'paste formatting'."""
+        self._fmt_clip = {"kind": ann.kind, "style": ann.style_dict()}
+        self.selectionInfo.emit(f"Copied {ann.kind} formatting")
+
+    def has_format_for(self, kind: str) -> bool:
+        return bool(self._fmt_clip and self._fmt_clip.get("kind") == kind)
+
+    def paste_format(self, ann: Annotation):
+        """Apply the copied style onto a mark of the *same* kind (undoable)."""
+        if not self.has_format_for(ann.kind):
+            return
+        before = capture(ann)
+        ann.apply_style(self._fmt_clip["style"])
+        after = capture(ann)
+        if after != before:
+            self.push_command(ModifyAnnotationCommand(
+                self, ann, before, after, "Paste formatting"))
 
     # -- in-document search (Ctrl+F) ----------------------------------------
 

@@ -61,11 +61,44 @@ arrows show:
 
 Move by dragging the body. Everything is undoable — see [[Undo and Redo]].
 
+## Copy, paste & formatting
+
+Text boxes, callouts, rectangles, arrows and clouds can be **copied and pasted**:
+
+- Select one (or several) and press **`Ctrl+C`**, or right-click ▸ **Copy**.
+- Press **`Ctrl+V`** to paste — each paste drops a copy slightly offset so they
+  don't stack — or right-click empty canvas ▸ **Paste … here** to place it where
+  you click. Pasted marks land selected and are undoable.
+
+To reuse just the *look* of a mark (its **colour, opacity, fill, border width and
+font** — not its text or size on the page), use the **format painter**:
+
+- Right-click a mark ▸ **Copy formatting**.
+- Right-click another mark **of the same type** ▸ **Paste formatting**. (The
+  option is greyed until you've copied formatting from a matching kind.)
+
+> [!tip] Styles are remembered
+> When you set a colour, opacity, fill or font on a new text box or callout, the
+> next one you draw **inherits those settings** — so you don't re-declare them for
+> every mark. (The text itself is never carried over.)
+
+## Stacking order (which mark is on top)
+
+Right-click any mark ▸ **Order** to change how overlapping marks stack:
+
+- **Bring to Front** / **Send to Back** — jump to the very top or bottom.
+- **Bring Forward** / **Send Backward** — move one step.
+
+The order is undoable, persists with your markup, and is honoured in the exported
+PDF.
+
 ## Editing an existing mark while a draw tool is active
 
 If you click an **existing** mark while a drawing tool is selected, DSI Redline
 asks whether you want to **Edit existing** or **Draw new**. Choosing *Edit*
-switches you to the Select tool with that mark selected, so you can adjust it.
+switches you to the Select tool with that mark selected. Choosing **Draw new**
+lets you place the new object right away — the prompt asks **once** and won't
+interrupt again while you draw it.
 
 ## Live preview
 
@@ -77,9 +110,10 @@ you're drawing it.
 
 Right-click any mark on the page for a quick menu: **Add note… / Edit note…**,
 **Reveal in Comments**, **Delete** (with confirm), plus **Fill…** on rectangles
-and **Show comment contents** on comments/text boxes. When typing a comment,
-text box or callout, **Ctrl+Enter** or **Shift+Enter** saves it (same as OK), and
-**Esc** cancels.
+and **Show comment contents** on comments/text boxes. Copyable shapes also get
+**Copy**, **Paste**, **Copy formatting** and **Paste formatting** (see above).
+When typing a comment, text box or callout, **Ctrl+Enter** or **Shift+Enter**
+saves it (same as OK), and **Esc** cancels.
 
 ## TODO audit strikethrough
 
