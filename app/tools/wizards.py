@@ -150,10 +150,26 @@ class SheetNumberWizard(QObject):
         self.view.regionPicked.connect(self._on_region)
         self.view.start_region_pick()
 
+    def _extract_opts(self):
+        """The read options shared by the preview and the actual split, so they
+        always agree. OCR is enabled whenever it's *available* (Tesseract
+        installed) — not only when a Settings flag is on — so scanned sets read
+        their sheet numbers out of the box; searchable pages never invoke it
+        (it only runs when the text layer is empty)."""
+        cfg = self.win.config
+        from ..extraction import ocr as _ocr
+        ocr = bool(getattr(cfg, "ocr_enabled", False)) or _ocr.available()
+        ai = bool(getattr(cfg, "ai_enabled", False))
+        ai_key = getattr(cfg, "ai_api_key", "")
+        ai_model = getattr(cfg, "ai_model", "")
+        return ocr, ai, ai_key, ai_model
+
     def _read(self, page, rect):
+        ocr, ai, ai_key, ai_model = self._extract_opts()
         try:
-            return self.win.document.fitz_doc[page].get_text(
-                "text", clip=fitz.Rect(*rect)).strip()
+            return ops.read_region_text(
+                self.win.document.fitz_doc[page], rect,
+                ocr=ocr, ai=ai, ai_key=ai_key, ai_model=ai_model)
         except Exception:
             return ""
 
@@ -222,11 +238,7 @@ class SheetNumberWizard(QObject):
         src = self.win.document.path
         regions = list(self.regions)
         mode = self.mode
-        cfg = self.win.config
-        ocr = bool(getattr(cfg, "ocr_enabled", False))
-        ai = bool(getattr(cfg, "ai_enabled", False))
-        ai_key = getattr(cfg, "ai_api_key", "")
-        ai_model = getattr(cfg, "ai_model", "claude-opus-4-8")
+        ocr, ai, ai_key, ai_model = self._extract_opts()
 
         def fn(progress, cancel):
             return ops.split_pdf(src, out_dir, naming="sheet", regions=regions,

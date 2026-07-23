@@ -6,6 +6,13 @@ portable zip to the matching GitHub release.
 
 ## v1.2.0
 
+- **Sheet-number split reads the box on rotated pages.** The "Split by sheet
+  number" wizard's **preview** now de-rotates the box you draw the same way the
+  split does, so it reads the sheet number on rotated pages (AutoCAD plots are
+  almost always rotated) instead of showing "(nothing found)". Preview and split
+  now share one read path, so they always agree. On **scanned** PDFs the box is
+  now OCR'd automatically when Tesseract is installed (it no longer requires
+  flipping an OCR switch in Settings first).
 - **Sharper zoom past 400%.** The page bitmap used to stop re-rendering at 400%
   and just upscale (blurry) beyond that. It now rasterises at the actual zoom up
   to the 8× ceiling, so normal sheets stay crisp when you zoom in — bounded by a

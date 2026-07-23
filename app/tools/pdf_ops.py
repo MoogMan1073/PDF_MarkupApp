@@ -124,12 +124,10 @@ def extract_sheet_numbers(doc: "fitz.Document", regions: Iterable[SheetRegion],
                           cancel: Optional[Callable] = None) -> dict:
     """Read the sheet number from each page's assigned box.
 
-    Returns ``{page_index: sheet_string}`` ("" when nothing was read).  The box
-    ``rect`` is in the viewer's *visual* (rotated) coordinates.  PyMuPDF is
-    inconsistent across rotated pages: ``get_text(clip=...)`` expects *unrotated*
-    coords while ``get_pixmap(clip=...)`` expects *visual* ones — so we derotate
-    the rect for the text-layer read and keep the visual rect for the OCR / AI
-    (pixmap) fallbacks.  On unrotated pages both matrices are the identity.
+    Returns ``{page_index: sheet_string}`` ("" when nothing was read).  Each box
+    ``rect`` is in the viewer's *visual* (rotated) coordinates; the per-page read
+    (text layer, then OCR / AI) is delegated to :func:`read_region_text`, which
+    derotates the box for the text-layer read.
     """
     regions = list(regions)
     out: dict = {}
@@ -143,21 +141,42 @@ def extract_sheet_numbers(doc: "fitz.Document", regions: Iterable[SheetRegion],
         if reg is None:
             out[i] = ""
             continue
-        rect_vis = fitz.Rect(*reg.rect)          # visual coords (from the viewer)
-        page = doc[i]
-        text = ""
-        try:
-            clip = rect_vis * page.derotation_matrix   # get_text wants unrotated
-            clip.normalize()
-            text = page.get_text("text", clip=clip).strip()
-        except Exception:
-            text = ""
-        if not text and ocr:
-            text = _ocr_text_in_rect(page, rect_vis)   # get_pixmap wants visual
-        if not text and ai:
-            text = _ai_text_in_rect(page, rect_vis, ai_key, ai_model)
+        text = read_region_text(doc[i], reg.rect, ocr=ocr, ai=ai,
+                                ai_key=ai_key, ai_model=ai_model)
         out[i] = sheet_from_text(text, mode)
     return out
+
+
+def read_region_text(page, rect, ocr: bool = False, ai: bool = False,
+                     ai_key: str = "", ai_model: str = "") -> str:
+    """Read the raw text inside a title-block box on one page.
+
+    ``rect`` (a ``fitz.Rect`` or an ``(x0, y0, x1, y1)`` tuple) is the viewer's
+    box in **visual** (rotated) page coordinates — the same space as
+    ``page.rect`` and ``get_pixmap(clip=...)``. PyMuPDF's ``get_text(clip=...)``
+    wants the clip in the page's *unrotated* coordinate space, so the visual box
+    is multiplied by ``page.derotation_matrix`` first (identity on unrotated
+    pages). The pixmap-based OCR / AI fallbacks keep the *visual* rect.
+
+    Both the wizard preview and the actual split call this one function, so the
+    "Text read from the box" preview and the split always agree — previously the
+    preview skipped the derotation and showed "(nothing found)" on rotated pages
+    (which AutoCAD plots almost always are) even though the split read fine.
+    Returns the raw string.
+    """
+    rect_vis = rect if isinstance(rect, fitz.Rect) else fitz.Rect(*rect)
+    text = ""
+    try:
+        clip = rect_vis * page.derotation_matrix   # get_text wants unrotated coords
+        clip.normalize()
+        text = page.get_text("text", clip=clip).strip()
+    except Exception:
+        text = ""
+    if not text and ocr:
+        text = _ocr_text_in_rect(page, rect_vis)   # get_pixmap wants visual coords
+    if not text and ai:
+        text = _ai_text_in_rect(page, rect_vis, ai_key, ai_model)
+    return text
 
 
 def _ocr_text_in_rect(page, rect, zoom: float = 3.0) -> str:
