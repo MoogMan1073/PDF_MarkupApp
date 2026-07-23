@@ -483,10 +483,11 @@ class FillDialog(QDialog):
 # --- main window ------------------------------------------------------------
 
 
-# Bumped whenever the dock set changes so QMainWindow.restoreState() rejects
-# (and we fall back to the default arrangement) layouts saved by an older build
-# that didn't have these docks — e.g. the earlier QTabWidget central widget.
-_UI_STATE_VERSION = 2
+# Bumped whenever the dock set/layout handling changes so QMainWindow
+# .restoreState() rejects (and we fall back to the default arrangement) layouts
+# saved by an older build — e.g. the earlier QTabWidget central widget, or a
+# pre-fix build whose saved layout left the main panes un-tabbed.
+_UI_STATE_VERSION = 3
 
 
 class _MainDocks:
@@ -1167,24 +1168,21 @@ class MainWindow(QMainWindow):
                 "copy was written instead.")
 
     def print_document(self):
-        """Print the drawing (with its marks) through the system print dialog —
-        the Windows print spooler on Windows, CUPS elsewhere."""
+        """Open a print preview + printer picker and print the drawing (with its
+        marks). Uses Qt's print-preview dialog — it shows the pages the way the
+        browser's print popup does and lets the user choose the printer,
+        orientation and page range from its toolbar before printing."""
         if self.document is None:
             return
-        from PySide6.QtPrintSupport import QPrinter, QPrintDialog
-        printer = QPrinter(QPrinter.HighResolution)
-        printer.setDocName(os.path.basename(self.document.path))
-        dlg = QPrintDialog(printer, self)
-        dlg.setWindowTitle("Print")
-        if self.document.page_count:
-            dlg.setMinMax(1, self.document.page_count)
-            dlg.setOption(QPrintDialog.PrintPageRange, True)
-        if dlg.exec() != QPrintDialog.Accepted:
-            return
+        from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
         try:
-            self._print_to(printer)
-            self.statusBar().showMessage(
-                f"Sent to {printer.printerName() or 'printer'}", 5000)
+            printer = QPrinter(QPrinter.HighResolution)
+            printer.setDocName(os.path.basename(self.document.path))
+            preview = QPrintPreviewDialog(printer, self)
+            preview.setWindowTitle("Print")
+            preview.resize(1000, 800)
+            preview.paintRequested.connect(self._print_to)
+            preview.exec()
         except Exception as e:
             QMessageBox.warning(self, "Print failed", str(e))
 
