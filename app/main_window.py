@@ -695,6 +695,10 @@ class MainWindow(QMainWindow):
         self.act_print.setToolTip(
             "Print the drawing (with its marks) to any installed printer via the "
             "system print dialog.")
+        self.act_print_preview = m_file.addAction(
+            "Print pre&view…", self.print_preview)
+        self.act_print_preview.setToolTip(
+            "See the pages before printing, then print from the preview.")
         m_file.addSeparator()
         m_file.addAction("Settings…", self.open_settings)
         m_file.addSeparator()
@@ -1171,19 +1175,57 @@ class MainWindow(QMainWindow):
                 "This PyMuPDF build can't flatten annotations, so an annotated "
                 "copy was written instead.")
 
+    def _new_printer(self):
+        """Create a QPrinter for printing the drawing.
+
+        Built in **ScreenResolution** mode on purpose: HighResolution queries the
+        default printer's capabilities at construction, which on Windows pops a
+        blocking "contacting printer…" dialog (and hangs on a slow/offline
+        network printer) before the user can do anything. ScreenResolution
+        doesn't contact the printer; we then raise the logical DPI so the output
+        still prints at a decent resolution.
+        """
+        from PySide6.QtPrintSupport import QPrinter
+        printer = QPrinter(QPrinter.ScreenResolution)
+        printer.setResolution(300)
+        printer.setDocName(os.path.basename(self.document.path))
+        return printer
+
     def print_document(self):
-        """Open a print preview + printer picker and print the drawing (with its
-        marks). Uses Qt's print-preview dialog — it shows the pages the way the
-        browser's print popup does and lets the user choose the printer,
-        orientation and page range from its toolbar before printing."""
+        """Print the drawing (with its marks) straight through the system print
+        dialog — the standard Windows printer popup: pick the printer, copies,
+        orientation and page range, then print. (Use Print preview… to see the
+        pages first.)"""
         if self.document is None:
             return
-        from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
+        from PySide6.QtPrintSupport import QPrintDialog
+        printer = self._new_printer()
+        dlg = QPrintDialog(printer, self)
+        dlg.setWindowTitle("Print")
+        if self.document.page_count:
+            dlg.setMinMax(1, self.document.page_count)
+            dlg.setOption(QPrintDialog.PrintPageRange, True)
+        if dlg.exec() != QPrintDialog.Accepted:
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            printer = QPrinter(QPrinter.HighResolution)
-            printer.setDocName(os.path.basename(self.document.path))
+            self._print_to(printer)
+            self.statusBar().showMessage(
+                f"Sent to {printer.printerName() or 'printer'}", 5000)
+        except Exception as e:
+            QMessageBox.warning(self, "Print failed", str(e))
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def print_preview(self):
+        """Optional: show the pages in a preview window, then print from there."""
+        if self.document is None:
+            return
+        from PySide6.QtPrintSupport import QPrintPreviewDialog
+        try:
+            printer = self._new_printer()
             preview = QPrintPreviewDialog(printer, self)
-            preview.setWindowTitle("Print")
+            preview.setWindowTitle("Print preview")
             preview.resize(1000, 800)
             preview.paintRequested.connect(self._print_to)
             preview.exec()
@@ -1434,6 +1476,7 @@ class MainWindow(QMainWindow):
         # Printing is a view operation (it just rasterises the pages + marks), so
         # it stays available even when the file has no sidecar.
         self.act_print.setEnabled(on)
+        self.act_print_preview.setEnabled(on)
         # Only *block* the tools when a document is open without a sidecar;
         # otherwise leave them as-is (startup with no document keeps them ready).
         self._set_markup_tools_enabled(not (on and not avail))

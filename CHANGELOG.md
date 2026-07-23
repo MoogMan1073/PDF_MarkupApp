@@ -10,10 +10,12 @@ portable zip to the matching GitHub release.
   and just upscale (blurry) beyond that. It now rasterises at the actual zoom up
   to the 8× ceiling, so normal sheets stay crisp when you zoom in — bounded by a
   per-page pixel budget so very large (E-size) sheets can't exhaust memory.
-- **Print (`Ctrl+P`).** Print the drawing — with its marks — from a print
-  **preview** dialog: see the pages, pick the printer, orientation and page
-  range, then print to any installed printer (the Windows print spooler on
-  Windows, CUPS elsewhere). Pages are fitted and centred on the sheet.
+- **Print (`Ctrl+P`).** Print the drawing — with its marks — straight through the
+  standard system print dialog (pick printer, copies, orientation, page range),
+  to any installed printer (the Windows print spooler on Windows, CUPS
+  elsewhere). Pages are fitted and centred on the sheet. **Print preview…** is a
+  separate menu item for seeing the pages first. The printer is created without
+  the blocking "contacting printer…" query that could hang the app.
 - **View-only mode for files that can't have a markup database.** If a PDF's
   name is too long or contains characters that can't back its
   `<name>.markup.db` sidecar, the file now still **opens for viewing** (view,

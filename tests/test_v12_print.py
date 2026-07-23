@@ -103,6 +103,41 @@ class TestPrint(unittest.TestCase):
         finally:
             chk.close()
 
+    def test_new_printer_avoids_highres_query(self):
+        # HighResolution (1200 dpi) queries the printer at construction and can
+        # hang; _new_printer builds a ScreenResolution printer bumped to 300 dpi.
+        win, _ = self._win_with(pages=1)
+        p = win._new_printer()
+        self.assertEqual(p.resolution(), 300)
+
+    def test_print_document_prints_via_native_dialog(self):
+        from PySide6.QtPrintSupport import QPrintDialog, QPrinter
+        win, tmp = self._win_with(pages=2)
+        out = os.path.join(tmp, "native.pdf")
+
+        def fake_exec(dlg):
+            dlg.printer().setOutputFormat(QPrinter.PdfFormat)
+            dlg.printer().setOutputFileName(out)
+            return QPrintDialog.Accepted
+
+        from unittest import mock
+        with mock.patch.object(QPrintDialog, "exec", fake_exec):
+            win.print_document()
+        self.assertTrue(os.path.exists(out) and os.path.getsize(out) > 0)
+        chk = fitz.open(out)
+        try:
+            self.assertEqual(chk.page_count, 2)
+        finally:
+            chk.close()
+
+    def test_print_document_cancelled_prints_nothing(self):
+        from PySide6.QtPrintSupport import QPrintDialog
+        win, tmp = self._win_with(pages=1)
+        from unittest import mock
+        with mock.patch.object(QPrintDialog, "exec",
+                               lambda d: QPrintDialog.Rejected):
+            win.print_document()   # must simply return, no exception
+
     def test_print_action_enabled_with_document(self):
         win, _ = self._win_with(pages=1)
         self.assertTrue(win.act_print.isEnabled())
