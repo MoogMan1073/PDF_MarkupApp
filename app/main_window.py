@@ -566,10 +566,14 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)   # drop a PDF anywhere to open it
         # Visual-Studio-style dockable panels: drag a pane's title bar to snap it
         # to any edge (left/right/top/bottom), split panes side-by-side, tab them
-        # together, or float them out of the window.
+        # together, or float a pane out into its own window (and drag it back).
+        # GroupedDragging is deliberately OFF: it enables Qt's floating tab-group
+        # windows, and dragging one floating window onto another to merge them is
+        # a known Qt hang. Without it, panes tab in the main window and float out
+        # individually, but two floating windows won't merge — so no hang.
         self.setDockOptions(
             QMainWindow.AnimatedDocks | QMainWindow.AllowNestedDocks
-            | QMainWindow.AllowTabbedDocks | QMainWindow.GroupedDragging)
+            | QMainWindow.AllowTabbedDocks)
         self.config = AppConfig()
         self.document = None
 
