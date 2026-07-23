@@ -576,6 +576,7 @@ class MainWindow(QMainWindow):
             | QMainWindow.AllowTabbedDocks)
         self.config = AppConfig()
         self.document = None
+        self._print_include_marks = True   # print the app's markups by default
 
         self._progress("Preparing the canvas…", 62)
         self.view = PdfView(self)
@@ -1228,16 +1229,42 @@ class MainWindow(QMainWindow):
             preview.setWindowTitle("Print preview")
             preview.resize(1000, 800)
             preview.paintRequested.connect(self._print_to)
+            self._add_markups_toggle(preview)
             preview.exec()
         except Exception as e:
             QMessageBox.warning(self, "Print failed", str(e))
 
+    def _add_markups_toggle(self, preview):
+        """Add an 'Include markups' checkbox to the print-preview toolbar so the
+        user can print the clean drawing or the drawing with the app's marks.
+        Defaults to on (marks included)."""
+        from PySide6.QtWidgets import QToolBar
+        from PySide6.QtPrintSupport import QPrintPreviewWidget
+        tb = preview.findChild(QToolBar)
+        if tb is None:
+            return
+        act = tb.addAction("Include markups")
+        act.setCheckable(True)
+        act.setChecked(self._print_include_marks)
+        act.setToolTip("Print the marks/notes you added on top of the drawing; "
+                       "uncheck to print the clean drawing.")
+
+        def _toggle(on):
+            self._print_include_marks = on
+            pv = preview.findChild(QPrintPreviewWidget)
+            if pv is not None:
+                pv.updatePreview()   # re-render with/without marks
+
+        act.toggled.connect(_toggle)
+
     def _print_to(self, printer):
-        """Paint each requested page (page bitmap + its marks) onto ``printer``,
-        fitted and centred on the sheet. Kept separate from the dialog so it can
-        be unit-tested against a PDF-output printer."""
+        """Paint each requested page onto ``printer``, fitted and centred on the
+        sheet. Includes the app's markups unless ``_print_include_marks`` is off
+        (the print-preview toggle). Kept separate from the dialog so it can be
+        unit-tested against a PDF-output printer."""
         from PySide6.QtGui import QPainter
-        work = self.document.annotated_fitz()
+        work = self.document.annotated_fitz(
+            with_marks=getattr(self, "_print_include_marks", True))
         try:
             first = printer.fromPage() or 1
             last = printer.toPage() or work.page_count

@@ -217,11 +217,14 @@ class Document:
         self._dirty = False
         return out
 
-    def annotated_fitz(self, include_ignored: bool = False) -> "fitz.Document":
-        """Return an **in-memory** ``fitz.Document`` with the current marks
-        written into its pages — for printing/preview. Never touches disk or the
-        sidecar, so it works even for a view-only file with no sidecar (its store
-        is simply empty). The caller owns the returned doc and must close it."""
+    def annotated_fitz(self, include_ignored: bool = False,
+                       with_marks: bool = True) -> "fitz.Document":
+        """Return an **in-memory** ``fitz.Document`` of the pages — for
+        printing/preview. With ``with_marks`` (default) the current marks are
+        written into the pages; with ``with_marks=False`` the clean drawing is
+        returned (the app's markups are left off). Never touches disk or the
+        sidecar, so it works even for a view-only file with no sidecar. The
+        caller owns the returned doc and must close it."""
         original = original_pdf_path(self.path)
         if os.path.exists(original):
             work = fitz.open(original)
@@ -229,7 +232,9 @@ class Document:
             work = fitz.open(self.path)
             if is_marked_pdf(self.path):
                 strip_annotations(work)
-        write_annotations_to_pdf(work, self.store.all(), include_ignored=include_ignored)
+        if with_marks:
+            write_annotations_to_pdf(work, self.store.all(),
+                                     include_ignored=include_ignored)
         return work
 
     def export_annotated_pdf(self, out_path: str, include_ignored: bool = False) -> str:

@@ -49,6 +49,23 @@ class TestAnnotatedFitz(unittest.TestCase):
             doc.close()
 
 
+    def test_annotated_fitz_without_marks_is_clean(self):
+        from app.model.document import Document
+        tmp = tempfile.mkdtemp()
+        src = _make_pdf(tmp, pages=1)
+        doc = Document(src); doc.load()
+        doc.store.add(Annotation(page=0, kind=KIND_RECT,
+                                 rect=(10, 10, 100, 80), color=(1, 0, 0)),
+                      silent=True)
+        with_marks = doc.annotated_fitz(with_marks=True)
+        without = doc.annotated_fitz(with_marks=False)
+        try:
+            self.assertGreaterEqual(len(list(with_marks[0].annots() or [])), 1)
+            self.assertEqual(len(list(without[0].annots() or [])), 0)
+        finally:
+            with_marks.close(); without.close(); doc.close()
+
+
 @unittest.skipUnless(_QT_OK, "PySide6 not available")
 class TestPrint(unittest.TestCase):
     @classmethod
@@ -137,6 +154,42 @@ class TestPrint(unittest.TestCase):
         with mock.patch.object(QPrintDialog, "exec",
                                lambda d: QPrintDialog.Rejected):
             win.print_document()   # must simply return, no exception
+
+    def test_include_marks_defaults_on(self):
+        win, _ = self._win_with(pages=1)
+        self.assertTrue(win._print_include_marks)
+
+    def test_preview_toggle_flips_include_marks(self):
+        from PySide6.QtPrintSupport import QPrintPreviewDialog
+        from PySide6.QtGui import QAction
+        win, _ = self._win_with(pages=1)
+        printer = win._new_printer()
+        preview = QPrintPreviewDialog(printer, win)
+        win._add_markups_toggle(preview)
+        act = next((a for a in preview.findChildren(QAction)
+                    if a.text() == "Include markups"), None)
+        self.assertIsNotNone(act)
+        self.assertTrue(act.isChecked())            # default on
+        act.trigger()                                # uncheck it
+        self.assertFalse(win._print_include_marks)
+        act.trigger()                                # back on
+        self.assertTrue(win._print_include_marks)
+
+    def test_print_clean_when_marks_off(self):
+        # printing with marks off must still emit all pages (just no app marks)
+        from PySide6.QtPrintSupport import QPrinter
+        win, tmp = self._win_with(pages=2)
+        win._print_include_marks = False
+        out = os.path.join(tmp, "clean.pdf")
+        printer = QPrinter(QPrinter.HighResolution)
+        printer.setOutputFormat(QPrinter.PdfFormat)
+        printer.setOutputFileName(out)
+        win._print_to(printer)
+        chk = fitz.open(out)
+        try:
+            self.assertEqual(chk.page_count, 2)
+        finally:
+            chk.close()
 
     def test_print_action_enabled_with_document(self):
         win, _ = self._win_with(pages=1)
