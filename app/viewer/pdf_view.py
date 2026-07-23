@@ -234,7 +234,10 @@ class PdfView(QGraphicsView):
         vis = self._visible_scene_rect()
         margin = vis.height()  # render one screenful above/below
         lo, hi = vis.top() - margin, vis.bottom() + margin
-        scale = max(1.0, min(self._zoom, 4.0))
+        # Render at the actual zoom (up to the 8x set_zoom ceiling) so the page
+        # stays crisp past 400%; PageItem.render caps the raster per-page by a
+        # pixel budget so a huge sheet can't blow up memory.
+        scale = max(1.0, self._zoom)
         for item in self._page_items:
             r = self._page_scene_rect(item)
             if r.bottom() >= lo and r.top() <= hi:

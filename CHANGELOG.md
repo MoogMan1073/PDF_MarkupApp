@@ -6,6 +6,10 @@ portable zip to the matching GitHub release.
 
 ## v1.2.0
 
+- **Sharper zoom past 400%.** The page bitmap used to stop re-rendering at 400%
+  and just upscale (blurry) beyond that. It now rasterises at the actual zoom up
+  to the 8× ceiling, so normal sheets stay crisp when you zoom in — bounded by a
+  per-page pixel budget so very large (E-size) sheets can't exhaust memory.
 - **Print (`Ctrl+P`).** Print the drawing — with its marks — from a print
   **preview** dialog: see the pages, pick the printer, orientation and page
   range, then print to any installed printer (the Windows print spooler on

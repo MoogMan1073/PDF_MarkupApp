@@ -57,11 +57,21 @@ class PageItem(QGraphicsRectItem):
     def is_rendered(self) -> bool:
         return self._render_scale > 0.0
 
+    # Raster budget in pixels: caps a single page bitmap so a very large sheet
+    # at high zoom can't blow up memory. ~128 Mpx ≈ 384 MB at 3 bytes/px. Chosen
+    # so pages up to E-size (34x44 in) still reach the old 4x cap, while normal
+    # letter/ANSI-B sheets can render crisp all the way to the 8x zoom ceiling.
+    _PX_BUDGET = 128_000_000
+
     def render(self, scale: float) -> None:
-        """Render (or re-render) the bitmap at the given DPI scale."""
-        scale = max(0.5, min(float(scale), 6.0))
+        """Render (or re-render) the bitmap at the given DPI scale, capped by a
+        per-page pixel budget so huge sheets stay bounded while normal pages
+        render sharply well past 400%."""
+        area = max(1.0, self.pdf_w * self.pdf_h)      # page area in PDF points^2
+        max_scale = (self._PX_BUDGET / area) ** 0.5
+        scale = max(0.5, min(float(scale), max_scale))
         # avoid needless re-renders for tiny zoom changes
-        if self._render_scale and abs(scale - self._render_scale) / self._render_scale < 0.35:
+        if self._render_scale and abs(scale - self._render_scale) / self._render_scale < 0.25:
             return
         pix = self.doc.get_pixmap(self.page_no, zoom=scale)
         qpix = QPixmap.fromImage(pixmap_to_qimage(pix))
