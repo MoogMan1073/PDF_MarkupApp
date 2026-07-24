@@ -6,14 +6,25 @@ portable zip to the matching GitHub release.
 
 ## v1.2.0
 
+- **Sheet-number split reads the box on rotated pages.** The "Split by sheet
+  number" wizard's **preview** now de-rotates the box you draw the same way the
+  split does, so it reads the sheet number on rotated pages (AutoCAD plots are
+  almost always rotated) instead of showing "(nothing found)". Preview and split
+  now share one read path, so they always agree. On **scanned** PDFs the box is
+  now OCR'd automatically when Tesseract is installed (it no longer requires
+  flipping an OCR switch in Settings first).
 - **Sharper zoom past 400%.** The page bitmap used to stop re-rendering at 400%
   and just upscale (blurry) beyond that. It now rasterises at the actual zoom up
   to the 8× ceiling, so normal sheets stay crisp when you zoom in — bounded by a
   per-page pixel budget so very large (E-size) sheets can't exhaust memory.
-- **Print (`Ctrl+P`).** Print the drawing — with its marks — from a print
-  **preview** dialog: see the pages, pick the printer, orientation and page
-  range, then print to any installed printer (the Windows print spooler on
-  Windows, CUPS elsewhere). Pages are fitted and centred on the sheet.
+- **Print (`Ctrl+P`).** Print the drawing — with its marks — straight through the
+  standard system print dialog (pick printer, copies, orientation, page range),
+  to any installed printer (the Windows print spooler on Windows, CUPS
+  elsewhere). Pages are fitted and centred on the sheet. **Print preview…** is a
+  separate menu item for seeing the pages first, with an **Include markups**
+  toggle (on by default) to print either the marked-up or the clean drawing. The
+  printer is created without the blocking "contacting printer…" query that could
+  hang the app.
 - **View-only mode for files that can't have a markup database.** If a PDF's
   name is too long or contains characters that can't back its
   `<name>.markup.db` sidecar, the file now still **opens for viewing** (view,

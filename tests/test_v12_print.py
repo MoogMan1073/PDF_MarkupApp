@@ -49,6 +49,23 @@ class TestAnnotatedFitz(unittest.TestCase):
             doc.close()
 
 
+    def test_annotated_fitz_without_marks_is_clean(self):
+        from app.model.document import Document
+        tmp = tempfile.mkdtemp()
+        src = _make_pdf(tmp, pages=1)
+        doc = Document(src); doc.load()
+        doc.store.add(Annotation(page=0, kind=KIND_RECT,
+                                 rect=(10, 10, 100, 80), color=(1, 0, 0)),
+                      silent=True)
+        with_marks = doc.annotated_fitz(with_marks=True)
+        without = doc.annotated_fitz(with_marks=False)
+        try:
+            self.assertGreaterEqual(len(list(with_marks[0].annots() or [])), 1)
+            self.assertEqual(len(list(without[0].annots() or [])), 0)
+        finally:
+            with_marks.close(); without.close(); doc.close()
+
+
 @unittest.skipUnless(_QT_OK, "PySide6 not available")
 class TestPrint(unittest.TestCase):
     @classmethod
@@ -96,6 +113,77 @@ class TestPrint(unittest.TestCase):
         printer.setOutputFormat(QPrinter.PdfFormat)
         printer.setOutputFileName(out)
         printer.setFromTo(2, 3)          # print only pages 2–3
+        win._print_to(printer)
+        chk = fitz.open(out)
+        try:
+            self.assertEqual(chk.page_count, 2)
+        finally:
+            chk.close()
+
+    def test_new_printer_avoids_highres_query(self):
+        # HighResolution (1200 dpi) queries the printer at construction and can
+        # hang; _new_printer builds a ScreenResolution printer bumped to 300 dpi.
+        win, _ = self._win_with(pages=1)
+        p = win._new_printer()
+        self.assertEqual(p.resolution(), 300)
+
+    def test_print_document_prints_via_native_dialog(self):
+        from PySide6.QtPrintSupport import QPrintDialog, QPrinter
+        win, tmp = self._win_with(pages=2)
+        out = os.path.join(tmp, "native.pdf")
+
+        def fake_exec(dlg):
+            dlg.printer().setOutputFormat(QPrinter.PdfFormat)
+            dlg.printer().setOutputFileName(out)
+            return QPrintDialog.Accepted
+
+        from unittest import mock
+        with mock.patch.object(QPrintDialog, "exec", fake_exec):
+            win.print_document()
+        self.assertTrue(os.path.exists(out) and os.path.getsize(out) > 0)
+        chk = fitz.open(out)
+        try:
+            self.assertEqual(chk.page_count, 2)
+        finally:
+            chk.close()
+
+    def test_print_document_cancelled_prints_nothing(self):
+        from PySide6.QtPrintSupport import QPrintDialog
+        win, tmp = self._win_with(pages=1)
+        from unittest import mock
+        with mock.patch.object(QPrintDialog, "exec",
+                               lambda d: QPrintDialog.Rejected):
+            win.print_document()   # must simply return, no exception
+
+    def test_include_marks_defaults_on(self):
+        win, _ = self._win_with(pages=1)
+        self.assertTrue(win._print_include_marks)
+
+    def test_preview_toggle_flips_include_marks(self):
+        from PySide6.QtPrintSupport import QPrintPreviewDialog
+        from PySide6.QtGui import QAction
+        win, _ = self._win_with(pages=1)
+        printer = win._new_printer()
+        preview = QPrintPreviewDialog(printer, win)
+        win._add_markups_toggle(preview)
+        act = next((a for a in preview.findChildren(QAction)
+                    if a.text() == "Include markups"), None)
+        self.assertIsNotNone(act)
+        self.assertTrue(act.isChecked())            # default on
+        act.trigger()                                # uncheck it
+        self.assertFalse(win._print_include_marks)
+        act.trigger()                                # back on
+        self.assertTrue(win._print_include_marks)
+
+    def test_print_clean_when_marks_off(self):
+        # printing with marks off must still emit all pages (just no app marks)
+        from PySide6.QtPrintSupport import QPrinter
+        win, tmp = self._win_with(pages=2)
+        win._print_include_marks = False
+        out = os.path.join(tmp, "clean.pdf")
+        printer = QPrinter(QPrinter.HighResolution)
+        printer.setOutputFormat(QPrinter.PdfFormat)
+        printer.setOutputFileName(out)
         win._print_to(printer)
         chk = fitz.open(out)
         try:
