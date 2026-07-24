@@ -574,6 +574,9 @@ class MainWindow(QMainWindow):
         self.setDockOptions(
             QMainWindow.AnimatedDocks | QMainWindow.AllowNestedDocks
             | QMainWindow.AllowTabbedDocks)
+        # Put the pane tabs on TOP (like the old QTabWidget) instead of Qt's
+        # default bottom position for tabified docks.
+        self.setTabPosition(Qt.AllDockWidgetAreas, QTabWidget.North)
         self.config = AppConfig()
         self.document = None
         self._print_include_marks = True   # print the app's markups by default

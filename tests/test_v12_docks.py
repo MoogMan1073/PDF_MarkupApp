@@ -55,6 +55,15 @@ class TestMainDocks(unittest.TestCase):
         win = self._win()
         self.assertIs(win.tabs.currentWidget(), win.view)
 
+    def test_pane_tabs_sit_on_top(self):
+        from PySide6.QtWidgets import QTabWidget
+        from PySide6.QtCore import Qt
+        win = self._win()
+        # tabs render on top (North), like the old QTabWidget — not Qt's default
+        # bottom position for tabified docks
+        self.assertEqual(win.tabPosition(Qt.LeftDockWidgetArea), QTabWidget.North)
+        self.assertEqual(win.tabPosition(Qt.RightDockWidgetArea), QTabWidget.North)
+
     def test_default_layout_tabs_main_panes_only(self):
         # The five main panes tab together; the Navigation and Comments sidebars
         # stay as their own docks. Assert against the freshly-built default so a
