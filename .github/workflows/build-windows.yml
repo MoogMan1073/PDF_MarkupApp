@@ -31,7 +31,9 @@ jobs:
       - name: Run tests (offscreen)
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m unittest discover -s tests
+        # -v prints each test name before it runs, so a hard crash (which prints
+        # no failure summary) still shows which test was in flight.
+        run: python -m unittest discover -s tests -v
 
       - name: Build app (PyInstaller)
         run: pyinstaller packaging/DSI_Redline.spec --noconfirm
