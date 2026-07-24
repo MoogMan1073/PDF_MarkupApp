@@ -65,6 +65,8 @@ The **Comments** panel docks on the right of the Viewer — see
 - **File ▸ Export annotated PDF…** writes a standalone annotated copy anywhere.
 - **File ▸ Print…** (`Ctrl+P`) prints the drawing — with its marks — to any
   installed printer through the system print dialog, with page-range selection.
+- **File ▸ Print preview…** shows the pages first and has an **Include markups**
+  toggle (on by default) so you can print either the marked-up or a clean drawing.
 
 Full detail in [[Storage and Files]].
 

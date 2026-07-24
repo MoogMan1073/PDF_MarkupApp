@@ -46,12 +46,15 @@ it switches back to the Viewer automatically.
 
 ## Arranging the panels
 
-The **Navigation** and **Comments** panes are dockable, Visual-Studio-style:
-**drag a pane's title bar** to snap it to any edge (left, right, top or bottom),
-drop it onto another pane to **tab** them together, split panes side-by-side, or
-pull one out of the window to **float** it. Your arrangement (and the window
-size) is **remembered between sessions**; **View ▸ Reset panel layout** puts
-everything back to the default.
+The **Navigation** and **Comments** panes — **and the five main tabs** (Viewer,
+TODO, Wire Numbers, Component Labels, PDF Tools) — are dockable,
+Visual-Studio-style: **drag a pane's title bar** to snap it to any edge (left,
+right, top or bottom), drop it onto another pane to **tab** them together, split
+panes side-by-side, or pull one out of the window to **float** it on a second
+monitor. Reopen a closed pane from **View ▸ Panes**. Your arrangement (and the
+window size) is **remembered between sessions**; **View ▸ Reset panel layout**
+puts everything back to the default. See [[Getting Started]] for more on moving
+the tabs around.
 
 ## Select & copy text
 
