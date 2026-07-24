@@ -22,14 +22,21 @@ _© DSI Innovations, LLC 2026_
   click-polygon, outline only). Rectangles and text boxes take an **interior fill**
   with adjustable opacity — up to an opaque white cover. **Any** mark can carry a
   **note** (not just comments). Shapes preview live while you drag and stay editable
-  afterward. Full undo/redo (`Ctrl+Z` / `Ctrl+Shift+Z`). Every mark records its author
-  and timestamp.
+  afterward. **Copy & paste** marks (`Ctrl+C` / `Ctrl+V` or right-click), a **format
+  painter** (copy one mark's colour/opacity/fill/font onto another of the same type),
+  **sticky styles** (new marks inherit your last colour/font/fill), and **stacking
+  order** (right-click ▸ **Order ▸** Bring to Front / Send to Back …). Full undo/redo
+  (`Ctrl+Z` / `Ctrl+Shift+Z`). Every mark records its author and timestamp — and you
+  can **rename a commenter** by double-clicking a name in the Comments / TODO list.
 - **Hybrid storage** — marks are saved as standard PDF annotations into a
   `*.marked.pdf` copy (the original is **never** overwritten), while app-only state
   (TODO status, tags, wire cache) lives in a `*.markup.db` SQLite sidecar. Existing
   PDF annotations (e.g. a colleague's markup) are imported with their real authors.
   **Save As** (`Ctrl+Shift+S`) forks the whole markup to a new working file and
-  switches to it, leaving the original untouched.
+  switches to it, leaving the original untouched. If a file's name is too long or
+  has characters that can't back a sidecar, it opens **view-only** — you can still
+  view, search, print and use the PDF tools, but markup and saving are turned off
+  until you rename it.
 - **SHX / AutoCAD junk filter** — nuisance "SHX font could not be displayed" export
   comments are hidden (not deleted) and excluded from counts. Toggle "Show ignored"
   to reveal them. The pattern list is editable in Settings.
@@ -136,18 +143,25 @@ python main.py drawings.pdf   # or open a file directly
 
 ## A quick tour
 
+The five panes below are **movable** — drag a tab out into its own window (e.g.
+the TODO list on a second monitor) or dock it to another edge, like the Comments
+and Navigation sidebars. **View ▸ Reset panel layout** restores the default.
+
 | Tab | What it does |
 |-----|--------------|
 | **Viewer** | Read and mark up the drawing. Pick a tool from the toolbar, choose a color/width, and draw. The **Comments** dock on the right lists every note. |
 | **TODO** | Everything flagged as a TODO. Check items off, edit text inline, group by sheet/commenter, and export to Markdown or DOCX. |
 | **Wire Numbers** | Click **Extract wire numbers** to scan the set. Review the table (label, sheet, rung, index, type, page, count, source), untick any you don't want, then **Export…**. |
 | **Component Labels** | Click **Extract component labels** to find device tags (e.g. `LT-10010`). Pick OCR or AI for scanned pages, review/filter the table, then **Export…**. Family codes are editable in Settings. |
+| **PDF Tools** | Extract / split / delete / rotate / combine / insert / swap pages, convert to Word, the sheet-number split and crop/extract wizards. |
 
 ### Saving
 
 - **File ▸ Save markup** writes `<name>.marked.pdf` + syncs the `<name>.markup.db`
   sidecar. The original PDF is untouched.
 - **File ▸ Export annotated PDF…** writes a standalone annotated copy anywhere.
+- **File ▸ Print…** (`Ctrl+P`) prints the drawing (with or without its marks — see
+  **Print preview…**) to any installed printer via the system print dialog.
 
 ### Settings
 
@@ -163,12 +177,14 @@ persisted between sessions. **Help ▸ About** shows the app name, version and c
 ```
 main.py                      QApplication entry
 app/
-  main_window.py             Window: Viewer | TODO | Wire Numbers, toolbar, Settings
+  main_window.py             Window: five movable/floatable panes (Viewer, TODO,
+                             Wire Numbers, Component Labels, PDF Tools), toolbar, Settings
   config.py                  Persisted settings (QSettings) + defaults
   help.py                    In-app user-manual (vault) reader
   viewer/                    Continuous-scroll canvas, annotation items, tools, undo
   model/                     Document, annotation model, PDF+SQLite storage
-  panels/                    Comment sidebar, TODO, Wire Numbers, PDF Tools, Navigation
+  panels/                    Comment sidebar, TODO, Wire Numbers, Component Labels,
+                             PDF Tools, Navigation
   extraction/                Text extraction, OCR, wire parser/classifier, Claude assist
   export/                    TODO (md/docx) and wire (xlsx/csv) exporters
   tools/                     PDF ops (split/combine/…), dialogs, sheet/crop wizards

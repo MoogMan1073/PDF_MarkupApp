@@ -61,8 +61,11 @@ block:
 4. Pick an output folder and split. Pages whose box reads nothing fall back to
    page-number naming and are reported so you can adjust.
 
-Scanned pages without text are read with **OCR or Claude** when enabled
-([[AI Assist]], [[OCR]]).
+The box is read in the drawing's own orientation, so it works on **rotated
+pages** too (AutoCAD plots are usually rotated) — the preview shows the number
+the same way the split reads it. **Scanned** pages with no text layer are
+**OCR'd automatically** whenever Tesseract is installed (no Settings switch
+needed); **Claude** is used instead when it's enabled ([[AI Assist]], [[OCR]]).
 
 ## Convert & extract
 
