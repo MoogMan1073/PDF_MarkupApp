@@ -28,12 +28,31 @@ jobs:
           pip install -r requirements.txt
           pip install -r packaging/requirements-build.txt
 
-      - name: Run tests (offscreen)
+      - name: Run tests (offscreen, isolated per module)
         env:
           QT_QPA_PLATFORM: offscreen
-        # -v prints each test name before it runs, so a hard crash (which prints
-        # no failure summary) still shows which test was in flight.
-        run: python -m unittest discover -s tests -v
+        shell: pwsh
+        # Each test module runs in its OWN process. Running the whole suite in a
+        # single process accumulates Qt GUI resources (GDI/USER handles, pixmaps)
+        # from the many window-creating tests and hard-crashes a late test on the
+        # headless Windows runner — even though every module passes on its own and
+        # on Linux CI. Per-module isolation keeps resource use bounded; -v names
+        # the in-flight test if a module still crashes.
+        run: |
+          $failed = @()
+          Get-ChildItem tests/test_*.py | Sort-Object Name | ForEach-Object {
+            $mod = "tests." + $_.BaseName
+            Write-Host "::group::$mod"
+            python -m unittest $mod -v
+            $code = $LASTEXITCODE
+            Write-Host "::endgroup::"
+            if ($code -ne 0) { $failed += $mod }
+          }
+          if ($failed.Count -gt 0) {
+            Write-Host "FAILED MODULES: $($failed -join ', ')"
+            exit 1
+          }
+          Write-Host "All test modules passed."
 
       - name: Build app (PyInstaller)
         run: pyinstaller packaging/DSI_Redline.spec --noconfirm
