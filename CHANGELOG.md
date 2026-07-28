@@ -4,6 +4,15 @@ All notable changes to **DSI Redline** are documented here. Versions are tagged
 `vX.Y.Z`; each tag triggers the Windows build that publishes the installer and a
 portable zip to the matching GitHub release.
 
+## Unreleased
+
+- **Second viewer (reference pane).** **View ▸ Reference viewer** (**`F8`**)
+  opens a second, **read-only** view of the same PDF — for keeping a legend, TOC
+  or cover sheet on screen while you work on another page. It scrolls, zooms and
+  rotates independently, shows marks made in the main viewer live, and docks or
+  floats like any other pane (hidden until you ask for it). Drawing, editing and
+  undo always stay with the main viewer.
+
 ## v1.2.0
 
 - **Sheet-number split reads the box on rotated pages.** The "Split by sheet

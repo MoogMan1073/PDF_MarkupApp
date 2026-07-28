@@ -56,6 +56,24 @@ window size) is **remembered between sessions**; **View ▸ Reset panel layout**
 puts everything back to the default. See [[Getting Started]] for more on moving
 the tabs around.
 
+## Second view (reference pane)
+
+Need to check a **legend**, **TOC** or **cover sheet** while you work on another
+page? Turn on **View ▸ Reference viewer** (**`F8`**) for a second view of the
+**same** PDF.
+
+- It **scrolls, zooms and rotates independently** — park it on the legend and
+  keep marking up page 47 in the main viewer.
+- Marks you add in the main viewer **appear in it live**, so it doubles as a
+  second look at your redlines.
+- It's **read-only**: you can scroll, zoom, search and select/copy text there,
+  but drawing, editing and deleting always happen in the main viewer — so
+  there's never any doubt about what `Ctrl+Z` or the toolbar will affect.
+
+Like every other pane it's dockable: drag its title bar to put it side-by-side,
+below the main viewer, or **float it onto a second monitor** (see
+[[Getting Started]]). It stays hidden until you ask for it.
+
 ## Select & copy text
 
 With the **Select** tool active, **drag across text** to highlight it (just like

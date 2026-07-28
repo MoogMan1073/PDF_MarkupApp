@@ -113,6 +113,11 @@ class _BaseMixin:
             self._press_snap = None
 
     def contextMenuEvent(self, event):
+        # A read-only reference pane offers no mark actions at all — every entry
+        # in this menu either edits, restyles, reorders or deletes the mark.
+        if getattr(self.view, "read_only", False):
+            event.ignore()
+            return
         from PySide6.QtWidgets import QMenu
         ann = self.ann
         menu = QMenu()
@@ -460,6 +465,9 @@ class TextBoxItem(ResizableRectItem):
         painter.drawRect(self.rect())
 
     def mouseDoubleClickEvent(self, event):
+        if getattr(self.view, "read_only", False):
+            event.ignore()
+            return
         self.view.edit_text_annotation(self.ann)
         event.accept()
 
@@ -847,6 +855,9 @@ class CommentItem(_BaseMixin, QGraphicsObject):
             painter.drawRect(self.boundingRect())
 
     def mouseDoubleClickEvent(self, event):
+        if getattr(self.view, "read_only", False):
+            event.ignore()
+            return
         self.view.edit_comment_annotation(self.ann)
         event.accept()
 
