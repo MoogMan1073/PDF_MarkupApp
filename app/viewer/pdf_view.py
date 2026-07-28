@@ -147,6 +147,12 @@ class PdfView(QGraphicsView):
         return self.tool.is_select() and not self.read_only
 
     def push_command(self, cmd) -> None:
+        # Backstop for the read-only reference pane: every edit in this view
+        # funnels through here, so guarding it makes "a read-only view never
+        # changes the document" hold structurally, not just because each of the
+        # individual entry points remembers to check.
+        if self.read_only:
+            return
         self.undo_stack.push(cmd)
 
     # -- document lifecycle --------------------------------------------------

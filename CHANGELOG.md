@@ -8,10 +8,11 @@ portable zip to the matching GitHub release.
 
 - **Second viewer (reference pane).** **View ▸ Reference viewer** (**`F8`**)
   opens a second, **read-only** view of the same PDF — for keeping a legend, TOC
-  or cover sheet on screen while you work on another page. It scrolls, zooms and
-  rotates independently, shows marks made in the main viewer live, and docks or
-  floats like any other pane (hidden until you ask for it). Drawing, editing and
-  undo always stay with the main viewer.
+  or cover sheet on screen while you work on another page. It scrolls
+  independently (and `Ctrl`+scroll zooms it on its own), shows marks made in the
+  main viewer live, and docks or floats like any other pane (hidden until you ask
+  for it). Drawing, editing and undo — and the toolbar's zoom/rotate/page/find
+  controls — always stay with the main viewer.
 
 ## v1.2.0
 

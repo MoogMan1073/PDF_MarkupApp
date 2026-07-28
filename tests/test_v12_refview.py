@@ -94,6 +94,35 @@ class TestReadOnlyView(unittest.TestCase):
         doc, v = self._view(True)
         self.assertFalse(v._begin_draft(v.mapToScene(v.rect().center())))
 
+    def test_push_command_is_a_backstop(self):
+        # every edit funnels through push_command, so the invariant holds
+        # structurally even if some future caller forgets its own guard
+        from app.viewer.command_stack import ModifyAnnotationCommand, capture
+        doc, v = self._view(True)
+        a = Annotation(page=0, kind=KIND_RECT, rect=(10, 10, 90, 60))
+        doc.store.add(a)
+        before = capture(a)
+        a2 = Annotation(page=0, kind=KIND_RECT, rect=(0, 0, 5, 5))
+        v.push_command(ModifyAnnotationCommand(v, a, before, capture(a2), "x"))
+        self.assertEqual(v.undo_stack.count(), 0)
+
+    def test_grip_handlers_refuse_even_if_driven(self):
+        # the grips can never be shown in a read-only pane, but they also write
+        # the model + store.update() outside push_command — so drive their
+        # handlers directly and assert they still refuse
+        doc, v = self._view(True)
+        a = Annotation(page=0, kind=KIND_RECT, rect=(10, 10, 90, 60))
+        doc.store.add(a)
+        item = v._item_by_ann[a.id]
+        rect_before = tuple(a.rect)
+        item.setRect(0, 0, 500, 500)      # pretend a resize happened
+        item._end_resize()
+        item.setRotation(45.0)
+        item._end_rotate()
+        self.assertEqual(tuple(a.rect), rect_before)   # model untouched
+        self.assertEqual(a.rotation, 0.0)
+        self.assertEqual(v.undo_stack.count(), 0)
+
     def test_marks_render_but_are_locked(self):
         doc, v = self._view(True)
         a = Annotation(page=0, kind=KIND_RECT, rect=(10, 10, 90, 60))

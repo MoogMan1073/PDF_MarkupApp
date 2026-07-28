@@ -62,13 +62,18 @@ Need to check a **legend**, **TOC** or **cover sheet** while you work on another
 page? Turn on **View ▸ Reference viewer** (**`F8`**) for a second view of the
 **same** PDF.
 
-- It **scrolls, zooms and rotates independently** — park it on the legend and
-  keep marking up page 47 in the main viewer.
+- It **scrolls independently**, and **`Ctrl`+scroll** zooms it on its own — park
+  it on the legend and keep marking up page 47 in the main viewer.
 - Marks you add in the main viewer **appear in it live**, so it doubles as a
   second look at your redlines.
-- It's **read-only**: you can scroll, zoom, search and select/copy text there,
-  but drawing, editing and deleting always happen in the main viewer — so
-  there's never any doubt about what `Ctrl+Z` or the toolbar will affect.
+- It's **read-only**: you can scroll, zoom and select/copy text there, but
+  drawing, editing and deleting always happen in the main viewer — so there's
+  never any doubt about what `Ctrl+Z` or the toolbar will affect.
+
+> The toolbar and menus always drive the **main** viewer: the zoom box, **Fit
+> W/P**, the **↺ / ↻** rotate buttons, the **Page** box and **Find** (`Ctrl+F`)
+> all act there, not on the reference pane. In the pane itself, use scrolling
+> and `Ctrl`+scroll.
 
 Like every other pane it's dockable: drag its title bar to put it side-by-side,
 below the main viewer, or **float it onto a second monitor** (see

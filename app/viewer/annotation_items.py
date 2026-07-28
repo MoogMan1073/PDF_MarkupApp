@@ -382,6 +382,12 @@ class ResizableRectItem(_BaseMixin, QGraphicsRectItem):
         self._place_handles()
 
     def _end_resize(self):
+        # Unreachable in a read-only pane (the grip that drives this can never be
+        # shown), but this writes the model and calls store.update() directly —
+        # outside push_command — so guard it too rather than rely on that.
+        if getattr(self.view, "read_only", False):
+            self._resize_snap = None
+            return
         self.write_geometry_to_model()
         after = capture(self.ann)
         if self._resize_snap is not None and after != self._resize_snap:
@@ -404,6 +410,9 @@ class ResizableRectItem(_BaseMixin, QGraphicsRectItem):
         self.setRotation(angle)
 
     def _end_rotate(self):
+        if getattr(self.view, "read_only", False):
+            self._rotate_snap = None
+            return
         self.write_geometry_to_model()
         after = capture(self.ann)
         if self._rotate_snap is not None and after != self._rotate_snap:
@@ -570,6 +579,9 @@ class CalloutItem(TextBoxItem):
         self.update()
 
     def _end_tip(self):
+        if getattr(self.view, "read_only", False):
+            self._tip_snap = None
+            return
         after = capture(self.ann)
         if self._tip_snap is not None and after != self._tip_snap:
             self.view.push_command(
