@@ -637,6 +637,7 @@ class MainWindow(QMainWindow):
         # appear here live. Hidden until asked for (View ▸ Reference viewer).
         self.ref_view = PdfView(read_only=True)
         self.ref_view.config = self.config
+        self.ref_view.set_render_enabled(False)   # nothing rendered while hidden
         self.ref_view.requestOpen.connect(self.load_document)   # drag/drop a PDF
         ref_dock = QDockWidget("Reference viewer", self)
         ref_dock.setObjectName("RefViewDock")
@@ -1080,17 +1081,21 @@ class MainWindow(QMainWindow):
                 self, "Already open",
                 f"“{os.path.basename(path)}” is already open.")
             return
-        if self.document is not None:
-            try:
-                self.document.close()
-            except Exception:
-                pass
+        # Build the new document BEFORE closing the old one. Closing first meant
+        # a failed open (corrupt/locked/deleted file) returned with the window
+        # still pointed at a *closed* Document — blank pages, "closed database"
+        # on save, and search raising — which two views only made worse.
         try:
             doc = Document(path, ignore_patterns=self.config.ignore_patterns())
             doc.load()
         except Exception as e:
             QMessageBox.critical(self, "Open failed", str(e))
-            return
+            return                      # the current document stays open and usable
+        if self.document is not None:
+            try:
+                self.document.close()
+            except Exception:
+                pass
         self.document = doc
         # Feature 4: a .marked.pdf was opened but its original markup database
         # couldn't be found, so a new one was started — let the user know.
@@ -1615,15 +1620,30 @@ class MainWindow(QMainWindow):
 
     def _toggle_reference_view(self):
         """Show/hide the read-only second view of the current document."""
-        showing = not self.ref_dock.isVisible()
-        if showing:
-            # catch up if a document was opened while the pane was hidden
-            if self.document is not None and self.ref_view.document is not self.document:
-                self.ref_view.set_document(self.document, self.config)
-            self.ref_dock.show()
-            self.ref_dock.raise_()
-        else:
+        if self.ref_dock.isVisible():
             self.ref_dock.hide()
+            self.ref_view.set_render_enabled(False)   # free its page bitmaps
+            return
+        # catch up if a document was opened while the pane was hidden
+        if self.document is not None and self.ref_view.document is not self.document:
+            self.ref_view.set_document(self.document, self.config)
+        self.ref_dock.show()
+        self.ref_dock.raise_()
+        self.ref_view.set_render_enabled(True)
+        if not getattr(self, "_ref_dock_sized", False):
+            # A dock that has never been shown has no remembered size, so Qt
+            # gives it its *minimum* width (a ~70px slither). Give it a usable
+            # share of the window the first time it appears; after that the
+            # user's own sizing is remembered.
+            self._ref_dock_sized = True
+            width = max(380, min(560, self.width() // 3))
+            try:
+                self.resizeDocks([self.ref_dock], [width], Qt.Horizontal)
+            except Exception:
+                pass
+        # the zoom was fitted to the pane's phantom size while it was hidden —
+        # re-fit once it has its real viewport
+        QTimer.singleShot(0, self.ref_view.fit_width)
 
     def reset_layout(self):
         """Restore the panes to their default docked arrangement — re-docking

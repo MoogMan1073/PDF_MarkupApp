@@ -141,6 +141,16 @@ class TestReferencePane(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    def setUp(self):
+        # The dock layout (including whether the pane was left open) is saved
+        # between sessions like every other dock, so start each test from a
+        # clean layout instead of inheriting one from a previous run.
+        from app.config import AppConfig
+        cfg = AppConfig()
+        cfg.s.remove("ui/window_state")
+        cfg.s.remove("ui/geometry")
+        cfg.s.sync()
+
     def _win(self):
         from app.main_window import MainWindow
         tmp = tempfile.mkdtemp()
@@ -209,6 +219,50 @@ class TestReferencePane(unittest.TestCase):
     def test_reference_view_shares_config(self):
         win = self._win()
         self.assertIs(win.ref_view.config, win.config)
+
+    def test_hidden_pane_renders_nothing(self):
+        # a pane the user may never open must not hold a set of page bitmaps
+        win = self._win()
+        self.app.processEvents()
+        self.assertFalse(win.ref_dock.isVisible())
+        self.assertFalse(win.ref_view.render_enabled)
+        self.assertTrue(all(not it.is_rendered() for it in win.ref_view._page_items))
+
+    def test_showing_enables_rendering_and_hiding_frees_it(self):
+        win = self._win()
+        win.show(); self.app.processEvents()
+        win._toggle_reference_view(); self.app.processEvents()
+        self.assertTrue(win.ref_view.render_enabled)
+        win._toggle_reference_view(); self.app.processEvents()
+        self.assertFalse(win.ref_view.render_enabled)
+        self.assertTrue(all(not it.is_rendered() for it in win.ref_view._page_items))
+        win.close()
+
+    def test_first_show_gives_the_dock_a_usable_width(self):
+        # a never-shown dock otherwise opens at its ~70px minimum
+        win = self._win()
+        win.resize(1600, 900); win.show(); self.app.processEvents()
+        win._toggle_reference_view(); self.app.processEvents()
+        self.assertGreater(win.ref_dock.width(), 200)
+        win.close()
+
+    def test_failed_open_keeps_current_document_usable(self):
+        # regression: the old document used to be closed BEFORE the new one was
+        # built, so a bad file left the app pointed at a closed Document
+        from unittest import mock
+        from PySide6.QtWidgets import QMessageBox
+        win = self._win()
+        good = win.document
+        tmp = tempfile.mkdtemp()
+        bad = os.path.join(tmp, "bad.pdf")
+        with open(bad, "wb") as fh:
+            fh.write(b"not a pdf at all")
+        with mock.patch.object(QMessageBox, "critical", return_value=QMessageBox.Ok):
+            win.load_document(bad)
+        self.assertIs(win.document, good)
+        self.assertFalse(win.document.fitz_doc.is_closed)
+        self.assertIs(win.view.document, good)
+        self.assertIs(win.ref_view.document, good)
 
     def test_document_reopen_rewires_reference(self):
         win = self._win()

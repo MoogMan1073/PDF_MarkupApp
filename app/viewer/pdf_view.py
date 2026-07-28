@@ -52,6 +52,12 @@ class PdfView(QGraphicsView):
         # moved, restyled or deleted through it. Scrolling, zooming, rotating,
         # searching and selecting/copying text all still work.
         self.read_only = bool(read_only)
+        # Page bitmaps are only worth building when the view is actually on
+        # screen. The reference pane is created with its document loaded but its
+        # dock hidden, so this stays False until it's first shown — otherwise it
+        # would render (and hold) a full set of page bitmaps for a pane the user
+        # may never open, roughly doubling the viewer's bitmap memory.
+        self.render_enabled = True
         self._scene = QGraphicsScene(self)
         self._scene.setBackgroundBrush(QBrush(QColor(82, 86, 89)))
         self.setScene(self._scene)
@@ -243,7 +249,7 @@ class PdfView(QGraphicsView):
         return self.mapToScene(self.viewport().rect()).boundingRect()
 
     def _render_visible(self) -> None:
-        if not self._page_items:
+        if not self._page_items or not self.render_enabled:
             return
         vis = self._visible_scene_rect()
         margin = vis.height()  # render one screenful above/below
@@ -260,6 +266,21 @@ class PdfView(QGraphicsView):
                                          or r.top() > vis.bottom() + 4 * margin):
                 item.clear_render()
         self._emit_current_page()
+
+    def set_render_enabled(self, on: bool) -> None:
+        """Turn page-bitmap rendering on or off.
+
+        Turning it off frees the bitmaps this view is holding — used to keep the
+        reference pane free while its dock is hidden. Turning it on schedules a
+        fresh render of whatever is in view.
+        """
+        self.render_enabled = bool(on)
+        if self.render_enabled:
+            self._render_timer.start()
+            return
+        for item in self._page_items:
+            if item.is_rendered():
+                item.clear_render()
 
     def _on_scroll(self, *_):
         self._render_timer.start()
