@@ -6,6 +6,11 @@ portable zip to the matching GitHub release.
 
 ## Unreleased
 
+- **Recent files.** **File ▸ Open Recent** lists the last **10** drawings you
+  opened, newest first — pick one to reopen it. The list is remembered between
+  sessions, reopening a file moves it back to the top instead of duplicating it,
+  a file that's since been moved or deleted is shown greyed out as *(not found)*
+  rather than silently vanishing, and **Clear list** empties it.
 - **Second viewer (reference pane).** **View ▸ Reference viewer** (**`F8`**)
   opens a second, **read-only** view of the same PDF — for keeping a legend, TOC
   or cover sheet on screen while you work on another page. It scrolls

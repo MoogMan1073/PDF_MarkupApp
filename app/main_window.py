@@ -695,6 +695,8 @@ class MainWindow(QMainWindow):
         mb = self.menuBar()
         m_file = mb.addMenu("&File")
         self.act_open = m_file.addAction("&Open PDF…", self.open_pdf, QKeySequence.Open)
+        self.m_recent = m_file.addMenu("Open &Recent")
+        self._rebuild_recent_menu()
         self.act_save = m_file.addAction("&Save markup", self.save_markup, QKeySequence.Save)
         self.act_save_as = m_file.addAction(
             "Save &As… (fork working file)", self.save_as_fork,
@@ -783,6 +785,38 @@ class MainWindow(QMainWindow):
         m_help = mb.addMenu("&Help")
         m_help.addAction("User Manual", self._show_help, QKeySequence.HelpContents)
         m_help.addAction("About " + __app_name__, self._show_about)
+
+    def _rebuild_recent_menu(self):
+        """Refill File ▸ Open Recent from the saved list (most recent first)."""
+        menu = getattr(self, "m_recent", None)
+        if menu is None:
+            return
+        menu.clear()
+        paths = self.config.recent_files
+        if not paths:
+            empty = menu.addAction("(no recent files)")
+            empty.setEnabled(False)
+            return
+        for i, path in enumerate(paths, start=1):
+            # &1..&9 then &0 for quick keyboard access
+            label = f"&{i % 10}  {os.path.basename(path)}"
+            act = menu.addAction(label)
+            act.setToolTip(path)
+            act.setStatusTip(path)
+            if os.path.exists(path):
+                act.triggered.connect(
+                    lambda _=False, p=path: self.load_document(p))
+            else:
+                # keep it listed but obviously unusable rather than silently
+                # dropping a file that's just on a disconnected drive
+                act.setEnabled(False)
+                act.setText(f"{label}   (not found)")
+        menu.addSeparator()
+        menu.addAction("Clear list", self._clear_recent_files)
+
+    def _clear_recent_files(self):
+        self.config.clear_recent_files()
+        self._rebuild_recent_menu()
 
     def _show_help(self):
         from .help import HelpWindow
@@ -1097,6 +1131,9 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         self.document = doc
+        # remember it in File ▸ Open Recent (only once the open has succeeded)
+        self.config.add_recent_file(path)
+        self._rebuild_recent_menu()
         # Feature 4: a .marked.pdf was opened but its original markup database
         # couldn't be found, so a new one was started — let the user know.
         if getattr(doc, "sidecar_recreated", False):

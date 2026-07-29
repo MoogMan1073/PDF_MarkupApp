@@ -23,8 +23,10 @@ The app is fully functional offline with neither of these.
 
 ## Open a PDF
 
-**File ▸ Open PDF…** (`Ctrl+O`), drag a PDF onto the window, or — on a Windows
-install — **right-click a PDF ▸ Open with ▸ DSI Redline**. See
+**File ▸ Open PDF…** (`Ctrl+O`), **File ▸ Open Recent** (the last 10 drawings you
+opened, newest first — pick one to reopen it, or **Clear list**), drag a PDF onto
+the window, or — on a Windows install — **right-click a PDF ▸ Open with ▸ DSI
+Redline**. See
 [[File Associations]] to add DSI Redline to the *Open with* list and make it your
 default PDF app. The drawing loads in the [[Viewer]] with continuous vertical
 scroll (and into the [[PDF Tools]] tab). Any annotations already in the PDF (for

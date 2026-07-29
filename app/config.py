@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import getpass
 import json
+import os
 from typing import Any
 
 from PySide6.QtCore import QSettings
@@ -19,6 +20,9 @@ from .model.storage import DEFAULT_IGNORE_PATTERNS
 
 ORG = "PDFMarkup"
 APP = "PDFMarkupApp"
+
+# how many paths the File ▸ Open Recent list remembers
+MAX_RECENT_FILES = 10
 
 
 def _default_user() -> str:
@@ -60,6 +64,8 @@ DEFAULTS: dict = {
     "ai/tiles": 2,          # NxN tiles per scanned page (1 = whole page)
     "ai/model": "claude-opus-4-8",
     "ai/api_key": "",
+    # File ▸ Open Recent (most-recent-first list of PDF paths)
+    "recent/files": json.dumps([]),
 }
 
 
@@ -119,6 +125,41 @@ class AppConfig:
 
     def set_ignore_patterns(self, patterns: list) -> None:
         self.set("filter/ignore_patterns", json.dumps(list(patterns)))
+
+    # -- recently opened files ----------------------------------------------
+
+    @property
+    def recent_files(self) -> list:
+        """Recently opened PDF paths, most recent first."""
+        raw = self.get("recent/files")
+        try:
+            val = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(val, list):
+                return [str(p) for p in val][:MAX_RECENT_FILES]
+        except Exception:
+            pass
+        return []
+
+    def set_recent_files(self, paths: list) -> None:
+        self.set("recent/files",
+                 json.dumps([str(p) for p in paths][:MAX_RECENT_FILES]))
+
+    def add_recent_file(self, path: str) -> list:
+        """Move ``path`` to the top of the recent list and return the new list.
+
+        Paths are stored absolute and de-duplicated case-insensitively (so the
+        same file opened via a different spelling doesn't take two slots), and
+        the list is capped at :data:`MAX_RECENT_FILES`.
+        """
+        p = os.path.abspath(str(path))
+        key = os.path.normcase(p)
+        out = [p] + [q for q in self.recent_files if os.path.normcase(q) != key]
+        out = out[:MAX_RECENT_FILES]
+        self.set_recent_files(out)
+        return out
+
+    def clear_recent_files(self) -> None:
+        self.set_recent_files([])
 
     # -- derived config objects ---------------------------------------------
 
