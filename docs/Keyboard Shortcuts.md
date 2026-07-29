@@ -21,6 +21,7 @@ tags: [reference, basics]
 | `Ctrl` `+` / `Ctrl` `-` | Zoom in / out |
 | **Space** + drag | Pan |
 | Middle-drag | Pan |
+| `F8` | Toggle the **Reference viewer** (read-only second view of the same PDF) |
 | `F9` | Toggle the left **Navigation** pane |
 | `F10` | Toggle the right **Comments** pane |
 | `Esc` | Cancel an in-progress mark / clear a text selection / close search |

@@ -67,6 +67,13 @@ class PageItem(QGraphicsRectItem):
         """Render (or re-render) the bitmap at the given DPI scale, capped by a
         per-page pixel budget so huge sheets stay bounded while normal pages
         render sharply well past 400%."""
+        # Renders are deferred by a timer, so one can fire after the document was
+        # closed (opening another file, or a failed open leaving the old one
+        # closed) — more likely now that a second reference view has its own
+        # render timer on the same document. Rendering a closed document raises
+        # deep inside PyMuPDF, so skip instead.
+        if getattr(getattr(self.doc, "fitz_doc", None), "is_closed", False):
+            return
         area = max(1.0, self.pdf_w * self.pdf_h)      # page area in PDF points^2
         max_scale = (self._PX_BUDGET / area) ** 0.5
         scale = max(0.5, min(float(scale), max_scale))

@@ -113,6 +113,11 @@ class _BaseMixin:
             self._press_snap = None
 
     def contextMenuEvent(self, event):
+        # A read-only reference pane offers no mark actions at all — every entry
+        # in this menu either edits, restyles, reorders or deletes the mark.
+        if getattr(self.view, "read_only", False):
+            event.ignore()
+            return
         from PySide6.QtWidgets import QMenu
         ann = self.ann
         menu = QMenu()
@@ -377,6 +382,12 @@ class ResizableRectItem(_BaseMixin, QGraphicsRectItem):
         self._place_handles()
 
     def _end_resize(self):
+        # Unreachable in a read-only pane (the grip that drives this can never be
+        # shown), but this writes the model and calls store.update() directly —
+        # outside push_command — so guard it too rather than rely on that.
+        if getattr(self.view, "read_only", False):
+            self._resize_snap = None
+            return
         self.write_geometry_to_model()
         after = capture(self.ann)
         if self._resize_snap is not None and after != self._resize_snap:
@@ -399,6 +410,9 @@ class ResizableRectItem(_BaseMixin, QGraphicsRectItem):
         self.setRotation(angle)
 
     def _end_rotate(self):
+        if getattr(self.view, "read_only", False):
+            self._rotate_snap = None
+            return
         self.write_geometry_to_model()
         after = capture(self.ann)
         if self._rotate_snap is not None and after != self._rotate_snap:
@@ -460,6 +474,9 @@ class TextBoxItem(ResizableRectItem):
         painter.drawRect(self.rect())
 
     def mouseDoubleClickEvent(self, event):
+        if getattr(self.view, "read_only", False):
+            event.ignore()
+            return
         self.view.edit_text_annotation(self.ann)
         event.accept()
 
@@ -562,6 +579,9 @@ class CalloutItem(TextBoxItem):
         self.update()
 
     def _end_tip(self):
+        if getattr(self.view, "read_only", False):
+            self._tip_snap = None
+            return
         after = capture(self.ann)
         if self._tip_snap is not None and after != self._tip_snap:
             self.view.push_command(
@@ -847,6 +867,9 @@ class CommentItem(_BaseMixin, QGraphicsObject):
             painter.drawRect(self.boundingRect())
 
     def mouseDoubleClickEvent(self, event):
+        if getattr(self.view, "read_only", False):
+            event.ignore()
+            return
         self.view.edit_comment_annotation(self.ann)
         event.accept()
 

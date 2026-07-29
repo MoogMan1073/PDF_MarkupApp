@@ -630,6 +630,23 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
         self.comment_dock = dock
 
+        # Optional second viewer of the SAME document — a read-only reference
+        # pane for keeping a legend, TOC or cover sheet in view while you work
+        # on another page. It scrolls/zooms/rotates independently; because both
+        # views listen to the one AnnotationStore, marks made in the main viewer
+        # appear here live. Hidden until asked for (View ▸ Reference viewer).
+        self.ref_view = PdfView(read_only=True)
+        self.ref_view.config = self.config
+        self.ref_view.set_render_enabled(False)   # nothing rendered while hidden
+        self.ref_view.requestOpen.connect(self.load_document)   # drag/drop a PDF
+        ref_dock = QDockWidget("Reference viewer", self)
+        ref_dock.setObjectName("RefViewDock")
+        ref_dock.setWidget(self.ref_view)
+        ref_dock.setAllowedAreas(Qt.AllDockWidgetAreas)
+        self.addDockWidget(Qt.RightDockWidgetArea, ref_dock)
+        ref_dock.hide()
+        self.ref_dock = ref_dock
+
         # The five main panes (Viewer / TODO / Wire Numbers / Component Labels /
         # PDF Tools) live in tabified, floatable dock widgets — like the
         # Comments / Navigation panels — so any tab can be dragged into its own
@@ -732,6 +749,14 @@ class MainWindow(QMainWindow):
             "Toggle navigation panel",
             lambda: self.nav_dock.setVisible(not self.nav_dock.isVisible()))
         act_nav.setShortcut("F9")
+        act_ref = m_view.addAction(
+            "Reference viewer (second view)",
+            lambda: self._toggle_reference_view())
+        act_ref.setShortcut("F8")
+        act_ref.setToolTip(
+            "A second, read-only view of the same PDF — keep a legend, TOC or "
+            "cover sheet in view while you work on another page.")
+        self.act_ref_view = act_ref
         # Show/hide (and re-open a closed) main pane. Each dock has a close
         # button, so these bring one back after it's been closed or floated away.
         m_panes = m_view.addMenu("Panes")
@@ -1056,17 +1081,21 @@ class MainWindow(QMainWindow):
                 self, "Already open",
                 f"“{os.path.basename(path)}” is already open.")
             return
-        if self.document is not None:
-            try:
-                self.document.close()
-            except Exception:
-                pass
+        # Build the new document BEFORE closing the old one. Closing first meant
+        # a failed open (corrupt/locked/deleted file) returned with the window
+        # still pointed at a *closed* Document — blank pages, "closed database"
+        # on save, and search raising — which two views only made worse.
         try:
             doc = Document(path, ignore_patterns=self.config.ignore_patterns())
             doc.load()
         except Exception as e:
             QMessageBox.critical(self, "Open failed", str(e))
-            return
+            return                      # the current document stays open and usable
+        if self.document is not None:
+            try:
+                self.document.close()
+            except Exception:
+                pass
         self.document = doc
         # Feature 4: a .marked.pdf was opened but its original markup database
         # couldn't be found, so a new one was started — let the user know.
@@ -1077,6 +1106,9 @@ class MainWindow(QMainWindow):
                 "it, so a new one has been started. Previously saved marks, TODOs "
                 "and extractions for this file may not be available.")
         self.view.set_document(doc, self.config)
+        # the reference pane shows the same document (read-only), whether or not
+        # it's currently visible, so toggling it on is instant
+        self.ref_view.set_document(doc, self.config)
         self.comment_panel.set_store(doc.store, self.config)
         self.todo_panel.set_store(doc.store, self.config, doc)
         self.wire_panel.set_document(doc, self.config)
@@ -1308,11 +1340,15 @@ class MainWindow(QMainWindow):
         if dlg.exec() == QDialog.Accepted:
             dlg.apply()
             self.view.config = self.config
+            self.ref_view.config = self.config
             if self.document is not None:
                 self.document.ignore_patterns = self.config.ignore_patterns()
                 self.comment_panel.refresh()
                 self.todo_panel.refresh()
                 self.view.rebuild_all_items()
+                # keep the reference pane in step (e.g. "Show ignored" changes
+                # which marks are drawn) — it renders the same marks
+                self.ref_view.rebuild_all_items()
                 # Bug 8: re-flag already-extracted component labels against the
                 # (possibly edited) family codes / widths — no re-extract needed.
                 if self.document.components:
@@ -1581,6 +1617,33 @@ class MainWindow(QMainWindow):
             self.config.s.sync()
         except Exception:
             pass
+
+    def _toggle_reference_view(self):
+        """Show/hide the read-only second view of the current document."""
+        if self.ref_dock.isVisible():
+            self.ref_dock.hide()
+            self.ref_view.set_render_enabled(False)   # free its page bitmaps
+            return
+        # catch up if a document was opened while the pane was hidden
+        if self.document is not None and self.ref_view.document is not self.document:
+            self.ref_view.set_document(self.document, self.config)
+        self.ref_dock.show()
+        self.ref_dock.raise_()
+        self.ref_view.set_render_enabled(True)
+        if not getattr(self, "_ref_dock_sized", False):
+            # A dock that has never been shown has no remembered size, so Qt
+            # gives it its *minimum* width (a ~70px slither). Give it a usable
+            # share of the window the first time it appears; after that the
+            # user's own sizing is remembered.
+            self._ref_dock_sized = True
+            width = max(380, min(560, self.width() // 3))
+            try:
+                self.resizeDocks([self.ref_dock], [width], Qt.Horizontal)
+            except Exception:
+                pass
+        # the zoom was fitted to the pane's phantom size while it was hidden —
+        # re-fit once it has its real viewport
+        QTimer.singleShot(0, self.ref_view.fit_width)
 
     def reset_layout(self):
         """Restore the panes to their default docked arrangement — re-docking

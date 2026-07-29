@@ -44,8 +44,20 @@ class PdfView(QGraphicsView):
     requestReveal = Signal(object, str)   # Annotation, target ("todo" | "comment")
     zoomChanged = Signal(float)           # current zoom factor (1.0 == 100%)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, read_only: bool = False):
         super().__init__(parent)
+        # A read-only view is a *reference* pane: it shows the same document and
+        # the same marks (both views listen to one AnnotationStore, so edits made
+        # in the editable view appear here live), but nothing can be created,
+        # moved, restyled or deleted through it. Scrolling, zooming, rotating,
+        # searching and selecting/copying text all still work.
+        self.read_only = bool(read_only)
+        # Page bitmaps are only worth building when the view is actually on
+        # screen. The reference pane is created with its document loaded but its
+        # dock hidden, so this stays False until it's first shown — otherwise it
+        # would render (and hold) a full set of page bitmaps for a pane the user
+        # may never open, roughly doubling the viewer's bitmap memory.
+        self.render_enabled = True
         self._scene = QGraphicsScene(self)
         self._scene.setBackgroundBrush(QBrush(QColor(82, 86, 89)))
         self.setScene(self._scene)
@@ -136,9 +148,17 @@ class PdfView(QGraphicsView):
 
     @property
     def select_mode(self) -> bool:
-        return self.tool.is_select()
+        # Drives whether marks are movable/selectable and whether their items
+        # offer edit actions — always off in a read-only reference pane.
+        return self.tool.is_select() and not self.read_only
 
     def push_command(self, cmd) -> None:
+        # Backstop for the read-only reference pane: every edit in this view
+        # funnels through here, so guarding it makes "a read-only view never
+        # changes the document" hold structurally, not just because each of the
+        # individual entry points remembers to check.
+        if self.read_only:
+            return
         self.undo_stack.push(cmd)
 
     # -- document lifecycle --------------------------------------------------
@@ -229,7 +249,7 @@ class PdfView(QGraphicsView):
         return self.mapToScene(self.viewport().rect()).boundingRect()
 
     def _render_visible(self) -> None:
-        if not self._page_items:
+        if not self._page_items or not self.render_enabled:
             return
         vis = self._visible_scene_rect()
         margin = vis.height()  # render one screenful above/below
@@ -246,6 +266,21 @@ class PdfView(QGraphicsView):
                                          or r.top() > vis.bottom() + 4 * margin):
                 item.clear_render()
         self._emit_current_page()
+
+    def set_render_enabled(self, on: bool) -> None:
+        """Turn page-bitmap rendering on or off.
+
+        Turning it off frees the bitmaps this view is holding — used to keep the
+        reference pane free while its dock is hidden. Turning it on schedules a
+        fresh render of whatever is in view.
+        """
+        self.render_enabled = bool(on)
+        if self.render_enabled:
+            self._render_timer.start()
+            return
+        for item in self._page_items:
+            if item.is_rendered():
+                item.clear_render()
 
     def _on_scroll(self, *_):
         self._render_timer.start()
@@ -420,7 +455,8 @@ class PdfView(QGraphicsView):
         self._suppress_existing_prompt = False
         # A mark under the cursor shows its own menu; on empty canvas offer Paste.
         scene_pt = self.mapToScene(event.pos())
-        if self._annotation_item_at(scene_pt) is not None or not self._obj_clip:
+        if self.read_only or self._annotation_item_at(scene_pt) is not None \
+                or not self._obj_clip:
             super().contextMenuEvent(event)
             return
         from PySide6.QtWidgets import QMenu
@@ -628,6 +664,8 @@ class PdfView(QGraphicsView):
                    for it in self._scene.items(scene_pt))
 
     def _begin_draft(self, scene_pt: QPointF) -> bool:
+        if self.read_only:
+            return False
         # The "Draw new" one-shot is consumed by *any* draw press, even one that
         # misses a page — otherwise a stray off-page click would leave it armed
         # and silently swallow a later edit/draw-new prompt.
@@ -791,6 +829,8 @@ class PdfView(QGraphicsView):
         return bool(self.config and getattr(self.config, "treat_all_as_todo", False))
 
     def _commit_new(self, ann: Annotation):
+        if self.read_only:
+            return
         self._assign_top_z(ann)
         self.push_command(AddAnnotationCommand(self, ann, f"Add {ann.kind}"))
 
@@ -900,6 +940,8 @@ class PdfView(QGraphicsView):
         """Remove the whole mark under the point (live), grouping a drag into a
         single undo step.  Removal is a true delete via the model, so erased
         marks are dropped from the saved PDF/sidecar, not merely hidden."""
+        if self.read_only:
+            return
         existing = self._annotation_item_at(scene_pt)
         if existing is None:
             return
@@ -915,6 +957,8 @@ class PdfView(QGraphicsView):
             self._erase_macro_open = False
 
     def delete_selected(self):
+        if self.read_only:
+            return
         from PySide6.QtWidgets import QMessageBox
         anns = [a for a in (getattr(it, "ann", None)
                             for it in self._scene.selectedItems()) if a is not None]
@@ -974,7 +1018,7 @@ class PdfView(QGraphicsView):
             return
         item.setParentItem(self._page_items[ann.page])
         item.setZValue(ANNOT_Z + ann.z_order)  # marks stack above the page (z=1)
-        select = self.tool.is_select()
+        select = self.select_mode      # False in a read-only reference pane
         item.setFlag(QGraphicsItem.ItemIsMovable, select)
         item.setFlag(QGraphicsItem.ItemIsSelectable, select)
         if hasattr(item, "_refresh_note_badge"):
@@ -1017,6 +1061,8 @@ class PdfView(QGraphicsView):
     def reorder_annotation(self, ann: Annotation, where: str):
         """Restack ``ann`` among the marks on its page (undoable).
         ``where`` is 'front' | 'back' | 'up' | 'down'."""
+        if self.read_only:
+            return
         # only reorder among the *visible* marks so a step never swaps with a
         # hidden (ignored/SHX) mark and appears to do nothing
         show_ignored = bool(self.config and self.config.show_ignored)
@@ -1252,6 +1298,8 @@ class PdfView(QGraphicsView):
     def paste_clipboard(self):
         """Ctrl+V: paste onto the current page, cascaded so repeated pastes don't
         stack exactly."""
+        if self.read_only:
+            return
         if not self._obj_clip:
             return
         self._obj_paste_n += 1
@@ -1266,6 +1314,8 @@ class PdfView(QGraphicsView):
 
     def _paste_at(self, scene_pt: QPointF):
         """Right-click 'Paste here': anchor the paste at the clicked point."""
+        if self.read_only:
+            return
         pno, page = self._page_at_scene(scene_pt)
         if page is None:
             self.paste_clipboard()
@@ -1291,6 +1341,8 @@ class PdfView(QGraphicsView):
 
     def paste_format(self, ann: Annotation):
         """Apply the copied style onto a mark of the *same* kind (undoable)."""
+        if self.read_only:
+            return
         if not self.has_format_for(ann.kind):
             return
         before = capture(ann)
