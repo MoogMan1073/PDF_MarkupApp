@@ -82,15 +82,15 @@ Text boxes, callouts, rectangles, arrows and clouds can be **copied and pasted**
   don't stack — or right-click empty canvas ▸ **Paste … here** to place it where
   you click. Pasted marks land selected and are undoable.
 
-To reuse just the *look* of a mark (its **colour, opacity, fill, border width and
+To reuse just the *look* of a mark (its **color, opacity, fill, border width and
 font** — not its text or size on the page), use the **format painter**:
 
 - Right-click a mark ▸ **Copy formatting**.
 - Right-click another mark **of the same type** ▸ **Paste formatting**. (The
-  option is greyed until you've copied formatting from a matching kind.)
+  option is grayed until you've copied formatting from a matching kind.)
 
 > [!tip] Styles are remembered
-> When you set a colour, opacity, fill or font on a new text box or callout, the
+> When you set a color, opacity, fill or font on a new text box or callout, the
 > next one you draw **inherits those settings** — so you don't re-declare them for
 > every mark. (The text itself is never carried over.)
 
@@ -101,7 +101,7 @@ Right-click any mark ▸ **Order** to change how overlapping marks stack:
 - **Bring to Front** / **Send to Back** — jump to the very top or bottom.
 - **Bring Forward** / **Send Backward** — move one step.
 
-The order is undoable, persists with your markup, and is honoured in the exported
+The order is undoable, persists with your markup, and is honored in the exported
 PDF.
 
 ## Editing an existing mark while a draw tool is active

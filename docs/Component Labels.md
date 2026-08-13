@@ -8,7 +8,7 @@ The **Component Labels** tab finds **device/component tags** in a drawing set â€
 the same way the [[Wire Numbers]] tab finds conductors â€” and lets you spot-check
 before exporting.
 
-## The labelling scheme
+## The labeling scheme
 
 A component tag is a **family code** plus a number::
 
