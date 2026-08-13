@@ -141,6 +141,10 @@ class TestRecentMenu(unittest.TestCase):
         win = self._win()
         p = _make_pdf(self.tmp, "gone.pdf")
         win.load_document(p)
+        # Windows won't unlink a file the app still has open, so release the
+        # document before simulating the file going missing (a moved file or a
+        # disconnected drive has the same effect for the menu).
+        win.document.close()
         os.remove(p)
         win._rebuild_recent_menu()
         act = self._entries(win)[0]

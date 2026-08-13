@@ -638,6 +638,11 @@ class MainWindow(QMainWindow):
         self.ref_view = PdfView(read_only=True)
         self.ref_view.config = self.config
         self.ref_view.set_render_enabled(False)   # nothing rendered while hidden
+        # A never-shown dock is given its *minimum* width by Qt, which without a
+        # floor is a ~70px sliver — and resizeDocks can't be relied on to widen
+        # it (it no-ops on Windows). A real floor keeps the pane usable on every
+        # platform; it stays freely resizable above this.
+        self.ref_view.setMinimumWidth(260)
         self.ref_view.requestOpen.connect(self.load_document)   # drag/drop a PDF
         ref_dock = QDockWidget("Reference viewer", self)
         ref_dock.setObjectName("RefViewDock")
@@ -1684,13 +1689,24 @@ class MainWindow(QMainWindow):
         self.ref_view.set_render_enabled(True)
         if not getattr(self, "_ref_dock_sized", False):
             # A dock that has never been shown has no remembered size, so Qt
-            # gives it its *minimum* width (a ~70px slither). Give it a usable
+            # gives it its *minimum* width (a ~70px sliver). Give it a usable
             # share of the window the first time it appears; after that the
             # user's own sizing is remembered.
+            #
+            # resizeDocks is only advisory — it is silently ignored on some
+            # platforms (it no-ops on Windows, which is how the sliver survived
+            # the first fix), so it sets the *preferred* width and the pane's own
+            # minimum width (set once, in __init__) guarantees the floor.
             self._ref_dock_sized = True
             width = max(380, min(560, self.width() // 3))
             try:
+                # pin the target width so the layout must adopt it, then drop
+                # back to the pane's own floor on the next event-loop turn so it
+                # stays freely resizable — worst case it settles at the floor,
+                # which is still a usable pane rather than a sliver
+                self.ref_view.setMinimumWidth(width)
                 self.resizeDocks([self.ref_dock], [width], Qt.Horizontal)
+                QTimer.singleShot(0, lambda: self.ref_view.setMinimumWidth(260))
             except Exception:
                 pass
         # the zoom was fitted to the pane's phantom size while it was hidden —
