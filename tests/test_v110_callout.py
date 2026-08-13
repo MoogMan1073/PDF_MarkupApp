@@ -91,20 +91,34 @@ class TestCalloutItem(unittest.TestCase):
         it.sync_from_model()
         self.assertEqual(it.ann.rotation, 0.0)
 
-    def test_tip_grip_follows_box_move(self):
-        # the tip targets a fixed page point; moving the box must keep the grip
-        # on target (re-placed on ItemPositionHasChanged), not drift with the box
-        it = self._item(Annotation(page=0, kind=KIND_CALLOUT,
-                                   rect=(100, 100, 220, 150), callout_point=(60, 220)))
+    def test_leader_travels_with_the_box_on_a_move(self):
+        # v1.3: moving the box takes its arrow along (fixed offset from the box)
+        # instead of leaving the tip pinned to the page point it was drawn at
+        ann = Annotation(page=0, kind=KIND_CALLOUT,
+                         rect=(100, 100, 220, 150), callout_point=(60, 220))
+        it = self._item(ann)
+        before = it._tip_handle.pos()
         it.setPos(it.pos().x() + 50, it.pos().y() + 30)   # move the box
-        # after the move, the grip's local pos matches the recomputed tip-local
+        # the model tip moved by the same delta…
+        self.assertAlmostEqual(ann.callout_point[0], 110, delta=0.01)
+        self.assertAlmostEqual(ann.callout_point[1], 250, delta=0.01)
+        # …so the grip keeps its position relative to the box
         grip = it._tip_handle.pos()
-        want = it._tip_local()
-        self.assertAlmostEqual(grip.x(), want.x(), delta=0.01)
-        self.assertAlmostEqual(grip.y(), want.y(), delta=0.01)
-        # and that puts the grip back on the fixed page target (60, 220)
-        self.assertAlmostEqual(grip.x() + it.pos().x(), 60, delta=0.01)
-        self.assertAlmostEqual(grip.y() + it.pos().y(), 220, delta=0.01)
+        self.assertAlmostEqual(grip.x(), before.x(), delta=0.01)
+        self.assertAlmostEqual(grip.y(), before.y(), delta=0.01)
+        self.assertAlmostEqual(grip.x(), it._tip_local().x(), delta=0.01)
+
+    def test_resize_and_sync_leave_the_tip_alone(self):
+        # only *moving* takes the arrow along — resizing the box (which also
+        # shifts pos() for the top/left grips) and model sync must not drift it
+        ann = Annotation(page=0, kind=KIND_CALLOUT,
+                         rect=(100, 100, 220, 150), callout_point=(60, 220))
+        it = self._item(ann)
+        it._begin_resize("nw")
+        it._resize_to("nw", it.mapToScene(QPointF(-20, -20)))
+        self.assertEqual(ann.callout_point, (60, 220))
+        it.sync_from_model(); it.sync_from_model()
+        self.assertEqual(ann.callout_point, (60, 220))
 
     def test_tip_default_does_not_mutate_model(self):
         # rendering a new callout (callout_point None) must NOT persist a default

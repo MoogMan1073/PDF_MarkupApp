@@ -853,18 +853,29 @@ class MainWindow(QMainWindow):
             (T.TOOL_COMMENT, "Comment"), (T.TOOL_TEXTBOX, "Text box"),
             (T.TOOL_CALLOUT, "Callout"),
             None,                                            # -- shapes
-            (T.TOOL_RECT, "Rectangle"), (T.TOOL_ARROW, "Arrow"),
+            (T.TOOL_RECT, "Rectangle"), (T.TOOL_CIRCLE, "Circle"),
+            (T.TOOL_ARROW, "Arrow"), (T.TOOL_LINE, "Line"),
             (T.TOOL_CLOUD, "Cloud"),
         ]
+        # Ctrl+<digit> shortcuts are pinned to the tool, not to its position in
+        # the toolbar, so inserting Circle/Line doesn't reshuffle the shortcuts
+        # people already know. Circle and Line have none (the ten digits are
+        # taken) — they're a click away on the toolbar.
+        tool_keys = [T.TOOL_SELECT, T.TOOL_HIGHLIGHT, T.TOOL_PEN, T.TOOL_ERASER,
+                     T.TOOL_COMMENT, T.TOOL_TEXTBOX, T.TOOL_CALLOUT,
+                     T.TOOL_RECT, T.TOOL_ARROW, T.TOOL_CLOUD]
         tool_tips = {
-            T.TOOL_CALLOUT: "Callout: drag a box, type the note, then drag the "
-                            "orange tip to point at the target",
+            T.TOOL_CALLOUT: "Callout: click the target the arrow points at, click "
+                            "again to end the arrow, then drag out the box and "
+                            "click to finish (Esc cancels)",
+            T.TOOL_CIRCLE: "Circle: drag out an ellipse — same fill, opacity, "
+                           "resize and rotate as the rectangle",
+            T.TOOL_LINE: "Line: drag a plain line (an arrow without the head)",
             T.TOOL_CLOUD: "Revision cloud: drag freehand, Shift+drag for a "
                           "rectangle, or click corners and double-click / Enter "
                           "to close",
         }
         self._tool_actions = {}
-        n = 0
         for entry in tool_defs:
             if entry is None:
                 tb.addSeparator()
@@ -872,18 +883,18 @@ class MainWindow(QMainWindow):
             tool, label = entry
             act = QAction(label, self, checkable=True)
             act.setData(tool)
-            # Ctrl+1..Ctrl+9 then Ctrl+0 select tools in toolbar order
-            n += 1
-            if n <= 10:
+            # Ctrl+1..Ctrl+9 then Ctrl+0, pinned per tool (see tool_keys)
+            if tool in tool_keys:
+                n = tool_keys.index(tool) + 1
                 digit = 0 if n == 10 else n
-                key = QKeySequence(f"Ctrl+{digit}")
-                act.setShortcut(key)
+                act.setShortcut(QKeySequence(f"Ctrl+{digit}"))
                 tip = tool_tips.get(tool, label)
                 act.setToolTip(f"{tip}  (Ctrl+{digit})")
                 act.setStatusTip(act.toolTip())
-            elif tool in tool_tips:
-                act.setToolTip(tool_tips[tool])
-                act.setStatusTip(tool_tips[tool])
+            else:
+                tip = tool_tips.get(tool, label)
+                act.setToolTip(tip)
+                act.setStatusTip(tip)
             act.triggered.connect(lambda _=False, t=tool: self._activate_tool(t))
             self.tool_group.addAction(act)
             tb.addAction(act)
@@ -986,6 +997,9 @@ class MainWindow(QMainWindow):
         # abandon a half-drawn revision-cloud polygon when switching away
         if getattr(self.view, "_cloud_pts", None) is not None:
             self.view._cloud_cancel()
+        # abandon a half-placed callout (arrow drawn, box not yet) on tool change
+        if getattr(self.view, "_co_stage", 0):
+            self.view._callout_cancel()
         self.view._suppress_existing_prompt = False
         self.view.tool.current = tool
         self.view.setDragMode(
@@ -1029,8 +1043,9 @@ class MainWindow(QMainWindow):
         return {
             T.TOOL_HIGHLIGHT: "highlight_color", T.TOOL_PEN: "pen_color",
             T.TOOL_TEXTBOX: "text_color", T.TOOL_RECT: "shape_color",
-            T.TOOL_ARROW: "shape_color", T.TOOL_CALLOUT: "text_color",
-            T.TOOL_CLOUD: "shape_color",
+            T.TOOL_CIRCLE: "shape_color",
+            T.TOOL_ARROW: "shape_color", T.TOOL_LINE: "shape_color",
+            T.TOOL_CALLOUT: "text_color", T.TOOL_CLOUD: "shape_color",
         }.get(t, "pen_color")
 
     def _update_color_btn(self):
@@ -1048,7 +1063,7 @@ class MainWindow(QMainWindow):
     def _active_fill_attrs(self):
         """(color_attr, opacity_attr) for the fill-capable tool, else (None, None)."""
         t = self.view.tool.current
-        if t == T.TOOL_RECT:
+        if t in (T.TOOL_RECT, T.TOOL_CIRCLE):
             return "shape_fill", "shape_fill_opacity"
         if t in (T.TOOL_TEXTBOX, T.TOOL_CALLOUT):
             return "text_fill", "text_fill_opacity"

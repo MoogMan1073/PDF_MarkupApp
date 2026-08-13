@@ -65,8 +65,10 @@ class TestCopyModel(unittest.TestCase):
         self.assertEqual(b.rect, (9, 9, 9, 9))     # geometry NOT copied
 
     def test_copyable_kinds(self):
+        from app.model.annotations import KIND_CIRCLE, KIND_LINE
         self.assertEqual(COPYABLE_KINDS,
-                         {KIND_TEXTBOX, KIND_CALLOUT, KIND_RECT, KIND_ARROW, KIND_CLOUD})
+                         {KIND_TEXTBOX, KIND_CALLOUT, KIND_RECT, KIND_CIRCLE,
+                          KIND_ARROW, KIND_LINE, KIND_CLOUD})
 
 
 # --- view layer ------------------------------------------------------------

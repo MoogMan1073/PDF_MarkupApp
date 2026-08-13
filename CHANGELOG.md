@@ -4,8 +4,21 @@ All notable changes to **DSI Redline** are documented here. Versions are tagged
 `vX.Y.Z`; each tag triggers the Windows build that publishes the installer and a
 portable zip to the matching GitHub release.
 
-## Unreleased
+## v1.3.0
 
+- **Circle and line tools.** A **Circle** that behaves exactly like the rectangle
+  (fill, opacity, resize, rotate, stacking, copy/paste) and a **Line** that
+  behaves exactly like the arrow — just without the arrowhead. Both export as
+  real PDF annotations (Circle / Line) and round-trip on reload.
+- **Callouts are drawn arrow-first.** Placing a callout is now three clicks:
+  **click what the arrow should point at**, **click again to end the arrow**, then
+  **drag out the box from that end point and click to finish** (`Esc` cancels at
+  any stage). The box is then edited exactly as before — resize it, retype it, and
+  drag the orange tip to re-aim the arrow.
+- **A callout's arrow now travels with its box.** Moving a callout takes its
+  leader along, keeping the same offset, instead of leaving the tip pinned to the
+  page point it was drawn at. Resizing the box still leaves the arrow aimed where
+  you put it.
 - **Recent files.** **File ▸ Open Recent** lists the last **10** drawings you
   opened, newest first — pick one to reopen it. The list is remembered between
   sessions, reopening a file moves it back to the top instead of duplicating it,

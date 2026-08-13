@@ -24,8 +24,8 @@ import fitz  # PyMuPDF
 
 from .annotations import (
     Annotation, now_iso,
-    KIND_HIGHLIGHT, KIND_PEN, KIND_COMMENT, KIND_TEXTBOX, KIND_RECT, KIND_ARROW,
-    KIND_CALLOUT, KIND_CLOUD,
+    KIND_HIGHLIGHT, KIND_PEN, KIND_COMMENT, KIND_TEXTBOX, KIND_RECT, KIND_CIRCLE,
+    KIND_ARROW, KIND_LINE, KIND_CALLOUT, KIND_CLOUD,
 )
 
 # Seeded SHX / AutoCAD junk ignore-patterns (regex, may use inline (?i)).
@@ -45,7 +45,8 @@ _PDF_TYPE_TO_KIND = {
     "Highlight": KIND_HIGHLIGHT,
     "Ink": KIND_PEN,
     "Square": KIND_RECT,
-    "Line": KIND_ARROW,
+    "Circle": KIND_CIRCLE,
+    "Line": KIND_ARROW,   # refined to KIND_LINE when it has no arrowhead
     "Polygon": KIND_CLOUD,
 }
 
@@ -195,7 +196,16 @@ def load_pdf_annotations(
                             ann.fill_opacity = float(op)
                     except Exception:
                         pass
-            elif kind == KIND_RECT:
+            elif kind == KIND_ARROW:
+                # both arrows and plain lines are PDF "Line" annots — an arrow is
+                # the one carrying an arrowhead line-ending
+                try:
+                    ends = annot.line_ends
+                except Exception:
+                    ends = None
+                if not (ends and any(int(e) != 0 for e in ends)):
+                    ann.kind = kind = KIND_LINE
+            elif kind in (KIND_RECT, KIND_CIRCLE):
                 fill = _color_or_default(colors, "fill", None)   # /IC
                 if fill is not None:
                     ann.fill_color = fill
@@ -291,8 +301,9 @@ def write_annotations_to_pdf(doc: "fitz.Document", annotations: Iterable[Annotat
                         annot.set_opacity(ann.fill_opacity)
                     except Exception:
                         pass
-            elif ann.kind == KIND_RECT:
-                annot = page.add_rect_annot(rect)
+            elif ann.kind in (KIND_RECT, KIND_CIRCLE):
+                annot = (page.add_circle_annot(rect) if ann.kind == KIND_CIRCLE
+                         else page.add_rect_annot(rect))
                 if ann.fill_color is not None:
                     annot.set_colors(stroke=ann.color, fill=ann.fill_color)
                 else:
@@ -303,14 +314,16 @@ def write_annotations_to_pdf(doc: "fitz.Document", annotations: Iterable[Annotat
                         annot.set_opacity(ann.fill_opacity)
                     except Exception:
                         pass
-            elif ann.kind == KIND_ARROW:
+            elif ann.kind in (KIND_ARROW, KIND_LINE):
                 annot = page.add_line_annot(p0, p1)
                 annot.set_colors(stroke=ann.color)
                 annot.set_border(width=ann.width)
-                try:
-                    annot.set_line_ends(fitz.PDF_ANNOT_LE_NONE, fitz.PDF_ANNOT_LE_OPEN_ARROW)
-                except Exception:
-                    pass
+                if ann.kind == KIND_ARROW:
+                    try:
+                        annot.set_line_ends(fitz.PDF_ANNOT_LE_NONE,
+                                            fitz.PDF_ANNOT_LE_OPEN_ARROW)
+                    except Exception:
+                        pass
             elif ann.kind == KIND_CALLOUT:
                 # a FreeText with a leader (CL) from the box to the tip point
                 tip = ann.callout_point or (x0 - 36.0, y1 + 36.0)

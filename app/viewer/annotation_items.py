@@ -21,7 +21,8 @@ from PySide6.QtWidgets import (
 
 from ..model.annotations import (
     Annotation, KIND_HIGHLIGHT, KIND_PEN, KIND_COMMENT, KIND_TEXTBOX,
-    KIND_RECT, KIND_ARROW, KIND_CALLOUT, KIND_CLOUD, COPYABLE_KINDS,
+    KIND_RECT, KIND_CIRCLE, KIND_ARROW, KIND_LINE, KIND_CALLOUT, KIND_CLOUD,
+    COPYABLE_KINDS,
 )
 from .command_stack import ModifyAnnotationCommand, capture
 
@@ -126,8 +127,9 @@ class _BaseMixin:
         note_act = None
         if not ann.is_comment_like:
             note_act = menu.addAction("Edit note…" if ann.has_note else "Add note…")
-        # rectangles have no double-click editor, so expose fill here
-        fill_act = menu.addAction("Fill…") if ann.kind == KIND_RECT else None
+        # rectangles/circles have no double-click editor, so expose fill here
+        fill_act = (menu.addAction("Fill…")
+                    if ann.kind in (KIND_RECT, KIND_CIRCLE) else None)
         todo_act = menu.addAction("Reveal in TODO list") if ann.is_todo else None
         cmt_act = (menu.addAction("Reveal in Comments")
                    if (ann.is_comment_like or ann.has_note) else None)
@@ -448,6 +450,23 @@ class RectShapeItem(ResizableRectItem):
             painter.drawRect(self.rect())
 
 
+class EllipseShapeItem(ResizableRectItem):
+    """A circle/ellipse drawn in its bounding box — identical to the rectangle
+    in every way (move, resize, rotate, fill, opacity), just a different shape."""
+
+    def paint(self, painter, option, widget=None):
+        option.state &= ~QStyle.State_Selected
+        brush = fill_brush(self.ann)
+        painter.setPen(QPen(qcolor(self.ann.color), self.ann.width))
+        painter.setBrush(brush if brush is not None else Qt.NoBrush)
+        painter.drawEllipse(self.rect())
+        if self.isSelected():
+            # the selection hint stays a rectangle: it's the bounding box you drag
+            painter.setPen(QPen(QColor(30, 120, 230), 0, Qt.DashLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(self.rect())
+
+
 class TextBoxItem(ResizableRectItem):
     """FreeText-style mark: renders its text directly on the page."""
 
@@ -518,9 +537,14 @@ class CalloutItem(TextBoxItem):
     def __init__(self, ann: Annotation, view):
         self._tip_handle = None
         self._tip_snap = None
+        # >0 while a pos() change must NOT drag the leader along with the box
+        # (model sync and resizing both move pos; only a *move* takes the tip)
+        self._hold_tip = 0
+        self._last_pos = None
         super().__init__(ann, view)
         self._rotate_handle.setVisible(False)   # callouts don't rotate
         self._tip_handle = _LeaderTipHandle(self)
+        self._last_pos = QPointF(self.pos())
         self._place_tip()
 
     # geometry --------------------------------------------------------------
@@ -542,8 +566,23 @@ class CalloutItem(TextBoxItem):
 
     def sync_from_model(self):
         self.ann.rotation = 0.0          # never rotate a callout
-        super().sync_from_model()
+        self._hold_tip += 1              # model->item: pos moves, tip must not
+        try:
+            super().sync_from_model()
+        finally:
+            self._hold_tip -= 1
+        self._last_pos = QPointF(self.pos())
         self._place_tip()
+
+    def _resize_to(self, role, scene_pos):
+        # resizing the box repositions pos() for the top/left grips, but the
+        # leader keeps pointing where it pointed — only moving takes it along
+        self._hold_tip += 1
+        try:
+            super()._resize_to(role, scene_pos)
+        finally:
+            self._hold_tip -= 1
+        self._last_pos = QPointF(self.pos())
 
     def _place_tip(self):
         if self._tip_handle is not None:
@@ -560,8 +599,19 @@ class CalloutItem(TextBoxItem):
                 self._tip_handle.setVisible(bool(value))
                 self._rotate_handle.setVisible(False)
             elif change == QGraphicsItem.ItemPositionHasChanged:
-                # the tip targets a fixed page point; as the box moves, re-place
-                # the grip so it stays on target instead of drifting with the box
+                # Moving the box takes its leader with it: the arrow keeps the
+                # same offset from the box rather than staying pinned to the page
+                # point it was drawn at. (Suppressed for model sync and resize —
+                # both of which also shift pos(); see _hold_tip.)
+                new = self.pos()
+                if (self._hold_tip == 0 and self._last_pos is not None
+                        and self.ann.callout_point is not None):
+                    dx = new.x() - self._last_pos.x()
+                    dy = new.y() - self._last_pos.y()
+                    if dx or dy:
+                        tx, ty = self.ann.callout_point
+                        self.ann.callout_point = (tx + dx, ty + dy)
+                self._last_pos = QPointF(new)
                 self._place_tip()
         return res
 
@@ -822,6 +872,25 @@ class ArrowItem(ResizableRectItem):
 # --- comment (sticky note bubble) ------------------------------------------
 
 
+class LineItem(ArrowItem):
+    """A plain line — an arrow without the head. Endpoints, resize/rotate and
+    every other behaviour are the arrow's."""
+
+    def paint(self, painter, option, widget=None):
+        option.state &= ~QStyle.State_Selected
+        start, end = self._arrow_points()
+        pen = QPen(qcolor(self.ann.color), self.ann.width)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawLine(start, end)
+        if self.isSelected():
+            painter.setPen(QPen(QColor(30, 120, 230), 0, Qt.DashLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(self.rect())
+
+
 class CommentItem(_BaseMixin, QGraphicsObject):
     SIZE = 18.0
 
@@ -882,7 +951,9 @@ _FACTORY = {
     KIND_COMMENT: CommentItem,
     KIND_TEXTBOX: TextBoxItem,
     KIND_RECT: RectShapeItem,
+    KIND_CIRCLE: EllipseShapeItem,
     KIND_ARROW: ArrowItem,
+    KIND_LINE: LineItem,
     KIND_CALLOUT: CalloutItem,
     KIND_CLOUD: CloudItem,
 }

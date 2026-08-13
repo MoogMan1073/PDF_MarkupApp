@@ -19,14 +19,17 @@ KIND_PEN = "pen"
 KIND_COMMENT = "comment"      # sticky note (bubble icon)
 KIND_TEXTBOX = "textbox"      # FreeText rendered on the page
 KIND_RECT = "rect"
+KIND_CIRCLE = "circle"        # ellipse drawn in its bounding box (like a rect)
 KIND_ARROW = "arrow"
+KIND_LINE = "line"            # a plain arrow with no head
 KIND_CALLOUT = "callout"      # FreeText with a leader arrow to a target point
 KIND_CLOUD = "cloud"          # revision cloud (scalloped polygon, outline only)
 
 TEXT_KINDS = {KIND_COMMENT, KIND_TEXTBOX, KIND_CALLOUT}
 
 # Marks the user can copy / paste as whole objects.
-COPYABLE_KINDS = {KIND_TEXTBOX, KIND_CALLOUT, KIND_RECT, KIND_ARROW, KIND_CLOUD}
+COPYABLE_KINDS = {KIND_TEXTBOX, KIND_CALLOUT, KIND_RECT, KIND_CIRCLE,
+                  KIND_ARROW, KIND_LINE, KIND_CLOUD}
 
 # Visual-style fields carried by "copy formatting" / "paste formatting" — colour,
 # fill and text styling, but NOT the text content or the geometry.
