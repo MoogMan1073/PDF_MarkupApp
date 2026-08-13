@@ -35,7 +35,7 @@ example a colleague's markup) are imported with their original authors — see
 
 ## Tabs
 
-DSI Redline is organised into these tabs:
+DSI Redline is organized into these tabs:
 
 1. **Viewer** — read and mark up the drawing. See [[Viewer]] and [[Markup Tools]].
 2. **TODO** — your action items. See [[TODO]].

@@ -34,7 +34,7 @@ Tick **Labels only** to force single-column output in either mode.
   reflects), so this checkbox is a final guard — in the normal flow you'll see
   the same rows either way.
 - **Show** filters (Conforming / Fixed-OEM / Jumpers) and the **✓** include
-  toggles from the table are all honoured.
+  toggles from the table are all honored.
 
 > **Dedupe vs. Labels/wire vs. Count.** These are three different things:
 > **Dedupe** removes duplicate labels; **Labels/wire** *repeats* each label N

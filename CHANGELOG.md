@@ -22,7 +22,7 @@ portable zip to the matching GitHub release.
 - **Recent files.** **File ▸ Open Recent** lists the last **10** drawings you
   opened, newest first — pick one to reopen it. The list is remembered between
   sessions, reopening a file moves it back to the top instead of duplicating it,
-  a file that's since been moved or deleted is shown greyed out as *(not found)*
+  a file that's since been moved or deleted is shown grayed out as *(not found)*
   rather than silently vanishing, and **Clear list** empties it.
 - **Second viewer (reference pane).** **View ▸ Reference viewer** (**`F8`**)
   opens a second, **read-only** view of the same PDF — for keeping a legend, TOC
@@ -42,13 +42,13 @@ portable zip to the matching GitHub release.
   now OCR'd automatically when Tesseract is installed (it no longer requires
   flipping an OCR switch in Settings first).
 - **Sharper zoom past 400%.** The page bitmap used to stop re-rendering at 400%
-  and just upscale (blurry) beyond that. It now rasterises at the actual zoom up
+  and just upscale (blurry) beyond that. It now rasterizes at the actual zoom up
   to the 8× ceiling, so normal sheets stay crisp when you zoom in — bounded by a
   per-page pixel budget so very large (E-size) sheets can't exhaust memory.
 - **Print (`Ctrl+P`).** Print the drawing — with its marks — straight through the
   standard system print dialog (pick printer, copies, orientation, page range),
   to any installed printer (the Windows print spooler on Windows, CUPS
-  elsewhere). Pages are fitted and centred on the sheet. **Print preview…** is a
+  elsewhere). Pages are fitted and centered on the sheet. **Print preview…** is a
   separate menu item for seeing the pages first, with an **Include markups**
   toggle (on by default) to print either the marked-up or the clean drawing. The
   printer is created without the blocking "contacting printer…" query that could
@@ -57,7 +57,7 @@ portable zip to the matching GitHub release.
   name is too long or contains characters that can't back its
   `<name>.markup.db` sidecar, the file now still **opens for viewing** (view,
   search, navigate, print, PDF tools) instead of failing to open. Markup and
-  saving are greyed out, and a popup explains why and how to fix it (rename the
+  saving are grayed out, and a popup explains why and how to fix it (rename the
   file to something shorter/simpler and reopen).
 - **Movable tabs.** The five main panes (Viewer, TODO, Wire Numbers, Component
   Labels, PDF Tools) are now floatable, dockable panels — like the Comments and
@@ -71,14 +71,14 @@ portable zip to the matching GitHub release.
   repeated pastes cascade so they don't stack; pasted marks land selected and are
   undoable as one step.
 - **Format painter.** Right-click ▸ **Copy formatting** then **Paste formatting**
-  onto another mark **of the same type** to transfer its colour, opacity, fill,
+  onto another mark **of the same type** to transfer its color, opacity, fill,
   border width and font — without touching the target's text or geometry.
-- **Sticky styles.** Setting a colour, opacity, fill or font on a new text box or
+- **Sticky styles.** Setting a color, opacity, fill or font on a new text box or
   callout is remembered as the default for the next one, so styles don't have to
   be re-declared for every mark (the text content is never carried over).
 - **Stacking order.** Right-click a mark ▸ **Order** to **Bring to Front**,
   **Bring Forward**, **Send Backward** or **Send to Back** (undoable; the order
-  persists and is honoured in the exported PDF).
+  persists and is honored in the exported PDF).
 - **Smoother "Draw new".** Choosing **Draw new** when starting a mark on top of an
   existing one no longer re-prompts as you place the object — the pop-up asks
   once, then you draw freely.
@@ -124,7 +124,7 @@ Workflow:
 - **Save As — fork to a new working file** (`Ctrl+Shift+S`). Copies the current
   markup into a brand-new working file and switches to editing it; the original
   is left untouched.
-- **Toolbar reorganised** into logical groups: select · highlight / pen / eraser
+- **Toolbar reorganized** into logical groups: select · highlight / pen / eraser
   · comment / text box / callout · rectangle / arrow / cloud.
 
 ## v1.0.3
@@ -187,7 +187,7 @@ New features:
   Sheet** plus an editable per-page **Sheet** column, auto-detected from the
   title block on searchable PDFs.
 - **Viewer ribbon:** editable **zoom %** box.
-- **Settings** organised into tabs; **Wire Numbers** gained a scanned-page
+- **Settings** organized into tabs; **Wire Numbers** gained a scanned-page
   AI/OCR engine picker.
 - Crop/extract reconstructs tables best-effort from OCR geometry when no AI key
   is set.

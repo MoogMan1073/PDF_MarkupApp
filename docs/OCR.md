@@ -21,7 +21,7 @@ Then tick **Enable OCR fallback** in [[Settings]].
 ## How it's used
 
 During [[Wire Numbers]] extraction, pages **without** a text layer are rendered
-at higher DPI and OCR'd; recognised tokens flow through the same parser. Such
+at higher DPI and OCR'd; recognized tokens flow through the same parser. Such
 labels show `Source = ocr` in the table. Low-confidence regions can optionally
 be sent to [[AI Assist]].
 
