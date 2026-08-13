@@ -138,18 +138,20 @@ class TestRecentMenu(unittest.TestCase):
         self.assertEqual(win.config.recent_files, [])
 
     def test_missing_file_is_listed_but_disabled(self):
+        # Seed the recents list directly instead of open-then-delete: several
+        # components legitimately hold an opened PDF (the Document, the PDF
+        # Tools thumbnail grid), and Windows refuses to unlink a file any of
+        # them still has open. The menu only checks os.path.exists, so a path
+        # that was never created exercises exactly the same behavior on every
+        # platform: the entry stays listed, grayed out as "(not found)".
         win = self._win()
-        p = _make_pdf(self.tmp, "gone.pdf")
-        win.load_document(p)
-        # Windows won't unlink a file the app still has open, so release the
-        # document before simulating the file going missing (a moved file or a
-        # disconnected drive has the same effect for the menu).
-        win.document.close()
-        os.remove(p)
+        p = os.path.join(self.tmp, "gone.pdf")     # never created
+        win.config.add_recent_file(p)
         win._rebuild_recent_menu()
         act = self._entries(win)[0]
         self.assertFalse(act.isEnabled())
         self.assertIn("not found", act.text())
+        self.assertIn("gone.pdf", act.text())      # still identifiable
 
     def test_entry_opens_the_document(self):
         win = self._win()
