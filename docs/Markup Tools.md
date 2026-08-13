@@ -22,25 +22,37 @@ comment / text box / callout · rectangle / arrow / cloud.
   matches the text color. **Double-click to edit** the text *and* its font —
   size, color, **bold** and *italic* can all be changed after the fact. Give it
   an opaque **Fill** to lay a solid cover over the drawing beneath.
-- **Callout** — a text box with a **leader arrow**. Drag the box, type the note,
-  then drag the orange **tip** grip so the arrow points at whatever you're
-  calling out. The box still moves, resizes and edits like a text box.
-- **Rectangle** and **Arrow** — shapes with color + width. Rectangles also take a
-  **Fill** (right-click ▸ *Fill…* to change it later).
+- **Callout** — a text box with a **leader arrow**, drawn **arrow first** in
+  three clicks:
+  1. **Click what the arrow should point at** (the target).
+  2. **Click again where the arrow ends** — that's also where the box starts.
+  3. **Drag out the box** from there and **click to finish**, then type the note.
+
+  **Esc** cancels at any stage. Afterwards the box moves, resizes and edits like
+  a text box, and the orange **tip** grip re-aims the arrow. **Moving the box
+  takes the arrow with it** (it keeps the same offset); resizing the box leaves
+  the arrow pointing where you put it.
+- **Rectangle** and **Circle** — shapes with color + width that also take a
+  **Fill** (right-click ▸ *Fill…* to change it later). The circle is drawn in a
+  bounding box and behaves exactly like the rectangle.
+- **Arrow** and **Line** — the same shape with and without an arrowhead; drag
+  from one end to the other.
 - **Cloud** — a revision cloud, outline only. **Drag** to draw it freehand,
   **Shift+drag** for a rectangular cloud, or **click** each corner and
   **double-click** (or press **Enter**) to close the loop; **Esc** cancels.
 
 Color, pen width, font size, **B**old and *I*talic apply to the active tool. The
-**Fill** button applies to rectangles and text boxes/callouts and opens a small
-dialog with a color picker and an **opacity slider** (0% = no fill, 100% = an
-opaque cover). Rectangles also expose **Fill…** on right-click.
+**Fill** button applies to rectangles, circles and text boxes/callouts and opens
+a small dialog with a color picker and an **opacity slider** (0% = no fill,
+100% = an opaque cover). Rectangles and circles also expose **Fill…** on
+right-click.
 
 > [!tip] Tool shortcuts
-> Press **Ctrl + a number** to pick a tool in toolbar order: **Ctrl+1** Select,
-> **Ctrl+2** Highlight, **Ctrl+3** Pen, **Ctrl+4** Eraser, **Ctrl+5** Comment,
-> **Ctrl+6** Text box, **Ctrl+7** Callout, **Ctrl+8** Rectangle, **Ctrl+9** Arrow,
-> **Ctrl+0** Cloud.
+> Press **Ctrl + a number** to pick a tool: **Ctrl+1** Select, **Ctrl+2**
+> Highlight, **Ctrl+3** Pen, **Ctrl+4** Eraser, **Ctrl+5** Comment, **Ctrl+6**
+> Text box, **Ctrl+7** Callout, **Ctrl+8** Rectangle, **Ctrl+9** Arrow,
+> **Ctrl+0** Cloud. These are pinned to the tool, so they don't shuffle when new
+> tools are added — **Circle** and **Line** are a click away on the toolbar.
 
 ## Notes on any mark
 

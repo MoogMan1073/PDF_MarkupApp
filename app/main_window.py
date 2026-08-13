@@ -695,6 +695,8 @@ class MainWindow(QMainWindow):
         mb = self.menuBar()
         m_file = mb.addMenu("&File")
         self.act_open = m_file.addAction("&Open PDF…", self.open_pdf, QKeySequence.Open)
+        self.m_recent = m_file.addMenu("Open &Recent")
+        self._rebuild_recent_menu()
         self.act_save = m_file.addAction("&Save markup", self.save_markup, QKeySequence.Save)
         self.act_save_as = m_file.addAction(
             "Save &As… (fork working file)", self.save_as_fork,
@@ -784,6 +786,38 @@ class MainWindow(QMainWindow):
         m_help.addAction("User Manual", self._show_help, QKeySequence.HelpContents)
         m_help.addAction("About " + __app_name__, self._show_about)
 
+    def _rebuild_recent_menu(self):
+        """Refill File ▸ Open Recent from the saved list (most recent first)."""
+        menu = getattr(self, "m_recent", None)
+        if menu is None:
+            return
+        menu.clear()
+        paths = self.config.recent_files
+        if not paths:
+            empty = menu.addAction("(no recent files)")
+            empty.setEnabled(False)
+            return
+        for i, path in enumerate(paths, start=1):
+            # &1..&9 then &0 for quick keyboard access
+            label = f"&{i % 10}  {os.path.basename(path)}"
+            act = menu.addAction(label)
+            act.setToolTip(path)
+            act.setStatusTip(path)
+            if os.path.exists(path):
+                act.triggered.connect(
+                    lambda _=False, p=path: self.load_document(p))
+            else:
+                # keep it listed but obviously unusable rather than silently
+                # dropping a file that's just on a disconnected drive
+                act.setEnabled(False)
+                act.setText(f"{label}   (not found)")
+        menu.addSeparator()
+        menu.addAction("Clear list", self._clear_recent_files)
+
+    def _clear_recent_files(self):
+        self.config.clear_recent_files()
+        self._rebuild_recent_menu()
+
     def _show_help(self):
         from .help import HelpWindow
         # keep a reference so the window isn't garbage-collected
@@ -819,18 +853,29 @@ class MainWindow(QMainWindow):
             (T.TOOL_COMMENT, "Comment"), (T.TOOL_TEXTBOX, "Text box"),
             (T.TOOL_CALLOUT, "Callout"),
             None,                                            # -- shapes
-            (T.TOOL_RECT, "Rectangle"), (T.TOOL_ARROW, "Arrow"),
+            (T.TOOL_RECT, "Rectangle"), (T.TOOL_CIRCLE, "Circle"),
+            (T.TOOL_ARROW, "Arrow"), (T.TOOL_LINE, "Line"),
             (T.TOOL_CLOUD, "Cloud"),
         ]
+        # Ctrl+<digit> shortcuts are pinned to the tool, not to its position in
+        # the toolbar, so inserting Circle/Line doesn't reshuffle the shortcuts
+        # people already know. Circle and Line have none (the ten digits are
+        # taken) — they're a click away on the toolbar.
+        tool_keys = [T.TOOL_SELECT, T.TOOL_HIGHLIGHT, T.TOOL_PEN, T.TOOL_ERASER,
+                     T.TOOL_COMMENT, T.TOOL_TEXTBOX, T.TOOL_CALLOUT,
+                     T.TOOL_RECT, T.TOOL_ARROW, T.TOOL_CLOUD]
         tool_tips = {
-            T.TOOL_CALLOUT: "Callout: drag a box, type the note, then drag the "
-                            "orange tip to point at the target",
+            T.TOOL_CALLOUT: "Callout: click the target the arrow points at, click "
+                            "again to end the arrow, then drag out the box and "
+                            "click to finish (Esc cancels)",
+            T.TOOL_CIRCLE: "Circle: drag out an ellipse — same fill, opacity, "
+                           "resize and rotate as the rectangle",
+            T.TOOL_LINE: "Line: drag a plain line (an arrow without the head)",
             T.TOOL_CLOUD: "Revision cloud: drag freehand, Shift+drag for a "
                           "rectangle, or click corners and double-click / Enter "
                           "to close",
         }
         self._tool_actions = {}
-        n = 0
         for entry in tool_defs:
             if entry is None:
                 tb.addSeparator()
@@ -838,18 +883,18 @@ class MainWindow(QMainWindow):
             tool, label = entry
             act = QAction(label, self, checkable=True)
             act.setData(tool)
-            # Ctrl+1..Ctrl+9 then Ctrl+0 select tools in toolbar order
-            n += 1
-            if n <= 10:
+            # Ctrl+1..Ctrl+9 then Ctrl+0, pinned per tool (see tool_keys)
+            if tool in tool_keys:
+                n = tool_keys.index(tool) + 1
                 digit = 0 if n == 10 else n
-                key = QKeySequence(f"Ctrl+{digit}")
-                act.setShortcut(key)
+                act.setShortcut(QKeySequence(f"Ctrl+{digit}"))
                 tip = tool_tips.get(tool, label)
                 act.setToolTip(f"{tip}  (Ctrl+{digit})")
                 act.setStatusTip(act.toolTip())
-            elif tool in tool_tips:
-                act.setToolTip(tool_tips[tool])
-                act.setStatusTip(tool_tips[tool])
+            else:
+                tip = tool_tips.get(tool, label)
+                act.setToolTip(tip)
+                act.setStatusTip(tip)
             act.triggered.connect(lambda _=False, t=tool: self._activate_tool(t))
             self.tool_group.addAction(act)
             tb.addAction(act)
@@ -952,6 +997,9 @@ class MainWindow(QMainWindow):
         # abandon a half-drawn revision-cloud polygon when switching away
         if getattr(self.view, "_cloud_pts", None) is not None:
             self.view._cloud_cancel()
+        # abandon a half-placed callout (arrow drawn, box not yet) on tool change
+        if getattr(self.view, "_co_stage", 0):
+            self.view._callout_cancel()
         self.view._suppress_existing_prompt = False
         self.view.tool.current = tool
         self.view.setDragMode(
@@ -995,8 +1043,9 @@ class MainWindow(QMainWindow):
         return {
             T.TOOL_HIGHLIGHT: "highlight_color", T.TOOL_PEN: "pen_color",
             T.TOOL_TEXTBOX: "text_color", T.TOOL_RECT: "shape_color",
-            T.TOOL_ARROW: "shape_color", T.TOOL_CALLOUT: "text_color",
-            T.TOOL_CLOUD: "shape_color",
+            T.TOOL_CIRCLE: "shape_color",
+            T.TOOL_ARROW: "shape_color", T.TOOL_LINE: "shape_color",
+            T.TOOL_CALLOUT: "text_color", T.TOOL_CLOUD: "shape_color",
         }.get(t, "pen_color")
 
     def _update_color_btn(self):
@@ -1014,7 +1063,7 @@ class MainWindow(QMainWindow):
     def _active_fill_attrs(self):
         """(color_attr, opacity_attr) for the fill-capable tool, else (None, None)."""
         t = self.view.tool.current
-        if t == T.TOOL_RECT:
+        if t in (T.TOOL_RECT, T.TOOL_CIRCLE):
             return "shape_fill", "shape_fill_opacity"
         if t in (T.TOOL_TEXTBOX, T.TOOL_CALLOUT):
             return "text_fill", "text_fill_opacity"
@@ -1097,6 +1146,9 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         self.document = doc
+        # remember it in File ▸ Open Recent (only once the open has succeeded)
+        self.config.add_recent_file(path)
+        self._rebuild_recent_menu()
         # Feature 4: a .marked.pdf was opened but its original markup database
         # couldn't be found, so a new one was started — let the user know.
         if getattr(doc, "sidecar_recreated", False):

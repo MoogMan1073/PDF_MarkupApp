@@ -17,8 +17,8 @@ from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsItem
 
 from ..model.annotations import (
     Annotation, AnnotationStore,
-    KIND_HIGHLIGHT, KIND_PEN, KIND_COMMENT, KIND_TEXTBOX, KIND_RECT, KIND_ARROW,
-    KIND_CALLOUT, KIND_CLOUD, COPYABLE_KINDS,
+    KIND_HIGHLIGHT, KIND_PEN, KIND_COMMENT, KIND_TEXTBOX, KIND_RECT, KIND_CIRCLE,
+    KIND_ARROW, KIND_LINE, KIND_CALLOUT, KIND_CLOUD, COPYABLE_KINDS,
 )
 from .page_item import PageItem
 from .annotation_items import make_item, ANNOT_Z
@@ -93,6 +93,13 @@ class PdfView(QGraphicsView):
         self._cloud_page = None           # (pno, page_item)
         self._cloud_press = None          # (scene_pt) to tell a click from a drag
         self._cloud_rect = False          # Shift+drag -> rectangular cloud
+        # callout in progress: arrow-then-box, placed with three clicks
+        #   0 idle -> 1 tip placed (rubber-banding the arrow)
+        #          -> 2 arrow placed (rubber-banding the box) -> commit
+        self._co_stage = 0
+        self._co_tip = None               # (lx, ly) the arrow points AT
+        self._co_tail = None              # (lx, ly) arrow end == box corner
+        self._co_page = None              # (pno, page_item)
         # copy / paste
         self._obj_clip = []               # list of Annotation dicts (whole-mark copy)
         self._obj_paste_n = 0             # cascading paste offset counter
@@ -179,6 +186,9 @@ class PdfView(QGraphicsView):
         self._cloud_pts = None
         self._cloud_page = None
         self._cloud_press = None
+        # a half-placed callout still references the destroyed PageItems
+        self._co_stage = 0
+        self._co_tip = self._co_tail = self._co_page = None
         # scene.clear() destroyed any selection/search overlays — reset trackers
         self._text_sel_items = []
         self._selected_text = ""
@@ -435,6 +445,8 @@ class PdfView(QGraphicsView):
             self.cancel_region_pick()
         if self._cloud_pts is not None:
             self._cloud_cancel()
+        if self._co_stage:
+            self._callout_cancel()
         if self._draft is not None:
             self._draft = None
             self._clear_preview()
@@ -544,6 +556,14 @@ class PdfView(QGraphicsView):
                 event.accept()
                 return
 
+        if event.button() == Qt.LeftButton and self.tool.current == T.TOOL_CALLOUT:
+            # callout is placed with clicks (arrow target -> arrow end -> box),
+            # not a drag, so it never goes through _begin_draft
+            scene_pt = self.mapToScene(event.position().toPoint())
+            if self._callout_click(scene_pt):
+                event.accept()
+                return
+
         if event.button() == Qt.LeftButton and self.tool.current == T.TOOL_CLOUD:
             # cloud is press-drag (freehand, or Shift+drag = rectangle) OR
             # click-to-add-vertices (polygon); decide on move/release, so just
@@ -598,6 +618,12 @@ class PdfView(QGraphicsView):
             return
         if self._region_item is not None and (event.buttons() & Qt.LeftButton):
             self._region_update(self.mapToScene(event.position().toPoint()))
+            event.accept()
+            return
+        if self._co_stage and self._co_page is not None:
+            _, page = self._co_page
+            _lp = page.mapFromScene(self.mapToScene(event.position().toPoint()))
+            self._callout_preview((_lp.x(), _lp.y()))
             event.accept()
             return
         if self._erasing and (event.buttons() & Qt.LeftButton):
@@ -716,16 +742,18 @@ class PdfView(QGraphicsView):
                                      color=self.tool.pen_color, width=self.tool.pen_width,
                                      author=author)
             return True
-        if tool in (T.TOOL_HIGHLIGHT, T.TOOL_RECT, T.TOOL_ARROW, T.TOOL_TEXTBOX,
-                    T.TOOL_CALLOUT):
+        if tool in (T.TOOL_HIGHLIGHT, T.TOOL_RECT, T.TOOL_CIRCLE, T.TOOL_ARROW,
+                    T.TOOL_LINE, T.TOOL_TEXTBOX, T.TOOL_CALLOUT):
             kind = {T.TOOL_HIGHLIGHT: KIND_HIGHLIGHT, T.TOOL_RECT: KIND_RECT,
-                    T.TOOL_ARROW: KIND_ARROW, T.TOOL_TEXTBOX: KIND_TEXTBOX,
+                    T.TOOL_CIRCLE: KIND_CIRCLE,
+                    T.TOOL_ARROW: KIND_ARROW, T.TOOL_LINE: KIND_LINE,
+                    T.TOOL_TEXTBOX: KIND_TEXTBOX,
                     T.TOOL_CALLOUT: KIND_CALLOUT}[tool]
             text_like = kind in (KIND_TEXTBOX, KIND_CALLOUT)
             color = (self.tool.highlight_color if kind == KIND_HIGHLIGHT else
                      self.tool.text_color if text_like else self.tool.shape_color)
             fill, fill_op = None, 1.0
-            if kind == KIND_RECT:
+            if kind in (KIND_RECT, KIND_CIRCLE):
                 fill, fill_op = self.tool.shape_fill, self.tool.shape_fill_opacity
             elif text_like:
                 fill, fill_op = self.tool.text_fill, self.tool.text_fill_opacity
@@ -793,12 +821,12 @@ class PdfView(QGraphicsView):
         degenerate = draft.kind == KIND_PEN and len(draft.points) < 2
         if draft.kind == KIND_CLOUD and len(draft.points) < 3:
             degenerate = True
-        if draft.kind in (KIND_HIGHLIGHT, KIND_RECT, KIND_ARROW, KIND_TEXTBOX,
-                          KIND_CALLOUT):
+        if draft.kind in (KIND_HIGHLIGHT, KIND_RECT, KIND_CIRCLE, KIND_ARROW,
+                          KIND_LINE, KIND_TEXTBOX, KIND_CALLOUT):
             x0, y0, x1, y1 = draft.rect
             if abs(x1 - x0) < 3 and abs(y1 - y0) < 3:
                 degenerate = True
-            elif draft.kind != KIND_ARROW:
+            elif draft.kind not in (KIND_ARROW, KIND_LINE):
                 draft.rect = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
         if degenerate:
             self._clear_preview()
@@ -907,6 +935,95 @@ class PdfView(QGraphicsView):
                          color=self.tool.shape_color, width=self.tool.shape_width,
                          author=author)
         self._commit_new(ann)
+
+    # -- callout: arrow first, then the box (three clicks) -------------------
+
+    def _callout_click(self, scene_pt: QPointF) -> bool:
+        """Advance the arrow-then-box placement. Returns True if handled."""
+        if self.read_only:
+            return False
+        pno, page = self._page_at_scene(scene_pt)
+        if self._co_stage == 0:
+            if page is None:
+                return False
+            _lp = page.mapFromScene(scene_pt)
+            self._co_page = (pno, page)
+            self._co_tip = (_lp.x(), _lp.y())      # what the arrow points AT
+            self._co_tail = self._co_tip
+            self._co_stage = 1
+            self._callout_preview(self._co_tip)
+            return True
+        if page is None or self._co_page is None:
+            return True                             # ignore clicks off the page
+        _, co_page = self._co_page
+        _lp = co_page.mapFromScene(scene_pt)
+        pt = (_lp.x(), _lp.y())
+        if self._co_stage == 1:
+            self._co_tail = pt                      # arrow ends here…
+            self._co_stage = 2                      # …and the box starts here
+            self._callout_preview(pt)
+            return True
+        self._callout_commit(pt)
+        return True
+
+    def _callout_preview(self, cursor):
+        """Stage 1 previews the arrow; stage 2 previews the box + its leader."""
+        if self._co_page is None:
+            return
+        pno, page = self._co_page
+        author = (self.config.your_name if self.config else "") or ""
+        if self._co_stage == 1:
+            tx, ty = self._co_tip
+            draft = Annotation(page=pno, kind=KIND_ARROW,
+                               rect=(cursor[0], cursor[1], tx, ty),
+                               color=self.tool.shape_color, author=author,
+                               width=self.tool.shape_width)
+        else:
+            sx, sy = self._co_tail
+            draft = Annotation(
+                page=pno, kind=KIND_CALLOUT,
+                rect=(min(sx, cursor[0]), min(sy, cursor[1]),
+                      max(sx, cursor[0]), max(sy, cursor[1])),
+                callout_point=self._co_tip, color=self.tool.text_color,
+                author=author, width=self.tool.shape_width,
+                font_size=self.tool.font_size, bold=self.tool.bold,
+                italic=self.tool.italic, fill_color=self.tool.text_fill,
+                fill_opacity=self.tool.text_fill_opacity)
+        self._draft = draft
+        self._draft_page = self._co_page
+        self._refresh_preview()
+
+    def _callout_commit(self, corner):
+        sx, sy = self._co_tail
+        x0, y0 = min(sx, corner[0]), min(sy, corner[1])
+        x1, y1 = max(sx, corner[0]), max(sy, corner[1])
+        if abs(x1 - x0) < 3 and abs(y1 - y0) < 3:
+            return                                  # keep drawing; box too small
+        draft = self._draft
+        self._callout_cancel(keep_draft=True)
+        if draft is None:
+            return
+        draft.rect = (x0, y0, x1, y1)
+        draft.is_todo = self._default_todo()
+        ok, text, todo = (True, "", draft.is_todo)
+        if self.new_text_prompt is not None:
+            ok, text, todo = self.new_text_prompt(draft, True)
+        self._clear_preview()
+        if not ok:
+            return
+        draft.text = text
+        draft.is_todo = todo
+        self._commit_new(draft)
+
+    def _callout_cancel(self, keep_draft: bool = False):
+        self._co_stage = 0
+        self._co_tip = None
+        self._co_tail = None
+        self._co_page = None
+        self._draft = None
+        self._draft_page = None
+        if not keep_draft:
+            self._clear_preview()
 
     def _cloud_cancel(self):
         self._clear_cloud_preview()
