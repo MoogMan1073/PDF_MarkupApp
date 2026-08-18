@@ -184,6 +184,35 @@ class TestPrint(unittest.TestCase):
         finally:
             chk.close()
 
+    def test_empty_printable_area_is_survivable(self):
+        # Exotic paper (or margins wider than the sheet) can leave a zero-sized
+        # paint viewport. That must not raise: the band clip divides by the fit
+        # scale, so a zero scale used to be a ZeroDivisionError surfacing as
+        # "Print failed: float division by zero".
+        from PySide6.QtGui import QPageSize
+        from PySide6.QtCore import QSizeF, QRect
+        win, tmp = self._win_with(pages=1)
+        printer = QPrinter(QPrinter.ScreenResolution)
+        printer.setResolution(600)
+        printer.setOutputFormat(QPrinter.PdfFormat)
+        printer.setOutputFileName(os.path.join(tmp, "tiny.pdf"))
+        printer.setPageSize(QPageSize(QSizeF(20, 20), QPageSize.Point))
+        win._print_to(printer)          # must not raise
+
+        # and directly, with a viewport that has no area at all
+        from PySide6.QtGui import QImage, QPainter
+        work = win.document.annotated_fitz()
+        try:
+            canvas = QImage(10, 10, QImage.Format_RGB888)
+            painter = QPainter(canvas)
+            try:
+                win._print_page(painter, work[0], QRect(0, 0, 0, 0))
+                win._print_page(painter, work[0], QRect(0, 0, -50, -50))
+            finally:
+                painter.end()
+        finally:
+            work.close()
+
     def test_bands_join_without_seams(self):
         # The band boundaries must be invisible: banded output has to match a
         # single-shot render of the same page. Checked on a rotated page too —

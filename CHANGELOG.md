@@ -9,10 +9,10 @@ portable zip to the matching GitHub release.
 - **Sharper printing.** Printed pages were soft: each page was rasterized at a
   fixed 200 dpi and then stretched to fill the sheet, so asking the driver for
   higher quality actually made it blurrier (a bigger upscale). Pages are now
-  rasterized at the printer's own resolution and drawn 1:1 — no enlargement —
-  and the working resolution is 600 dpi, so fine line work and small text come
-  out crisp. Choosing a higher-quality setting in the print dialog now genuinely
-  prints sharper. Large sheets (D/E-size) are rendered in horizontal bands, so
+  rasterized at a 600 dpi working resolution and drawn 1:1 into the printer's
+  own page geometry — no enlargement — so fine line work and small text come out
+  crisp, roughly three times the detail that reached the paper before. Large
+  sheets (D/E-size) are rendered in horizontal bands, so
   full resolution is kept at any size without a huge bitmap; printing now shows
   a progress dialog you can **Cancel**, and print **preview** renders at screen
   resolution so previewing a long set stays fast and light.

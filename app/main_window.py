@@ -1279,10 +1279,16 @@ class MainWindow(QMainWindow):
         still prints at a decent resolution.
 
         600 dpi is the working resolution for the page raster — enough for the
-        fine line work and small text on an electrical drawing. If the driver
-        reports its own resolution after the print dialog, that wins: the page
-        is rasterised from the printer's actual paint viewport, so choosing a
-        higher-quality setting genuinely prints sharper.
+        fine line work and small text on an electrical drawing. Pages are
+        rasterised from the printer's own paint viewport, so the bitmap matches
+        the geometry it is drawn into exactly and is never enlarged to fill the
+        sheet (which is what used to make prints soft).
+
+        Note this 600 is the *app's* resolution, not the driver's. In
+        ScreenResolution mode Qt keeps the resolution we set, so the quality
+        setting in the print dialog does not raise it — 600 dpi is the ceiling
+        on how much detail we hand the driver, which then scales that raster to
+        its own device DPI.
         """
         from PySide6.QtPrintSupport import QPrinter
         printer = QPrinter(QPrinter.ScreenResolution)
@@ -1417,9 +1423,11 @@ class MainWindow(QMainWindow):
         finally:
             work.close()
 
-    # One rasterised band is capped at this many pixels (~72 MB as RGB), so peak
-    # memory stays bounded no matter how big the sheet or how high the driver's
-    # dpi — an E-size plot at 1200 dpi would otherwise be a single 6 GB bitmap.
+    # One rasterised band is capped at this many pixels, so peak memory stays
+    # bounded no matter how big the sheet or how high the driver's dpi — an
+    # E-size plot at 1200 dpi would otherwise be a single ~6 GB bitmap. Two
+    # bitmaps of a band are live at once (the pixmap, and the trimmed copy handed
+    # to the painter), so 24 Mpx costs ~145 MB while a band is being drawn.
     _PRINT_BAND_PX = 24_000_000
 
     # Device pixels per PDF point for the *preview* raster (~150 dpi). The
@@ -1483,6 +1491,11 @@ class MainWindow(QMainWindow):
         from PySide6.QtCore import QPoint, QRectF
         r = page.rect
         scale, w, h, x0, y0 = cls._print_fit(r, target)
+        if scale <= 0:
+            # No printable area at all — exotic paper, or margins wider than the
+            # sheet. There is nothing to draw, and going on would divide by the
+            # scale when clipping bands.
+            return
 
         if cls._is_preview(painter):
             area = max(1.0, float(r.width) * float(r.height))
@@ -1492,7 +1505,9 @@ class MainWindow(QMainWindow):
                 # a single modest raster, drawn up to the full sheet size
                 pm = page.get_pixmap(matrix=fitz.Matrix(pscale, pscale),
                                      alpha=False, annots=True)
-                img = QImage(pm.samples, pm.width, pm.height, pm.stride,
+                # samples_mv is a view on the pixmap; copy() owns its pixels, so
+                # the image outlives pm without duplicating the buffer twice
+                img = QImage(pm.samples_mv, pm.width, pm.height, pm.stride,
                              QImage.Format_RGB888).copy()
                 painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
                 painter.drawImage(QRectF(x0, y0, w, h), img)
@@ -1516,8 +1531,11 @@ class MainWindow(QMainWindow):
                 matrix=mat, alpha=False, annots=True,
                 clip=fitz.Rect(r.x0, r.y0 + top_px / scale,
                                r.x1, r.y0 + bot_px / scale))
-            img = QImage(pm.samples, pm.width, pm.height, pm.stride,
-                         QImage.Format_RGB888).copy()   # detach from the pixmap
+            # samples_mv is a view on the pixmap's own buffer rather than a copy
+            # of it, and the single copy() below both trims the band and detaches
+            # it — so one band costs one extra bitmap, not three.
+            img = QImage(pm.samples_mv, pm.width, pm.height, pm.stride,
+                         QImage.Format_RGB888)
             # Where this band's kept rows start inside the rendered strip. Clamp
             # it: QImage.copy() pads out-of-range rows with black, and a black
             # stripe across a drawing is far worse than a rounding artefact.
