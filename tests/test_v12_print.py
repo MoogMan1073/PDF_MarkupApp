@@ -12,10 +12,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # QPrinter / QPrintPreviewDialog talk to the OS print subsystem. On the headless
 # Windows CI runner (offscreen QPA + no real printer) constructing/rendering them
 # can hard-crash the interpreter, even though it's fine on Linux offscreen and on
-# a real Windows desktop (the print feature is verified there manually). Skip the
-# printer-driven tests on Windows; the print-content logic is still covered
-# everywhere by TestAnnotatedFitz, and the full set runs on Linux CI.
+# a real Windows desktop (the print feature is verified there manually).
 _SKIP_NATIVE_PRINT = sys.platform.startswith("win")
+
+# Only the tests that actually construct one of those wear this. Everything else
+# in the class below — the fit maths, the band joins, the preview caps — paints
+# into a plain QImage/QPicture and runs everywhere, which matters because
+# Windows is where this code does its real printing.
+needs_native_print = unittest.skipIf(
+    _SKIP_NATIVE_PRINT,
+    "native QPrinter/QPrintPreviewDialog is unreliable on the headless Windows "
+    "CI runner; verified manually on the real build")
 
 import fitz
 
@@ -76,9 +83,6 @@ class TestAnnotatedFitz(unittest.TestCase):
 
 
 @unittest.skipUnless(_QT_OK, "PySide6 not available")
-@unittest.skipIf(_SKIP_NATIVE_PRINT,
-                 "native QPrinter/QPrintPreviewDialog is unreliable on the "
-                 "headless Windows CI runner; verified manually on the real build")
 class TestPrint(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -112,6 +116,7 @@ class TestPrint(unittest.TestCase):
         self.assertAlmostEqual(x * 2 + w, target.width(), delta=1)
         self.assertAlmostEqual(y * 2 + h, target.height(), delta=1)
 
+    @needs_native_print
     def test_printed_raster_matches_the_driver_resolution(self):
         # End-to-end guard for the same regression, measured on the output: the
         # raster actually placed on the sheet must be at the driver's dpi, not a
@@ -154,6 +159,7 @@ class TestPrint(unittest.TestCase):
         self.assertLessEqual(w, target.width())
         self.assertLessEqual(h, target.height())
 
+    @needs_native_print
     def test_large_sheet_is_banded_so_no_single_bitmap_is_huge(self):
         # An E-size plot at a high driver dpi would be a multi-GB bitmap in one
         # piece. It is rasterised in horizontal bands instead — bounded memory,
@@ -184,23 +190,13 @@ class TestPrint(unittest.TestCase):
         finally:
             chk.close()
 
-    def test_empty_printable_area_is_survivable(self):
-        # Exotic paper (or margins wider than the sheet) can leave a zero-sized
-        # paint viewport. That must not raise: the band clip divides by the fit
-        # scale, so a zero scale used to be a ZeroDivisionError surfacing as
-        # "Print failed: float division by zero".
-        from PySide6.QtGui import QPageSize
-        from PySide6.QtCore import QSizeF, QRect
-        win, tmp = self._win_with(pages=1)
-        printer = QPrinter(QPrinter.ScreenResolution)
-        printer.setResolution(600)
-        printer.setOutputFormat(QPrinter.PdfFormat)
-        printer.setOutputFileName(os.path.join(tmp, "tiny.pdf"))
-        printer.setPageSize(QPageSize(QSizeF(20, 20), QPageSize.Point))
-        win._print_to(printer)          # must not raise
-
-        # and directly, with a viewport that has no area at all
+    def test_zero_area_viewport_is_survivable(self):
+        # A viewport with no area must not raise: the band clip divides by the
+        # fit scale, so a zero scale used to be a ZeroDivisionError surfacing to
+        # the user as "Print failed: float division by zero".
         from PySide6.QtGui import QImage, QPainter
+        from PySide6.QtCore import QRect
+        win, _ = self._win_with(pages=1)
         work = win.document.annotated_fitz()
         try:
             canvas = QImage(10, 10, QImage.Format_RGB888)
@@ -212,6 +208,20 @@ class TestPrint(unittest.TestCase):
                 painter.end()
         finally:
             work.close()
+
+    @needs_native_print
+    def test_empty_printable_area_is_survivable(self):
+        # The same thing reached through a real printer: exotic paper (or
+        # margins wider than the sheet) leaves nothing to print on.
+        from PySide6.QtGui import QPageSize
+        from PySide6.QtCore import QSizeF
+        win, tmp = self._win_with(pages=1)
+        printer = QPrinter(QPrinter.ScreenResolution)
+        printer.setResolution(600)
+        printer.setOutputFormat(QPrinter.PdfFormat)
+        printer.setOutputFileName(os.path.join(tmp, "tiny.pdf"))
+        printer.setPageSize(QPageSize(QSizeF(20, 20), QPageSize.Point))
+        win._print_to(printer)          # must not raise
 
     def test_bands_join_without_seams(self):
         # The band boundaries must be invisible: banded output has to match a
@@ -262,6 +272,7 @@ class TestPrint(unittest.TestCase):
                 # band would instead leave white on black — a huge delta.
                 self.assertLess(worst, 40, f"visible seam at rotation {rot}")
 
+    @needs_native_print
     def test_print_to_pdf_printer_emits_all_pages(self):
         win, tmp = self._win_with(pages=3)
         out = os.path.join(tmp, "out.pdf")
@@ -276,6 +287,7 @@ class TestPrint(unittest.TestCase):
         finally:
             chk.close()
 
+    @needs_native_print
     def test_print_to_honours_page_range(self):
         win, tmp = self._win_with(pages=4)
         out = os.path.join(tmp, "range.pdf")
@@ -359,6 +371,7 @@ class TestPrint(unittest.TestCase):
         finally:
             p.end()
 
+    @needs_native_print
     def test_progress_is_reported_per_page(self):
         win, tmp = self._win_with(pages=3)
         out = os.path.join(tmp, "prog.pdf")
@@ -371,6 +384,7 @@ class TestPrint(unittest.TestCase):
         self.assertEqual(seen, [(0, 3), (1, 3), (2, 3)])
         self.assertEqual(painted, 3)
 
+    @needs_native_print
     def test_cancelling_stops_the_job_early(self):
         # returning False from the progress callback (the user hit Cancel) must
         # stop cleanly, leaving only the pages printed so far
@@ -387,6 +401,7 @@ class TestPrint(unittest.TestCase):
         finally:
             chk.close()
 
+    @needs_native_print
     def test_cancelling_before_the_first_page_prints_nothing(self):
         # Starting a QPainter on a printer and ending it without painting still
         # emits a sheet, so cancelling at page 1 used to waste a blank page.
@@ -404,6 +419,7 @@ class TestPrint(unittest.TestCase):
             finally:
                 chk.close()
 
+    @needs_native_print
     def test_progress_total_follows_the_page_range(self):
         win, tmp = self._win_with(pages=5)
         out = os.path.join(tmp, "range_prog.pdf")
@@ -415,6 +431,7 @@ class TestPrint(unittest.TestCase):
         win._print_to(printer, on_page=lambda d, t: (totals.append(t) or True))
         self.assertEqual(totals, [3, 3, 3])
 
+    @needs_native_print
     def test_new_printer_avoids_highres_query(self):
         # HighResolution (1200 dpi) queries the printer at construction and can
         # hang; _new_printer builds a ScreenResolution printer raised to a
@@ -423,6 +440,7 @@ class TestPrint(unittest.TestCase):
         p = win._new_printer()
         self.assertEqual(p.resolution(), 600)
 
+    @needs_native_print
     def test_print_document_prints_via_native_dialog(self):
         from PySide6.QtPrintSupport import QPrintDialog, QPrinter
         win, tmp = self._win_with(pages=2)
@@ -443,6 +461,7 @@ class TestPrint(unittest.TestCase):
         finally:
             chk.close()
 
+    @needs_native_print
     def test_print_document_cancelled_prints_nothing(self):
         from PySide6.QtPrintSupport import QPrintDialog
         win, tmp = self._win_with(pages=1)
@@ -455,6 +474,7 @@ class TestPrint(unittest.TestCase):
         win, _ = self._win_with(pages=1)
         self.assertTrue(win._print_include_marks)
 
+    @needs_native_print
     def test_preview_toggle_flips_include_marks(self):
         from PySide6.QtPrintSupport import QPrintPreviewDialog
         from PySide6.QtGui import QAction
@@ -471,6 +491,7 @@ class TestPrint(unittest.TestCase):
         act.trigger()                                # back on
         self.assertTrue(win._print_include_marks)
 
+    @needs_native_print
     def test_print_clean_when_marks_off(self):
         # printing with marks off must still emit all pages (just no app marks)
         from PySide6.QtPrintSupport import QPrinter
