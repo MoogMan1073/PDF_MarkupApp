@@ -358,6 +358,23 @@ class TestPrint(unittest.TestCase):
         finally:
             chk.close()
 
+    def test_cancelling_before_the_first_page_prints_nothing(self):
+        # Starting a QPainter on a printer and ending it without painting still
+        # emits a sheet, so cancelling at page 1 used to waste a blank page.
+        win, tmp = self._win_with(pages=3)
+        out = os.path.join(tmp, "cancel0.pdf")
+        printer = QPrinter(QPrinter.ScreenResolution)
+        printer.setOutputFormat(QPrinter.PdfFormat)
+        printer.setOutputFileName(out)
+        painted = win._print_to(printer, on_page=lambda d, t: False)
+        self.assertEqual(painted, 0)
+        if os.path.exists(out) and os.path.getsize(out):
+            chk = fitz.open(out)
+            try:
+                self.assertEqual(chk.page_count, 0, "a blank sheet was printed")
+            finally:
+                chk.close()
+
     def test_progress_total_follows_the_page_range(self):
         win, tmp = self._win_with(pages=5)
         out = os.path.join(tmp, "range_prog.pdf")

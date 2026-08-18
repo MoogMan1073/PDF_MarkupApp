@@ -1396,17 +1396,23 @@ class MainWindow(QMainWindow):
             last = min(work.page_count, last)
             total = max(0, last - first + 1)
             done = 0
-            painter = QPainter(printer)
+            # The painter is created only once a page is actually going to be
+            # drawn: starting one and ending it without painting still emits a
+            # sheet, so cancelling at the first page would waste a blank page.
+            painter = None
             try:
                 for n, i in enumerate(range(first - 1, last)):
                     if on_page is not None and not on_page(n, total):
                         break
-                    if n:
+                    if painter is None:
+                        painter = QPainter(printer)
+                    elif done:
                         printer.newPage()
                     self._print_page(painter, work[i], painter.viewport())
                     done += 1
             finally:
-                painter.end()
+                if painter is not None:
+                    painter.end()
             return done
         finally:
             work.close()
