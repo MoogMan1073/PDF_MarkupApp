@@ -4,7 +4,7 @@ All notable changes to **DSI Redline** are documented here. Versions are tagged
 `vX.Y.Z`; each tag triggers the Windows build that publishes the installer and a
 portable zip to the matching GitHub release.
 
-## v1.3.0
+## v1.3.1
 
 - **Sharper printing.** Printed pages were soft: each page was rasterized at a
   fixed 200 dpi and then stretched to fill the sheet, so asking the driver for
@@ -16,6 +16,9 @@ portable zip to the matching GitHub release.
   full resolution is kept at any size without a huge bitmap; printing now shows
   a progress dialog you can **Cancel**, and print **preview** renders at screen
   resolution so previewing a long set stays fast and light.
+
+## v1.3.0
+
 - **Circle and line tools.** A **Circle** that behaves exactly like the rectangle
   (fill, opacity, resize, rotate, stacking, copy/paste) and a **Line** that
   behaves exactly like the arrow — just without the arrowhead. Both export as
