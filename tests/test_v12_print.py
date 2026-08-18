@@ -91,18 +91,147 @@ class TestPrint(unittest.TestCase):
         win = MainWindow(); win.load_document(src)
         return win, tmp
 
-    def test_render_print_image_is_capped(self):
+    def test_page_fills_the_sheet_at_device_resolution(self):
+        # Regression: the page used to be rasterised at a fixed 200 dpi relative
+        # to the *source page* and then scaled UP to fill the sheet, so prints
+        # were soft — and asking the driver for more dpi made it worse (a bigger
+        # upscale). The page must now be laid out in the device's own pixels.
+        from PySide6.QtCore import QRect
         win, _ = self._win_with(pages=1)
-        printer = QPrinter(QPrinter.HighResolution)   # 1200 dpi
+        target = QRect(0, 0, 4792, 6853)          # a 600 dpi Letter viewport
         work = win.document.annotated_fitz()
         try:
-            img = win._render_print_image(work[0], printer)
+            scale, w, h, x, y = win._print_fit(work[0].rect, target)
         finally:
             work.close()
-        self.assertFalse(img.isNull())
-        # 400pt @ ≤200dpi ≈ ≤1112px wide — proves the DPI cap kicked in
-        self.assertLessEqual(img.width(), 1200)
-        self.assertGreater(img.width(), 100)
+        # fills one axis of the sheet exactly, and is centred on the other
+        self.assertTrue(w == target.width() or h == target.height())
+        self.assertGreater(w, 2000)               # not a 200 dpi thumbnail
+        self.assertGreaterEqual(x, 0)
+        self.assertGreaterEqual(y, 0)
+        self.assertAlmostEqual(x * 2 + w, target.width(), delta=1)
+        self.assertAlmostEqual(y * 2 + h, target.height(), delta=1)
+
+    def test_printed_raster_matches_the_driver_resolution(self):
+        # End-to-end guard for the same regression, measured on the output: the
+        # raster actually placed on the sheet must be at the driver's dpi, not a
+        # low-dpi render stretched to fill it (which is what made prints soft,
+        # and made *raising* the driver's quality setting look worse).
+        win, tmp = self._win_with(pages=1)
+        out = os.path.join(tmp, "dpi.pdf")
+        printer = QPrinter(QPrinter.ScreenResolution)
+        printer.setResolution(600)
+        printer.setOutputFormat(QPrinter.PdfFormat)
+        printer.setOutputFileName(out)
+        win._print_to(printer)
+        chk = fitz.open(out)
+        try:
+            infos = chk[0].get_image_info()
+            self.assertTrue(infos, "no raster was placed on the page")
+            im = max(infos, key=lambda i: i["width"] * i["height"])
+            placed_inches = fitz.Rect(im["bbox"]).width / 72.0
+            effective_dpi = im["width"] / placed_inches
+            self.assertGreater(effective_dpi, 550)     # ~600; was ~200 before
+        finally:
+            chk.close()
+
+    def test_page_fits_the_sheet_without_distortion(self):
+        from PySide6.QtCore import QRect
+        win, tmp = self._win_with(pages=1)
+        # a landscape page must keep its aspect ratio inside a portrait sheet
+        src = os.path.join(tmp, "wide.pdf")
+        d = fitz.open(); d.new_page(width=792, height=612); d.save(src); d.close()
+        win.load_document(src)
+        target = QRect(0, 0, 2550, 3300)
+        work = win.document.annotated_fitz()
+        try:
+            page = work[0]
+            src_aspect = page.rect.width / page.rect.height   # read before close
+            scale, w, h, x, y = win._print_fit(page.rect, target)
+        finally:
+            work.close()
+        self.assertAlmostEqual(w / h, src_aspect, places=2)
+        self.assertLessEqual(w, target.width())
+        self.assertLessEqual(h, target.height())
+
+    def test_large_sheet_is_banded_so_no_single_bitmap_is_huge(self):
+        # An E-size plot at a high driver dpi would be a multi-GB bitmap in one
+        # piece. It is rasterised in horizontal bands instead — bounded memory,
+        # without giving up any resolution.
+        from PySide6.QtCore import QRect
+        win, tmp = self._win_with(pages=1)
+        src = os.path.join(tmp, "big.pdf")
+        d = fitz.open(); d.new_page(width=1584, height=2448)   # ANSI D
+        d.save(src); d.close()
+        win.load_document(src)
+        out = os.path.join(tmp, "big_out.pdf")
+        printer = QPrinter(QPrinter.ScreenResolution)
+        printer.setResolution(600)
+        printer.setOutputFormat(QPrinter.PdfFormat)
+        printer.setOutputFileName(out)
+        win._print_to(printer)
+        chk = fitz.open(out)
+        try:
+            infos = chk[0].get_image_info()
+            self.assertGreater(len(infos), 1, "large sheet should be banded")
+            for im in infos:
+                self.assertLessEqual(im["width"] * im["height"],
+                                     win._PRINT_BAND_PX * 1.02)
+            # ...and the bands together still cover the page at full resolution
+            widest = max(infos, key=lambda i: i["width"])
+            span_in = fitz.Rect(widest["bbox"]).width / 72.0
+            self.assertGreater(widest["width"] / span_in, 550)
+        finally:
+            chk.close()
+
+    def test_bands_join_without_seams(self):
+        # The band boundaries must be invisible: banded output has to match a
+        # single-shot render of the same page. Checked on a rotated page too —
+        # AutoCAD plots are almost always rotated.
+        from PySide6.QtCore import QRect
+        from PySide6.QtGui import QImage, QPainter
+        from app.main_window import MainWindow
+        win, tmp = self._win_with(pages=1)
+        for rot in (0, 90):
+            src = os.path.join(tmp, f"seam{rot}.pdf")
+            d = fitz.open(); pg = d.new_page(width=612, height=792)
+            for i in range(0, 780, 3):           # dense: any seam would show
+                pg.draw_line((20, i), (592, i + 2), width=0.3)
+            if rot:
+                pg.set_rotation(rot)
+            d.save(src); d.close()
+
+            def render(band_px):
+                doc = fitz.open(src)
+                target = QRect(0, 0, 1200, 1550)
+                canvas = QImage(1200, 1550, QImage.Format_RGB888)
+                canvas.fill(0xFFFFFFFF)
+                painter = QPainter(canvas)
+                keep = MainWindow._PRINT_BAND_PX
+                MainWindow._PRINT_BAND_PX = band_px
+                try:
+                    MainWindow._print_page(painter, doc[0], target)
+                finally:
+                    MainWindow._PRINT_BAND_PX = keep
+                    painter.end(); doc.close()
+                return canvas
+
+            one, many = render(10 ** 9), render(120_000)      # 1 band vs many
+            worst = 0
+            for y in range(one.height()):
+                a, b = bytes(one.constScanLine(y)), bytes(many.constScanLine(y))
+                if a != b:
+                    worst = max(worst, max(abs(p - q) for p, q in zip(a, b)))
+            if rot == 0:
+                # banding must be completely invisible: the same pixels as a
+                # single full-page render
+                self.assertEqual(worst, 0, "banding changed the page")
+            else:
+                # a rotated page rasterises its (now vertical) lines with a
+                # slightly different antialiasing phase per band; that is spread
+                # over the whole band, not at the joins. A gap or a misplaced
+                # band would instead leave white on black — a huge delta.
+                self.assertLess(worst, 40, f"visible seam at rotation {rot}")
 
     def test_print_to_pdf_printer_emits_all_pages(self):
         win, tmp = self._win_with(pages=3)
@@ -132,12 +261,97 @@ class TestPrint(unittest.TestCase):
         finally:
             chk.close()
 
+    def test_preview_raster_is_capped(self):
+        # The preview dialog paints *every* page into a stored QPicture and keeps
+        # them all, so rasterising there at the printer's real resolution held
+        # the whole document in memory (~160 MB per page at 600 dpi). The preview
+        # only shows a scaled-down page, so its raster is capped — while a real
+        # print of the same page stays at full device resolution.
+        from PySide6.QtGui import QPainter, QPicture
+        from PySide6.QtCore import QRect
+        win, _ = self._win_with(pages=1)
+        target = QRect(0, 0, 4792, 6853)          # a 600 dpi Letter viewport
+        work = win.document.annotated_fitz()
+        try:
+            scale, _w, _h, _x, _y = win._print_fit(work[0].rect, target)
+            self.assertGreater(scale, win._PREVIEW_SCALE * 2,
+                               "this viewport must be well above preview scale")
+            pic = QPicture()                       # what the preview paints into
+            painter = QPainter(pic)
+            try:
+                win._print_page(painter, work[0], target)
+            finally:
+                painter.end()
+        finally:
+            work.close()
+        # at full device resolution this page is ~30 Mpx (~90 MB of recorded
+        # image data); the capped preview raster is a small fraction of that
+        self.assertLess(pic.size(), 12_000_000)
+
+    def test_preview_is_detected_from_the_paint_engine(self):
+        # _print_page decides which path to take from the painter's engine:
+        # QPicture-backed means the preview dialog, anything else is a printer.
+        from PySide6.QtGui import QImage, QPainter, QPicture
+        win, _ = self._win_with(pages=1)
+        pic = QPicture()
+        p = QPainter(pic)
+        try:
+            self.assertTrue(win._is_preview(p))
+        finally:
+            p.end()
+        img = QImage(50, 50, QImage.Format_RGB888)
+        p = QPainter(img)
+        try:
+            self.assertFalse(win._is_preview(p))
+        finally:
+            p.end()
+
+    def test_progress_is_reported_per_page(self):
+        win, tmp = self._win_with(pages=3)
+        out = os.path.join(tmp, "prog.pdf")
+        printer = QPrinter(QPrinter.ScreenResolution)
+        printer.setOutputFormat(QPrinter.PdfFormat)
+        printer.setOutputFileName(out)
+        seen = []
+        painted = win._print_to(printer, on_page=lambda d, t: (seen.append((d, t))
+                                                              or True))
+        self.assertEqual(seen, [(0, 3), (1, 3), (2, 3)])
+        self.assertEqual(painted, 3)
+
+    def test_cancelling_stops_the_job_early(self):
+        # returning False from the progress callback (the user hit Cancel) must
+        # stop cleanly, leaving only the pages printed so far
+        win, tmp = self._win_with(pages=4)
+        out = os.path.join(tmp, "cancel.pdf")
+        printer = QPrinter(QPrinter.ScreenResolution)
+        printer.setOutputFormat(QPrinter.PdfFormat)
+        printer.setOutputFileName(out)
+        painted = win._print_to(printer, on_page=lambda d, t: d < 2)
+        self.assertEqual(painted, 2)
+        chk = fitz.open(out)
+        try:
+            self.assertEqual(chk.page_count, 2)
+        finally:
+            chk.close()
+
+    def test_progress_total_follows_the_page_range(self):
+        win, tmp = self._win_with(pages=5)
+        out = os.path.join(tmp, "range_prog.pdf")
+        printer = QPrinter(QPrinter.ScreenResolution)
+        printer.setOutputFormat(QPrinter.PdfFormat)
+        printer.setOutputFileName(out)
+        printer.setFromTo(2, 4)
+        totals = []
+        win._print_to(printer, on_page=lambda d, t: (totals.append(t) or True))
+        self.assertEqual(totals, [3, 3, 3])
+
     def test_new_printer_avoids_highres_query(self):
         # HighResolution (1200 dpi) queries the printer at construction and can
-        # hang; _new_printer builds a ScreenResolution printer bumped to 300 dpi.
+        # hang; _new_printer builds a ScreenResolution printer raised to a
+        # working 600 dpi (fine line work and small text print crisply).
         win, _ = self._win_with(pages=1)
         p = win._new_printer()
-        self.assertEqual(p.resolution(), 300)
+        self.assertEqual(p.resolution(), 600)
 
     def test_print_document_prints_via_native_dialog(self):
         from PySide6.QtPrintSupport import QPrintDialog, QPrinter
