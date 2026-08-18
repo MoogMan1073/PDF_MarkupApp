@@ -1312,10 +1312,10 @@ class MainWindow(QMainWindow):
             dlg.setOption(QPrintDialog.PrintPageRange, True)
         if dlg.exec() != QPrintDialog.Accepted:
             return
-        # Rendering at the printer's own resolution is what makes the output
-        # sharp, but it also costs about a second a page — long enough for a
-        # multi-sheet set to look like the app has locked up. Show progress (and
-        # let it be cancelled) instead of freezing.
+        # Rendering a full 600 dpi page is what makes the output sharp, but it
+        # also costs about a second a page — long enough for a multi-sheet set
+        # to look like the app has locked up. Show progress (and let it be
+        # cancelled) instead of freezing.
         from PySide6.QtWidgets import QProgressDialog
         progress = QProgressDialog("Printing…", "Cancel", 0, 1, self)
         progress.setWindowTitle("Printing")
