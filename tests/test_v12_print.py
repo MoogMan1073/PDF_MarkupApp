@@ -269,24 +269,48 @@ class TestPrint(unittest.TestCase):
         # print of the same page stays at full device resolution.
         from PySide6.QtGui import QPainter, QPicture
         from PySide6.QtCore import QRect
-        win, _ = self._win_with(pages=1)
-        target = QRect(0, 0, 4792, 6853)          # a 600 dpi Letter viewport
-        work = win.document.annotated_fitz()
-        try:
-            scale, _w, _h, _x, _y = win._print_fit(work[0].rect, target)
-            self.assertGreater(scale, win._PREVIEW_SCALE * 2,
-                               "this viewport must be well above preview scale")
-            pic = QPicture()                       # what the preview paints into
-            painter = QPainter(pic)
+        win, tmp = self._win_with(pages=1)
+        captured = []
+        orig = fitz.Page.get_pixmap
+
+        def spy(page, *a, **k):
+            m = k.get("matrix")
+            captured.append((m.a if m is not None else 1.0,
+                             float(page.rect.width), float(page.rect.height)))
+            return orig(page, *a, **k)
+
+        # a dpi cap alone still scales with the paper, so check a big sheet too
+        for label, (W, H) in (("letter", (612, 792)), ("esize", (2448, 3168))):
+            src = os.path.join(tmp, f"prev_{label}.pdf")
+            d = fitz.open(); d.new_page(width=W, height=H)
+            d.save(src); d.close()
+            win.load_document(src)
+            target = QRect(0, 0, int(W / 72 * 600), int(H / 72 * 600))
+            work = win.document.annotated_fitz()
+            captured.clear()
+            fitz.Page.get_pixmap = spy
             try:
-                win._print_page(painter, work[0], target)
+                pic = QPicture()                   # what the preview paints into
+                painter = QPainter(pic)
+                try:
+                    win._print_page(painter, work[0], target)
+                finally:
+                    painter.end()
             finally:
-                painter.end()
-        finally:
-            work.close()
-        # at full device resolution this page is ~30 Mpx (~90 MB of recorded
-        # image data); the capped preview raster is a small fraction of that
-        self.assertLess(pic.size(), 12_000_000)
+                fitz.Page.get_pixmap = orig
+                work.close()
+
+            self.assertEqual(len(captured), 1,
+                             f"{label}: preview must be a single raster")
+            scale, pw, ph = captured[0]
+            self.assertLessEqual(scale, win._PREVIEW_SCALE + 1e-9,
+                                 f"{label}: preview exceeded its dpi cap")
+            self.assertLessEqual((pw * scale) * (ph * scale),
+                                 win._PREVIEW_MAX_PX * 1.02,
+                                 f"{label}: preview exceeded its pixel budget")
+        # the big sheet must be the case where the pixel budget, not the dpi cap,
+        # is what bites — otherwise this test isn't checking anything new
+        self.assertLess(captured[0][0], win._PREVIEW_SCALE)
 
     def test_preview_is_detected_from_the_paint_engine(self):
         # _print_page decides which path to take from the painter's engine:

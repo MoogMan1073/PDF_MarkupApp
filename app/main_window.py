@@ -1424,6 +1424,12 @@ class MainWindow(QMainWindow):
     # print resolution; the real print is unaffected.
     _PREVIEW_SCALE = 150 / 72.0
 
+    # ...and never more than this many pixels for one previewed page, whatever
+    # the sheet size. A dpi cap alone still scales with the paper: an E-size
+    # sheet at 150 dpi is 34 Mpx, so a preview of a large-format set would still
+    # retain ~145 MB per page. The preview is only ever shown scaled down.
+    _PREVIEW_MAX_PX = 4_000_000
+
     # Device rows rendered past each end of a band and then trimmed off, so no
     # kept row was antialiased against the edge of the band's clip. At this
     # depth a banded page comes out identical to a single full-page render.
@@ -1472,16 +1478,19 @@ class MainWindow(QMainWindow):
         r = page.rect
         scale, w, h, x0, y0 = cls._print_fit(r, target)
 
-        if cls._is_preview(painter) and scale > cls._PREVIEW_SCALE:
-            # a single modest raster, drawn up to the full sheet size
-            pm = page.get_pixmap(matrix=fitz.Matrix(cls._PREVIEW_SCALE,
-                                                    cls._PREVIEW_SCALE),
-                                 alpha=False, annots=True)
-            img = QImage(pm.samples, pm.width, pm.height, pm.stride,
-                         QImage.Format_RGB888).copy()
-            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-            painter.drawImage(QRectF(x0, y0, w, h), img)
-            return
+        if cls._is_preview(painter):
+            area = max(1.0, float(r.width) * float(r.height))
+            pscale = min(scale, cls._PREVIEW_SCALE,
+                         (cls._PREVIEW_MAX_PX / area) ** 0.5)
+            if pscale < scale:
+                # a single modest raster, drawn up to the full sheet size
+                pm = page.get_pixmap(matrix=fitz.Matrix(pscale, pscale),
+                                     alpha=False, annots=True)
+                img = QImage(pm.samples, pm.width, pm.height, pm.stride,
+                             QImage.Format_RGB888).copy()
+                painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+                painter.drawImage(QRectF(x0, y0, w, h), img)
+                return
 
         mat = fitz.Matrix(scale, scale)
         origin = (r * mat).irect          # where the whole page starts, scaled
