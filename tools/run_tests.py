@@ -38,6 +38,25 @@ DRC_REASON = re.compile(r"pydrc", re.I)
 QT_REASON = re.compile(r"pyside", re.I)
 
 
+def classify(reasons) -> tuple:
+    """``(drc_skipped, qt_skipped)`` from a {reason: count} mapping.
+
+    A reason naming both -- "needs PySide6 and PyDRC" -- is attributed to the
+    rule library, not to Qt. It cannot say which was actually missing, but the
+    rule library is the one allowed to be absent, and a genuinely missing Qt
+    announces itself in dozens of unambiguous "PySide6 not available" skips
+    rather than in one compound reason. Counting it as Qt failed a run whose
+    Qt was fine.
+    """
+    drc = qt = 0
+    for reason, n in reasons.items():
+        if DRC_REASON.search(reason):
+            drc += n
+        elif QT_REASON.search(reason):
+            qt += n
+    return drc, qt
+
+
 def modules(argv) -> list:
     named = [a for a in argv if not a.startswith("-")]
     if named:
@@ -97,8 +116,7 @@ def main(argv) -> int:
 
     # Loud on purpose. "No failures" must never be read as "everything was
     # checked" -- the same rule the audit itself follows about coverage.
-    drc_skipped = sum(n for r, n in reasons.items() if DRC_REASON.search(r))
-    qt_skipped = sum(n for r, n in reasons.items() if QT_REASON.search(r))
+    drc_skipped, qt_skipped = classify(reasons)
     gaps = []
     if drc_skipped:
         gaps.append((drc_skipped, "the design rule library is absent",
