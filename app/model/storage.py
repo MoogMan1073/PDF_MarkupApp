@@ -440,6 +440,27 @@ class SidecarDB:
                 included INTEGER,
                 flags TEXT
             );
+            CREATE TABLE IF NOT EXISTS findings (
+                key TEXT PRIMARY KEY,
+                rule_id TEXT,
+                severity TEXT,
+                status TEXT,
+                page INTEGER,
+                sheet TEXT,
+                subject_id TEXT,
+                message TEXT,
+                clause TEXT,
+                json TEXT
+            );
+            CREATE TABLE IF NOT EXISTS waivers (
+                key TEXT PRIMARY KEY,
+                rule_id TEXT,
+                subject_id TEXT,
+                reason TEXT,
+                author TEXT,
+                created TEXT,
+                json TEXT
+            );
             CREATE TABLE IF NOT EXISTS meta (
                 key TEXT PRIMARY KEY,
                 value TEXT
@@ -564,6 +585,96 @@ class SidecarDB:
                 continue
         return out
 
+    # -- audit findings ------------------------------------------------------
+
+    def save_findings(self, findings: Iterable) -> None:
+        """Replace the stored findings wholesale.
+
+        An audit re-run is the authority on what is currently wrong, so this
+        clears first: a rule that no longer fires must not leave a stale finding
+        behind. Waivers are deliberately a separate table for exactly this
+        reason -- they outlive the findings they were made about.
+        """
+        self.conn.execute("DELETE FROM findings")
+        rows = [
+            (
+                f.key, f.rule_id, f.severity, f.status, int(f.page or 0),
+                f.sheet, f.subject_id, f.message, f.clause,
+                json.dumps(f.to_dict()),
+            )
+            for f in findings
+        ]
+        self.conn.executemany(
+            "INSERT OR REPLACE INTO findings (key, rule_id, severity, status, "
+            "page, sheet, subject_id, message, clause, json) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            rows,
+        )
+        self.conn.commit()
+
+    def load_findings(self) -> list:
+        from ..audit.findings import Finding
+        try:
+            cur = self.conn.execute("SELECT json FROM findings")
+        except Exception:
+            return []
+        out = []
+        for r in cur.fetchall():
+            try:
+                out.append(Finding.from_dict(json.loads(r["json"] or "{}")))
+            except Exception:
+                continue
+        return out
+
+    def save_waiver(self, waiver) -> None:
+        """Record one waiver, replacing any earlier decision on the same finding."""
+        self.conn.execute(
+            "INSERT OR REPLACE INTO waivers (key, rule_id, subject_id, reason, "
+            "author, created, json) VALUES (?,?,?,?,?,?,?)",
+            (waiver.key, waiver.rule_id, waiver.subject_id, waiver.reason,
+             waiver.author, waiver.created, json.dumps(waiver.to_dict())),
+        )
+        self.conn.commit()
+
+    def delete_waiver(self, key: str) -> None:
+        self.conn.execute("DELETE FROM waivers WHERE key=?", (key,))
+        self.conn.commit()
+
+    def replace_waivers(self, waivers) -> None:
+        """Make the table mirror ``waivers`` exactly, dropping anything else.
+
+        Named to be hard to reach for by accident: an audit re-run must never
+        clear waivers. This exists for Save As, where the destination may reuse
+        a sidecar carrying another document's decisions.
+        """
+        self.conn.execute("DELETE FROM waivers")
+        rows = [
+            (w.key, w.rule_id, w.subject_id, w.reason, w.author, w.created,
+             json.dumps(w.to_dict()))
+            for w in (waivers.values() if hasattr(waivers, "values") else waivers)
+        ]
+        self.conn.executemany(
+            "INSERT OR REPLACE INTO waivers (key, rule_id, subject_id, reason, "
+            "author, created, json) VALUES (?,?,?,?,?,?,?)",
+            rows,
+        )
+        self.conn.commit()
+
+    def load_waivers(self) -> dict:
+        """``{finding key: Waiver}``."""
+        from ..audit.findings import Waiver
+        try:
+            cur = self.conn.execute("SELECT key, json FROM waivers")
+        except Exception:
+            return {}
+        out = {}
+        for r in cur.fetchall():
+            try:
+                out[r["key"]] = Waiver.from_dict(json.loads(r["json"] or "{}"))
+            except Exception:
+                continue
+        return out
+
     # -- meta ----------------------------------------------------------------
 
     def set_meta(self, key: str, value: str) -> None:
@@ -612,6 +723,24 @@ class NullSidecar:
 
     def save_components(self, components: Iterable) -> None:
         pass
+
+    def save_findings(self, findings: Iterable) -> None:
+        pass
+
+    def load_findings(self) -> list:
+        return []
+
+    def save_waiver(self, waiver) -> None:
+        pass
+
+    def delete_waiver(self, key: str) -> None:
+        pass
+
+    def replace_waivers(self, waivers) -> None:
+        pass
+
+    def load_waivers(self) -> dict:
+        return {}
 
     def set_meta(self, key: str, value: str) -> None:
         pass

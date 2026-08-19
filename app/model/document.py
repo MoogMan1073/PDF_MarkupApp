@@ -52,6 +52,9 @@ class Document:
         )
         self.wires: list = []
         self.components: list = []
+        self.findings: list = []       # from the most recent audit
+        self.waivers: dict = {}        # finding key -> Waiver; outlives findings
+        self.audit_run = None          # AuditRun summary, or None
         self.sheet_labels: dict = {}   # page_index -> sheet number (str, e.g. "000")
         # page_index -> how that number was resolved (a sheet_number strategy
         # name, or "user"). An audit cannot report coverage honestly if it
@@ -109,10 +112,69 @@ class Document:
         self.wires = self.sidecar.load_wires()
         self.components = self.sidecar.load_components()
 
+        # 3b) the last audit's findings, the waivers recorded against them, and
+        #     what that run could not check
+        self.findings = self.sidecar.load_findings()
+        self.waivers = self.sidecar.load_waivers()
+        self._load_audit_run()
+
         # 4) per-page sheet numbers and roles: load saved edits, then
         #    best-effort auto-detection for pages we don't know yet
         self._load_sheet_labels()
         self._load_sheet_roles()
+
+    # -- audit findings ------------------------------------------------------
+
+    def _load_audit_run(self) -> None:
+        from ..audit.findings import AuditRun, apply_waivers
+        self.audit_run = AuditRun.from_json(self.sidecar.get_meta("audit_run"))
+        apply_waivers(self.findings, self.waivers)
+
+    def set_findings(self, findings: list, run=None) -> None:
+        """Replace the findings from an audit run and persist immediately.
+
+        Written through rather than deferred to File > Save, matching how the
+        wire and component tabs persist their extractions.
+        """
+        from ..audit.findings import apply_waivers
+        self.findings = list(findings)
+        apply_waivers(self.findings, self.waivers)
+        self.audit_run = run
+        self.sidecar.save_findings(self.findings)
+        self.sidecar.set_meta("audit_run", run.to_json() if run is not None else "")
+
+    def waive_finding(self, key: str, reason: str, author: str = "") -> None:
+        """Record that a finding is acceptable here, and persist it.
+
+        Waivers are stored apart from findings so that re-running the audit --
+        which replaces every finding -- never discards a human decision.
+        """
+        from ..audit.findings import Waiver, STATUS_WAIVED
+        key = str(key or "")
+        if not key:
+            return
+        rule_id = subject = ""
+        for f in self.findings:
+            if f.key == key:
+                rule_id, subject = f.rule_id, f.subject_id
+                f.status = STATUS_WAIVED
+        waiver = Waiver(key=key, rule_id=rule_id, subject_id=subject,
+                        reason=reason, author=author)
+        self.waivers[key] = waiver
+        self.sidecar.save_waiver(waiver)
+
+    def clear_waiver(self, key: str) -> None:
+        """Withdraw a waiver, returning the finding to open."""
+        from ..audit.findings import STATUS_OPEN
+        key = str(key or "")
+        self.waivers.pop(key, None)
+        self.sidecar.delete_waiver(key)
+        for f in self.findings:
+            if f.key == key:
+                f.status = STATUS_OPEN
+
+    def waiver_for(self, key: str):
+        return self.waivers.get(str(key or ""))
 
     # -- sheet numbers (per page) -------------------------------------------
 
@@ -289,6 +351,9 @@ class Document:
             self.sidecar.save_wires(self.wires)
         if self.components:
             self.sidecar.save_components(self.components)
+        self.sidecar.save_findings(self.findings)
+        if self.audit_run is not None:
+            self.sidecar.set_meta("audit_run", self.audit_run.to_json())
         self._save_sheet_labels()
         self._save_sheet_roles()
         self.sidecar.set_meta("source_pdf", os.path.basename(self.path))
@@ -392,6 +457,7 @@ class Document:
         # Force them to mirror THIS document exactly (empty clears them).
         self.sidecar.save_wires(self.wires)
         self.sidecar.save_components(self.components)
+        self.sidecar.replace_waivers(self.waivers)
         return out
 
     # -- wire cache ----------------------------------------------------------

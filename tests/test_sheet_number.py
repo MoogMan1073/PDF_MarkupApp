@@ -75,6 +75,29 @@ class TestDrawingNumber(unittest.TestCase):
         doc.close()
 
 
+class TestExtractionQuirks(unittest.TestCase):
+    def test_matches_a_drawing_number_that_only_the_word_list_preserves(self):
+        # Flat text and the word list do not always agree; matching both adds
+        # recall, and an anchored whole-word match adds no false positives.
+        doc = _doc([[("EL2507777-300", *BODY)]])
+        hits = drawing_number_candidates(doc[0], SheetNumberConfig())
+        self.assertEqual(hits, [("EL2507777", "300")])
+        doc.close()
+
+    def test_a_merged_title_block_cell_falls_through_rather_than_guessing(self):
+        # When PyMuPDF merges two adjacent cells into one word, the drawing
+        # number is unrecoverable. Documented here because the correct behavior
+        # is to say nothing and let the next strategy try -- not to loosen the
+        # pattern until it matches part of a catalog number.
+        doc = fitz.open()
+        page = doc.new_page(width=792.0, height=1224.0)
+        page.insert_text((40.0, 1000.0), "24 VDC DISTRIBUTION", rotate=270)
+        page.insert_text((40.0, 1120.0), "EL2507777-400", rotate=270)
+        page.set_rotation(270)
+        self.assertEqual(drawing_number_candidates(page, SheetNumberConfig()), [])
+        doc.close()
+
+
 class TestDominantPrefix(unittest.TestCase):
     def test_finds_the_project_number(self):
         doc = _doc([[("EL2507777-000", *BODY)],

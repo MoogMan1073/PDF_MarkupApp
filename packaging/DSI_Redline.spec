@@ -20,13 +20,20 @@ datas = [
 # them still succeed and the app degrades gracefully.
 hiddenimports = []
 try:
-    from PyInstaller.utils.hooks import collect_submodules
-    for _opt in ("anthropic", "pdf2docx"):
+    from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+    for _opt in ("anthropic", "pdf2docx", "pydrc"):
         try:
             __import__(_opt)
             hiddenimports += collect_submodules(_opt)
+            # Rule packs are YAML data files, not modules. PyDRC finds its
+            # built-ins relative to its own package directory, and
+            # collect_data_files reproduces that layout in the frozen build.
+            datas += collect_data_files(_opt, includes=["**/*.yaml"])
         except Exception:
             pass
+    # PyDRC imports PyYAML lazily from inside its pack loader, so the analysis
+    # does not always see it.
+    hiddenimports += ["yaml"]
 except Exception:
     pass
 

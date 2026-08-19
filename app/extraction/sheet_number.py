@@ -144,12 +144,37 @@ def _words(page) -> list:
 
 
 def drawing_number_candidates(page, config: SheetNumberConfig) -> list:
-    """``(prefix, suffix)`` pairs of every drawing number on the page."""
+    """``(prefix, suffix)`` pairs of every drawing number on the page.
+
+    Scans the flat text and, separately, each extracted word, because the two
+    disagree often enough to matter: flat-text extraction can fold a line or
+    drop a separator, while the word list preserves each title-block cell
+    intact. An anchored whole-word match cannot pick up a fragment of something
+    longer, so the second pass adds recall without adding false positives.
+
+    Known limit: when two title-block cells are plotted close enough that
+    PyMuPDF merges them into one word (``DISTRIBUTIONEL2507777-400``), neither
+    pass matches, and resolution falls through to the next strategy. Separating
+    the cells geometrically would need a title-block template; the fallbacks
+    exist for exactly this.
+    """
+    pattern = config.pattern()
     try:
         text = page.get_text("text") or ""
     except Exception:
-        return []
-    return config.pattern().findall(text)
+        text = ""
+    hits = list(pattern.findall(text))
+
+    anchored = re.compile(f"^(?:{pattern.pattern})$")
+    try:
+        words = page.get_text("words") or []
+    except Exception:
+        words = []
+    for w in words:
+        m = anchored.match(str(w[4]).strip())
+        if m and m.groups() not in hits:
+            hits.append(m.groups())
+    return hits
 
 
 def _from_drawing_number(page, config: SheetNumberConfig,
