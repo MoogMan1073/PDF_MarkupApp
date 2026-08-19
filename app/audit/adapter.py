@@ -19,8 +19,11 @@ import re
 from dataclasses import dataclass
 from typing import Callable, Iterable, Optional
 
+from ..extraction import rung as rung_mod
 from ..extraction import sheet_number as sn
+from ..extraction import signal_arrow as arrow_mod
 from ..extraction import text_region as tr
+from ..extraction import titleblock as tb
 from ..extraction.component_parser import ComponentConfig, ComponentParser
 from ..extraction.text_extract import extract_tokens
 from ..extraction.wire_parser import WireConfig, WireParser
@@ -62,6 +65,8 @@ class AdapterOptions:
     # Labels the user has unticked in the Wire Numbers / Component Labels tabs.
     excluded_labels: frozenset = frozenset()
     read_index: bool = True
+    read_arrows: bool = True
+    read_titleblock: bool = True
 
 
 def _provenance(source: str, confidence: float = 1.0, resolved_by: str = ""):
@@ -97,7 +102,7 @@ def build_model(fitz_doc, sheet_labels: dict, sheet_sources: dict,
     :mod:`app.tools.runner`.  Returns ``None`` when cancelled.
     """
     from pydrc.model import (ModelDocument, Project, Sheet, Device, Conductor,
-                             IndexEntry)
+                             IndexEntry, SignalArrow)
 
     options = options or AdapterOptions()
     wire_cfg = options.wire_config or WireConfig()
@@ -117,14 +122,50 @@ def build_model(fitz_doc, sheet_labels: dict, sheet_sources: dict,
     )
 
     # -- sheets --------------------------------------------------------------
+    # Per-page tokens are needed for the rung gutter, the connectors and the
+    # title block, so they are kept rather than re-extracted three times.
+    page_tokens: dict = {}
+    page_rungs: dict = {}
+    for page_no in range(page_count):
+        if cancel is not None and cancel():
+            return None
+        try:
+            page = fitz_doc[page_no]
+            page_tokens[page_no] = extract_tokens(page, page_no)
+        except Exception:
+            page_tokens[page_no] = []
+            continue
+        label = str(sheet_labels.get(page_no, "") or "")
+        if label:
+            try:
+                page_rungs[page_no] = rung_mod.extract_rungs(
+                    page_tokens[page_no], label, page.rect.width)
+            except Exception:
+                page_rungs[page_no] = []
+
+    fields = {}
+    if options.read_titleblock:
+        for page_no, toks in page_tokens.items():
+            try:
+                page = fitz_doc[page_no]
+                fields[page_no] = tb.read_fields(toks, page.rect.width,
+                                                 page.rect.height)
+            except Exception:
+                continue
+
     for page_no in range(page_count):
         label = str(sheet_labels.get(page_no, "") or "")
         strategy = str(sheet_sources.get(page_no, sn.UNKNOWN))
         confidence = sn.CONFIDENCE.get(strategy, 0.5) if label else 0.0
+        claimed = fields.get(page_no)
+        rungs = page_rungs.get(page_no) or []
         model.sheets.append(Sheet(
             number=label,
             page_index=page_no,
             role=str(sheet_roles.get(page_no, "schematic")),
+            declared_number=(claimed.this_sheet if claimed else ""),
+            next_sheet=(claimed.next_sheet if claimed else ""),
+            line_count=(max(r.line for r in rungs) if rungs else None),
             provenance=_provenance(strategy, confidence, strategy),
         ))
 
@@ -133,10 +174,7 @@ def build_model(fitz_doc, sheet_labels: dict, sheet_sources: dict,
     for page_no in range(page_count):
         if cancel is not None and cancel():
             return None
-        try:
-            tokens.extend(extract_tokens(fitz_doc[page_no], page_no))
-        except Exception:
-            continue
+        tokens.extend(page_tokens.get(page_no) or [])
         if progress is not None:
             progress(page_no + 1, total)
 
@@ -155,6 +193,13 @@ def build_model(fitz_doc, sheet_labels: dict, sheet_sources: dict,
     def _region(item, label: str) -> str:
         return region_of.get(
             (item.page, label, round(item.x, 1), round(item.y, 1)), tr.DRAWING)
+
+    def _region_at(lookup: dict, page_no: int, x: float, y: float) -> str:
+        """Region role for a point, from whichever token sits there."""
+        for (pg, _text, tx, ty), role in lookup.items():
+            if pg == page_no and abs(tx - x) < 1.0 and abs(ty - y) < 1.0:
+                return role
+        return tr.DRAWING
 
     excluded = set(options.excluded_labels or ())
 
@@ -191,6 +236,32 @@ def build_model(fitz_doc, sheet_labels: dict, sheet_sources: dict,
             region_role=_region(wire, wire.label),
             provenance=_provenance(wire.source, float(wire.confidence)),
         ))
+
+    # -- off-page connectors -------------------------------------------------
+    if options.read_arrows:
+        for page_no, toks in page_tokens.items():
+            label = str(sheet_labels.get(page_no, "") or "")
+            if not label:
+                continue
+            try:
+                found = arrow_mod.dedupe(arrow_mod.extract_arrows(
+                    toks, page_rungs.get(page_no) or [], label))
+            except Exception:
+                continue
+            for a in found:
+                model.signal_arrows.append(SignalArrow(
+                    label=a.raw,
+                    direction=a.direction,
+                    found_on_sheet=a.source_sheet,
+                    found_on_rung=a.source_line,
+                    target_sheet=f"{a.target_sheet:03d}",
+                    target_rung=a.target_line,
+                    page_index=page_no,
+                    x=round(float(a.x), 2),
+                    y=round(float(a.y), 2),
+                    region_role=_region_at(region_of, page_no, a.x, a.y),
+                    provenance=_provenance(sn.DRAWING_NUMBER),
+                ))
 
     # -- the drawing index ---------------------------------------------------
     if options.read_index:

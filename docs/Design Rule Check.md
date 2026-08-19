@@ -36,6 +36,34 @@ Double-click a finding to jump to it on the drawing. Each one is outlined on
 the sheet, **underneath** your own markup — an audit mark can never cover
 something you drew, and the eraser will not touch it.
 
+## Cross-references between sheets
+
+A signal leaving one sheet is marked with a connector — `to 70004`, `from
+30014`, sometimes `to 70004 PG.700`. The number is a sheet-and-line reference:
+`70004` is sheet 700, line 04. These come in pairs, and the pairing is what
+gets checked: if sheet 300 line 14 goes **to** sheet 700 line 04, then sheet 700
+line 04 should come **from** sheet 300 line 14.
+
+Two things are reported. A connector pointing at a sheet or line that is not in
+the set is the more definite of the two — it compares printed text against the
+sheets you have, with nothing inferred. A connector whose counterpart is missing
+or names a different line is worth confirming: the line a connector sits on is
+read from the line-number gutter down the side of the sheet, and different
+connector symbols place their text either side of it, so the check allows one
+line of slack before it says anything.
+
+Only ladder sheets take part. A network topology or panel layout references
+other sheets by different conventions, and expecting a connector back from one
+would report correct drafting as an error.
+
+## What the title block claims
+
+A title block states its own sheet number and the number of the sheet after it.
+Both are claims, and both are checked against the set: a sheet whose title block
+disagrees with its drawing number, or whose **next** pointer steps over the sheet
+that actually follows, usually means a title block was copied from a neighbour
+and only half updated.
+
 ## Waiving a finding
 
 Every real panel has justified exceptions. Right-click a finding ▸ **Waive…**,
