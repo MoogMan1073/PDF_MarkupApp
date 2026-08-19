@@ -1709,25 +1709,22 @@ class MainWindow(QMainWindow):
     def _reapply_audit_settings(self):
         """Re-flag existing findings against changed rule settings.
 
-        Cheap and immediate: a severity override or a disabled rule changes how
-        findings read, not what the drawing says, so there is nothing to
-        recompute. Anything that would change the findings themselves still
-        needs a fresh run, and the panel says so by leaving the coverage line
-        from the run that produced them.
+        Cheap and immediate: a severity override changes how a finding reads,
+        not what the drawing says, so there is nothing to recompute.
+
+        Turning a rule *off* only hides its findings — they are not deleted.
+        Discarding them here would mean toggling a rule off and on again
+        silently lost work, and the next run will settle the stored list
+        anyway. The panel does that filtering at display time.
         """
         doc = self.document
         if doc is None or not doc.findings:
             return
-        disabled = set(self.config.audit_disabled_rules())
         overrides = self.config.audit_severity_overrides()
-        kept = []
         for f in doc.findings:
-            if f.rule_id in disabled:
-                continue
             if f.rule_id in overrides:
                 f.severity = overrides[f.rule_id]
-            kept.append(f)
-        doc.set_findings(kept, doc.audit_run)
+        doc.set_findings(doc.findings, doc.audit_run)
         self.audit_panel.refresh()
         self._refresh_finding_marks()
 

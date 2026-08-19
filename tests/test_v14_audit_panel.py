@@ -190,6 +190,26 @@ class TestAuditPanel(unittest.TestCase):
         sheets = [f.sheet for f in self._rows(panel)]
         self.assertEqual(sheets, sorted(sheets, key=lambda s: (0, int(s)) if s else (1, 0)))
 
+    def test_disabling_a_rule_hides_rather_than_deletes_its_findings(self):
+        # Toggling a rule off and on again must not lose work.
+        from app.config import AppConfig
+        config = AppConfig()
+        before = config.audit_disabled_rules()
+        try:
+            config.set_audit_disabled_rules(["DRC-TAG-FAMILY-001"])
+            panel = self._panel()
+            panel.config = config
+            panel.refresh()
+            self.assertNotIn("k2", {f.key for f in self._rows(panel)})
+            # …still stored, so re-enabling brings it straight back.
+            self.assertIn("k2", {f.key for f in self.doc.findings})
+            config.set_audit_disabled_rules([])
+            panel.refresh()
+            self.assertIn("k2", {f.key for f in self._rows(panel)})
+        finally:
+            config.set_audit_disabled_rules(before)
+            config.sync()
+
     def test_count_line_reports_severities_and_waivers(self):
         self.doc.waive_finding("k1", "Accepted")
         panel = self._panel()

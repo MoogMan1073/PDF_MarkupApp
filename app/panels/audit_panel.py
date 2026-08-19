@@ -131,6 +131,12 @@ class AuditPanel(QWidget):
         if self.document is None:
             return []
         out = list(getattr(self.document, "findings", []) or [])
+        # A rule turned off in Settings hides its findings rather than deleting
+        # them, so turning it back on restores the view without a re-run.
+        if self.config is not None:
+            disabled = set(self.config.audit_disabled_rules())
+            if disabled:
+                out = [f for f in out if f.rule_id not in disabled]
         if not self.show_info.isChecked():
             out = [f for f in out if f.severity != INFO]
         if self.hide_waived.isChecked():
