@@ -1,0 +1,54 @@
+name: Tests
+
+# Every push and every pull request. The Windows build workflow also runs the
+# suite, but only on a manual dispatch or a version tag -- far too late to be
+# the first time a regression is noticed.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    # The secret is lifted to job env because the `secrets` context is not
+    # available in a step-level `if:` -- testing it there would silently never
+    # match. `env` is available, so the token's presence can gate the step.
+    env:
+      PYDRC_TOKEN: ${{ secrets.PYDRC_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # PyDRC is a private sibling repository, so the default GITHUB_TOKEN
+      # cannot reach it. With a PYDRC_TOKEN secret the design rule tests run;
+      # without one they skip, and the runner says so loudly rather than
+      # letting a green tick imply they passed. See CI.md.
+      - name: Install the design rule library (optional)
+        if: env.PYDRC_TOKEN != ''
+        shell: bash
+        run: |
+          pip install "pydrc @ git+https://x-access-token:${PYDRC_TOKEN}@github.com/MoogMan1073/PyDRC@main"
+
+      # Qt needs a display; offscreen gives it one. Each test module runs in
+      # its own process -- see tools/run_tests.py for why.
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python tools/run_tests.py

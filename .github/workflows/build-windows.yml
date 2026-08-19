@@ -15,6 +15,12 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+
+    # `secrets` is not available in a step-level `if:`, so the token is lifted
+    # to job env where it can be tested.
+    env:
+      PYDRC_TOKEN: ${{ secrets.PYDRC_TOKEN }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -28,31 +34,31 @@ jobs:
           pip install -r requirements.txt
           pip install -r packaging/requirements-build.txt
 
-      - name: Run tests (offscreen, isolated per module)
+      # The design rule library is a private sibling repository (see
+      # CI.md). Without a PYDRC_TOKEN secret the app still builds and
+      # runs -- the Audit tab reports itself unavailable -- so this does not
+      # block a release, but the log says which kind of build it was.
+      - name: Install the design rule library (optional)
+        if: env.PYDRC_TOKEN != ''
+        shell: bash
+        run: |
+          pip install "pydrc @ git+https://x-access-token:${PYDRC_TOKEN}@github.com/MoogMan1073/PyDRC@main"
+
+      - name: Report whether design rule checking is included
+        shell: bash
+        run: |
+          if [ -z "$PYDRC_TOKEN" ]; then
+            echo "::warning::Built WITHOUT design rule checking -- no PYDRC_TOKEN secret. The Audit tab will report the rule library as unavailable. See CI.md."
+          else
+            python -c "from app import audit; ok, msg = audit.status(); print(msg); raise SystemExit(0 if ok else 1)"
+          fi
+
+      - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
-        shell: pwsh
-        # Each test module runs in its OWN process. Running the whole suite in a
-        # single process accumulates Qt GUI resources (GDI/USER handles, pixmaps)
-        # from the many window-creating tests and hard-crashes a late test on the
-        # headless Windows runner — even though every module passes on its own and
-        # on Linux CI. Per-module isolation keeps resource use bounded; -v names
-        # the in-flight test if a module still crashes.
-        run: |
-          $failed = @()
-          Get-ChildItem tests/test_*.py | Sort-Object Name | ForEach-Object {
-            $mod = "tests." + $_.BaseName
-            Write-Host "::group::$mod"
-            python -m unittest $mod -v
-            $code = $LASTEXITCODE
-            Write-Host "::endgroup::"
-            if ($code -ne 0) { $failed += $mod }
-          }
-          if ($failed.Count -gt 0) {
-            Write-Host "FAILED MODULES: $($failed -join ', ')"
-            exit 1
-          }
-          Write-Host "All test modules passed."
+        # Per-module process isolation, shared with the Tests workflow.
+        # tools/run_tests.py explains why the suite cannot run in one process.
+        run: python tools/run_tests.py -v
 
       - name: Build app (PyInstaller)
         run: pyinstaller packaging/DSI_Redline.spec --noconfirm

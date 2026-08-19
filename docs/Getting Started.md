@@ -18,8 +18,10 @@ You can also open a file directly: `python main.py drawings.pdf`.
 Optional extras:
 - **Tesseract** — only for scanned/raster pages. See [[OCR]].
 - **Anthropic API key** — only for AI assist. See [[AI Assist]].
+- **PyDRC** — only for [[Design Rule Check]]. Install with
+  `pip install -r requirements-drc.txt`.
 
-The app is fully functional offline with neither of these.
+The app is fully functional offline without any of these.
 
 ## Open a PDF
 
