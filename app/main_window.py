@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QSpinBox, QLabel, QWidget, QDialogButtonBox, QDialog, QVBoxLayout,
     QHBoxLayout, QFormLayout, QLineEdit, QCheckBox, QComboBox, QPlainTextEdit,
     QColorDialog, QDoubleSpinBox, QPushButton, QGroupBox, QStatusBar,
-    QApplication, QSlider,
+    QApplication, QSlider, QTableWidget, QTableWidgetItem, QAbstractItemView,
 )
 
 from . import __app_name__, __version__, __copyright__, app_icon
@@ -29,6 +29,7 @@ from .panels.todo_panel import TodoPanel
 from .panels.wire_panel import WirePanel
 from .panels.component_panel import ComponentPanel
 from .panels.tools_panel import ToolsPanel, pdf_path_from_mime
+from .panels.audit_panel import AuditPanel
 from .panels.nav_panel import NavPanel
 
 
@@ -156,6 +157,59 @@ def _apply_font(ann: Annotation, fv) -> None:
 
 
 # --- settings dialog --------------------------------------------------------
+
+
+class WaiveDialog(QDialog):
+    """Record why a finding is acceptable on this project.
+
+    A reason is required, not optional. Every real panel has justified
+    exceptions, and a waiver without one is indistinguishable from someone
+    silencing an inconvenient rule — which is how audit tooling loses the trust
+    that makes it worth running.
+    """
+
+    def __init__(self, finding, author: str = "", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Waive finding")
+        self.setMinimumWidth(460)
+        lay = QVBoxLayout(self)
+
+        summary = QLabel(finding.message)
+        summary.setWordWrap(True)
+        lay.addWidget(summary)
+
+        where = f"sheet {finding.sheet}" if finding.sheet else "set-wide"
+        detail = QLabel(f"{finding.rule_id} · {where}"
+                        + (f" · cited: {finding.clause}" if finding.clause else ""))
+        detail.setWordWrap(True)
+        detail.setStyleSheet("color: palette(mid);")
+        lay.addWidget(detail)
+
+        form = QFormLayout()
+        self.reason = QLineEdit()
+        self.reason.setPlaceholderText("Why is this acceptable here?")
+        self.author = QLineEdit(author)
+        form.addRow("Reason", self.reason)
+        form.addRow("Waived by", self.author)
+        lay.addLayout(form)
+
+        note = QLabel("The finding stays on the list, struck through, so the "
+                      "decision stays visible.")
+        note.setWordWrap(True)
+        note.setStyleSheet("color: palette(mid);")
+        lay.addWidget(note)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self._ok = bb.button(QDialogButtonBox.Ok)
+        self._ok.setEnabled(False)
+        self.reason.textChanged.connect(
+            lambda t: self._ok.setEnabled(bool(t.strip())))
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    def values(self) -> tuple:
+        return self.reason.text().strip(), self.author.text().strip()
 
 
 class SettingsDialog(QDialog):
@@ -286,6 +340,8 @@ class SettingsDialog(QDialog):
         self._on_ai_toggled(self.ai.isChecked())
         self._refresh_api_status()
 
+        gb_drc = self._build_audit_group()
+
         # organise the group boxes into tabs so the dialog never outgrows the
         # screen (was a single tall column of every section stacked vertically)
         def _page(*boxes):
@@ -298,6 +354,7 @@ class SettingsDialog(QDialog):
         tabs.addTab(_page(gb_w), "Wire numbers")
         tabs.addTab(_page(gb_cmp), "Component labels")
         tabs.addTab(_page(gb_a), "OCR / AI")
+        tabs.addTab(_page(gb_drc), "Design rules")
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
@@ -333,7 +390,91 @@ class SettingsDialog(QDialog):
         c.set("ai/api_key", self.ai_key.text().strip())
         c.set("ai/model", self.ai_model.text())
         c.set("ai/tiles", self.ai_tiles.value())
+        self._apply_audit(c)
         c.sync()
+
+    # -- design rules --------------------------------------------------------
+
+    def _build_audit_group(self):
+        """Rule list with per-rule enable and a severity override.
+
+        Editing here re-evaluates immediately, the way the family-code list
+        already does: severities are applied to the findings already on screen
+        rather than forcing a re-run.
+        """
+        from .audit import available as audit_available, status as audit_status
+        from .audit.runner import available_rules
+        from .audit.findings import SEVERITIES, SEVERITY_LABELS
+
+        gb = QGroupBox("Design rule check")
+        v = QVBoxLayout(gb)
+
+        ok, message = audit_status()
+        self.drc_status = QLabel(message)
+        self.drc_status.setWordWrap(True)
+        v.addWidget(self.drc_status)
+
+        self.drc_rows = []
+        self.drc_draw = QCheckBox("Draw findings on the sheet")
+        self.drc_draw.setChecked(bool(self.config.audit_draw_on_sheet()))
+        v.addWidget(self.drc_draw)
+
+        if not ok:
+            v.addWidget(QLabel(
+                "Install the rule library to choose which rules run."))
+            return gb
+
+        disabled = set(self.config.audit_disabled_rules())
+        overrides = self.config.audit_severity_overrides()
+
+        table = QTableWidget(0, 3)
+        table.setHorizontalHeaderLabels(["Run", "Rule", "Severity"])
+        table.verticalHeader().setVisible(False)
+        table.setSelectionMode(QAbstractItemView.NoSelection)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setColumnWidth(0, 44)
+        table.setColumnWidth(1, 420)
+
+        for rule_id, title, default_sev, _pack in available_rules(
+                self.config.audit_packs()):
+            row = table.rowCount()
+            table.insertRow(row)
+            chk = QTableWidgetItem()
+            chk.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            chk.setCheckState(Qt.Unchecked if rule_id in disabled else Qt.Checked)
+            table.setItem(row, 0, chk)
+            label = QTableWidgetItem(f"{rule_id} — {title}")
+            label.setToolTip(title)
+            table.setItem(row, 1, label)
+            combo = QComboBox()
+            for sev in SEVERITIES:
+                combo.addItem(SEVERITY_LABELS[sev], sev)
+            current = overrides.get(rule_id, default_sev)
+            idx = combo.findData(current)
+            combo.setCurrentIndex(idx if idx >= 0 else combo.findData(default_sev))
+            table.setCellWidget(row, 2, combo)
+            self.drc_rows.append((rule_id, default_sev, chk, combo))
+
+        table.setMinimumHeight(220)
+        v.addWidget(table)
+        v.addWidget(QLabel(
+            "Findings are advisory: they identify things to confirm against "
+            "the governing standard, not a determination of compliance."))
+        return gb
+
+    def _apply_audit(self, c):
+        c.set("audit/draw_on_sheet", self.drc_draw.isChecked())
+        if not self.drc_rows:
+            return
+        disabled, overrides = [], {}
+        for rule_id, default_sev, chk, combo in self.drc_rows:
+            if chk.checkState() != Qt.Checked:
+                disabled.append(rule_id)
+            chosen = combo.currentData()
+            if chosen and chosen != default_sev:
+                overrides[rule_id] = chosen
+        c.set_audit_disabled_rules(disabled)
+        c.set_audit_severity_overrides(overrides)
 
     # -- AI assist helpers ---------------------------------------------------
 
@@ -601,11 +742,16 @@ class MainWindow(QMainWindow):
         self.wire_panel = WirePanel()
         self.component_panel = ComponentPanel()
         self.tools_panel = ToolsPanel(self)
+        self.audit_panel = AuditPanel()
 
         self.todo_panel.activated.connect(self._jump_to)
         self.todo_panel.authorEditRequested.connect(self._edit_author)
         self.wire_panel.activated.connect(self._jump_to)        # double-click → drawing
         self.component_panel.activated.connect(self._jump_to)
+        self.audit_panel.activated.connect(self._jump_to)
+        self.audit_panel.runRequested.connect(self.run_audit)
+        self.audit_panel.waiveRequested.connect(self._waive_finding)
+        self.audit_panel.clearWaiverRequested.connect(self._clear_waiver)
 
         self._progress("Building the comment & TODO panels…", 85)
         # navigation dock (pages + bookmarks) on the left
@@ -670,6 +816,7 @@ class MainWindow(QMainWindow):
         comp_dock = self.tabs.add(self.component_panel, "Component Labels",
                                   "ComponentDock")
         tools_dock = self.tabs.add(self.tools_panel, "PDF Tools", "PdfToolsDock")
+        audit_dock = self.tabs.add(self.audit_panel, "Audit", "AuditDock")
         # Lay them out as one tab group between the Navigation (left) and
         # Comments (right) docks: [nav | main-tabs | comments]. Both horizontal
         # splits must happen *before* the tabify loop — splitDockWidget against
@@ -678,9 +825,10 @@ class MainWindow(QMainWindow):
         # while it's still a lone dock, then tab the other panes onto it.
         self.splitDockWidget(nav_dock, view_dock, Qt.Horizontal)
         self.splitDockWidget(view_dock, self.comment_dock, Qt.Horizontal)
-        for d in (todo_dock, wire_dock, comp_dock, tools_dock):
+        for d in (todo_dock, wire_dock, comp_dock, tools_dock, audit_dock):
             self.tabifyDockWidget(view_dock, d)
-        self.main_docks = [view_dock, todo_dock, wire_dock, comp_dock, tools_dock]
+        self.main_docks = [view_dock, todo_dock, wire_dock, comp_dock,
+                           tools_dock, audit_dock]
         self.tabs.setCurrentWidget(self.view)   # Viewer is the default tab
 
         self._progress("Assembling the toolbar…", 92)
@@ -786,6 +934,11 @@ class MainWindow(QMainWindow):
         m_tools.addSeparator()
         m_tools.addAction("PDF → Word…", lambda: self.tools_panel.open_convert())
         m_tools.addAction("Crop / extract… (wizard)", lambda: self.tools_panel.start_crop_wizard())
+        m_tools.addSeparator()
+        self.act_run_audit = m_tools.addAction(
+            "Run design rule check…", self.run_audit, QKeySequence("F7"))
+        self.act_run_audit.setToolTip(
+            "Check the drawing against the design rules and list what to confirm")
 
         m_help = mb.addMenu("&Help")
         m_help.addAction("User Manual", self._show_help, QKeySequence.HelpContents)
@@ -1171,6 +1324,8 @@ class MainWindow(QMainWindow):
         self.wire_panel.set_document(doc, self.config)
         self.component_panel.set_document(doc, self.config)
         self.nav_panel.set_document(doc)
+        self.audit_panel.set_document(doc, self.config)
+        self._refresh_finding_marks()
         self.tools_panel.set_default_pdf(path)
         self.page_spin.setRange(1, max(1, doc.page_count))
         self.page_total.setText(f" / {doc.page_count}")
@@ -1413,6 +1568,10 @@ class MainWindow(QMainWindow):
                     reclassify(self.document.components, self.config.component_config())
                     self.document.set_components(self.document.components)
                     self.component_panel.set_document(self.document, self.config)
+                # Same idea for the audit: re-apply severities and rule
+                # enablement to the findings already on screen rather than
+                # making the user run the check again to see the effect.
+                self._reapply_audit_settings()
 
     # -- edit hooks ----------------------------------------------------------
 
@@ -1545,6 +1704,131 @@ class MainWindow(QMainWindow):
         finally:
             self.view.undo_stack.endMacro()
 
+    # -- design rule check ----------------------------------------------------
+
+    def _reapply_audit_settings(self):
+        """Re-flag existing findings against changed rule settings.
+
+        Cheap and immediate: a severity override or a disabled rule changes how
+        findings read, not what the drawing says, so there is nothing to
+        recompute. Anything that would change the findings themselves still
+        needs a fresh run, and the panel says so by leaving the coverage line
+        from the run that produced them.
+        """
+        doc = self.document
+        if doc is None or not doc.findings:
+            return
+        disabled = set(self.config.audit_disabled_rules())
+        overrides = self.config.audit_severity_overrides()
+        kept = []
+        for f in doc.findings:
+            if f.rule_id in disabled:
+                continue
+            if f.rule_id in overrides:
+                f.severity = overrides[f.rule_id]
+            kept.append(f)
+        doc.set_findings(kept, doc.audit_run)
+        self.audit_panel.refresh()
+        self._refresh_finding_marks()
+
+    def _refresh_finding_marks(self):
+        """Paint (or clear) the audit overlay according to the setting."""
+        if self.document is None:
+            self.view.clear_findings()
+            return
+        if self.config.audit_draw_on_sheet():
+            self.view.draw_findings(self.document.findings)
+        else:
+            self.view.clear_findings()
+
+    def run_audit(self):
+        """Check the drawing against the rule packs, off the UI thread."""
+        from .audit import status as audit_status
+        from .audit.adapter import AdapterOptions
+        from .audit.runner import AuditUnavailable, run_audit as _run
+        from .tools.runner import run_with_progress
+
+        doc = self.document
+        if doc is None:
+            return
+        ok, message = audit_status()
+        if not ok:
+            QMessageBox.information(self, "Design rule check", message)
+            return
+
+        # Snapshot everything the worker needs. It must not touch the document
+        # or the sidecar: sqlite connections belong to the thread that made them.
+        pdf_path = doc.path
+        labels = dict(doc.sheet_labels)
+        sources = dict(doc.sheet_sources)
+        roles = {i: doc.sheet_role_of(i) for i in range(doc.page_count)}
+        waivers = dict(doc.waivers)
+        excluded = frozenset(
+            [w.label for w in doc.wires if not getattr(w, "included", True)]
+            + [c.label for c in doc.components if not getattr(c, "included", True)])
+        project = {"number": "", "title": os.path.splitext(
+            os.path.basename(doc.path))[0]}
+        packs = self.config.audit_packs()
+        disabled = self.config.audit_disabled_rules()
+        overrides = self.config.audit_severity_overrides()
+
+        def work(progress, cancel):
+            return _run(pdf_path, labels, sources, roles,
+                        options=AdapterOptions(
+                            wire_config=self.config.wire_config(),
+                            component_config=self.config.component_config(),
+                            excluded_labels=excluded),
+                        pack_ids=packs, disabled_rules=disabled,
+                        severity_overrides=overrides, waivers=waivers,
+                        project=project, progress=progress, cancel=cancel)
+
+        def done(result):
+            if result is None or result.cancelled:
+                return
+            self.document.set_findings(result.findings, result.run)
+            self.audit_panel.refresh()
+            self._refresh_finding_marks()
+            self.tabs.setCurrentWidget(self.audit_panel)
+            self.statusBar().showMessage(result.run.summary_line(), 8000)
+
+        def failed(message):
+            if message == "__cancelled__":
+                return
+            QMessageBox.warning(self, "Design rule check failed", message)
+
+        try:
+            self._audit_task = run_with_progress(
+                self, "Running design rule check…", work, done, on_error=failed)
+        except AuditUnavailable as e:               # pragma: no cover - guarded above
+            QMessageBox.information(self, "Design rule check", str(e))
+
+    def _waive_finding(self, finding):
+        """Record that a finding is acceptable on this project."""
+        if self.document is None or finding is None:
+            return
+        dlg = WaiveDialog(finding, self.config.author(), self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        reason, author = dlg.values()
+        if not reason.strip():
+            return
+        self.document.waive_finding(finding.key, reason, author)
+        self.audit_panel.refresh()
+        self._refresh_finding_marks()
+
+    def _clear_waiver(self, finding):
+        if self.document is None or finding is None:
+            return
+        waiver = self.document.waiver_for(finding.key)
+        detail = f"\n\nReason given: {waiver.reason}" if waiver is not None else ""
+        if QMessageBox.question(
+                self, "Remove waiver",
+                f"Return this finding to the open list?{detail}") != QMessageBox.Yes:
+            return
+        self.document.clear_waiver(finding.key)
+        self.audit_panel.refresh()
+        self._refresh_finding_marks()
+
     # -- navigation ----------------------------------------------------------
 
     def _jump_to(self, obj):
@@ -1596,6 +1880,9 @@ class MainWindow(QMainWindow):
         for a in (self.act_save, self.act_save_as, self.act_export_pdf,
                   self.act_export_flat):
             a.setEnabled(markup)
+        # The audit writes findings and waivers to the sidecar, so it degrades
+        # the same way markup does when a filename cannot back one.
+        self.act_run_audit.setEnabled(markup)
         # Printing is a view operation (it just rasterises the pages + marks), so
         # it stays available even when the file has no sidecar.
         self.act_print.setEnabled(on)

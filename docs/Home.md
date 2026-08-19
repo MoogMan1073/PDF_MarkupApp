@@ -22,6 +22,7 @@ to see related pages.
 - [[Wire Numbers]] — extract and classify wire labels
 - [[Component Labels]] — extract device/component tags (e.g. LT-10010)
 - [[Wire Export]] — produce label files for the printer
+- [[Design Rule Check]] — audit a set against its own conventions
 - [[PDF Tools]] — split, combine, insert, swap, delete, rotate, convert, crop
 
 ## Reference
