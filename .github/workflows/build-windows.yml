@@ -58,7 +58,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         # Per-module process isolation, shared with the Tests workflow.
         # tools/run_tests.py explains why the suite cannot run in one process.
-        run: python tools/run_tests.py -v
+        run: python tools/run_tests.py -v --strict
 
       - name: Build app (PyInstaller)
         run: pyinstaller packaging/DSI_Redline.spec --noconfirm

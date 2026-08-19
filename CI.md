@@ -15,6 +15,13 @@ python tools/run_tests.py -v       # everything, verbose
 python tools/run_tests.py tests.test_audit
 ```
 
+On Linux the runner needs Qt's system libraries, which a bare Ubuntu box does
+not have — without them `import PySide6.QtGui` fails with
+`libEGL.so.1: cannot open shared object file` and about a third of the suite
+turns into skips. The Tests workflow installs them; locally, the short list is
+`libegl1 libgl1 libglib2.0-0 libdbus-1-3 libxkbcommon-x11-0 libxcb-cursor0`
+plus the other `libxcb-*` packages named in the workflow.
+
 Each test module runs in **its own process**. This is not fussiness: running
 the whole suite in one process accumulates Qt GUI resources from the many
 window-creating tests and hard-crashes a late module on the headless Windows
@@ -45,10 +52,14 @@ Anthropic SDK is absent.
 In CI that creates a trap worth naming: the audit tests are written to **skip**
 when the library is missing, so a run without it goes green having never
 exercised any of the design rule code. The runner therefore prints the library's
-status at the top, counts the skips, and ends with a loud banner when tests were
-skipped for that reason. A green tick that checked nothing must not look like a
-green tick that checked everything — the same rule the audit itself follows
-about coverage.
+status at the top, groups every skip by its stated reason, and ends with a loud
+banner naming how many tests were skipped for that reason. A green tick that
+checked nothing must not look like a green tick that checked everything — the
+same rule the audit itself follows about coverage.
+
+Qt gets the same treatment, with one difference: the workflows install it, so a
+Qt skip means a broken runner rather than a choice. `--strict`, which both
+workflows pass, turns those skips into a failed run.
 
 ### Giving CI access to it
 
