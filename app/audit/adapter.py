@@ -178,7 +178,15 @@ def build_model(fitz_doc, sheet_labels: dict, sheet_sources: dict,
         if progress is not None:
             progress(page_no + 1, total)
 
-    regions = tr.classify_tokens(tokens, sheet_roles, options.region_config)
+    page_sizes = {}
+    for page_no in range(page_count):
+        try:
+            rect = fitz_doc[page_no].rect
+            page_sizes[page_no] = (float(rect.width), float(rect.height))
+        except Exception:
+            continue
+    regions = tr.classify_tokens(tokens, sheet_roles, options.region_config,
+                                 page_sizes)
     region_of = {}
     extents: dict = {}
     for tok, role in zip(tokens, regions):

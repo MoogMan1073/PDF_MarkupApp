@@ -124,6 +124,53 @@ class TestSheetRoleRegions(unittest.TestCase):
         doc.close()
 
 
+class TestTitleBlockMasking(unittest.TestCase):
+    """Title-block text is metadata, not the drawing.
+
+    An address's ZIP code parses exactly like a wire number once the
+    variable-width numbering is on, and it appears on every sheet.
+    """
+
+    def _page(self):
+        doc = fitz.open()
+        page = doc.new_page(width=1224.0, height=792.0)
+        page.insert_text((60.0, 400.0), "300140", fontsize=8)       # drawing
+        page.insert_text((950.0, 730.0), "THOMASVILLE,NC, 27022", fontsize=6)
+        return doc, page
+
+    def test_masks_the_strip_when_page_sizes_are_known(self):
+        from app.extraction.text_region import TITLEBLOCK
+        doc, page = self._page()
+        tokens = extract_tokens(page, 0)
+        roles = dict(zip((t.text for t in tokens),
+                         classify_tokens(tokens, {0: sheet_role.SCHEMATIC},
+                                         None, {0: (1224.0, 792.0)})))
+        self.assertEqual(roles["27022"], TITLEBLOCK)
+        self.assertEqual(roles["300140"], DRAWING)
+        self.assertIn(TITLEBLOCK, NON_DRAWING)
+        doc.close()
+
+    def test_no_page_sizes_no_masking(self):
+        doc, page = self._page()
+        tokens = extract_tokens(page, 0)
+        roles = dict(zip((t.text for t in tokens),
+                         classify_tokens(tokens, {0: sheet_role.SCHEMATIC})))
+        self.assertEqual(roles["27022"], DRAWING)
+        doc.close()
+
+    def test_the_ladder_bottom_rows_stay_unmasked(self):
+        # A two-column ladder's last lines sit around 0.85 of the page height;
+        # the mask must start below them.
+        doc = fitz.open()
+        page = doc.new_page(width=1224.0, height=792.0)
+        page.insert_text((900.0, 792.0 * 0.85), "601740", fontsize=8)
+        tokens = extract_tokens(page, 0)
+        roles = classify_tokens(tokens, {0: sheet_role.SCHEMATIC}, None,
+                                {0: (1224.0, 792.0)})
+        self.assertEqual(roles[0], DRAWING)
+        doc.close()
+
+
 class TestOrdering(unittest.TestCase):
     def test_result_is_positional(self):
         doc, page = _page([NOTE, IO_ROW])

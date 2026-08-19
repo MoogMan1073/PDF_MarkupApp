@@ -69,6 +69,7 @@ DEFAULTS: dict = {
     "audit/disabled_rules": json.dumps([]),
     "audit/severity_overrides": json.dumps({}),
     "audit/draw_on_sheet": True,
+    "audit/oda_path": "",
     # File ▸ Open Recent (most-recent-first list of PDF paths)
     "recent/files": json.dumps([]),
 }
@@ -265,6 +266,9 @@ class AppConfig:
 
     def audit_draw_on_sheet(self) -> bool:
         return bool(self.get("audit/draw_on_sheet", True))
+
+    def oda_converter_path(self) -> str:
+        return str(self.get("audit/oda_path", "") or "")
 
     def author(self) -> str:
         """Who to attribute a waiver to — the name marks are already signed with."""

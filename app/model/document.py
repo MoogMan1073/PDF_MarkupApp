@@ -55,6 +55,8 @@ class Document:
         self.findings: list = []       # from the most recent audit
         self.waivers: dict = {}        # finding key -> Waiver; outlives findings
         self.audit_run = None          # AuditRun summary, or None
+        self.acade_model_json = ""     # imported source-drawing model, if any
+        self.acade_wire_format = ""    # its wire numbering format ("%S%N")
         self.sheet_labels: dict = {}   # page_index -> sheet number (str, e.g. "000")
         # page_index -> how that number was resolved (a sheet_number strategy
         # name, or "user"). An audit cannot report coverage honestly if it
@@ -117,6 +119,8 @@ class Document:
         self.findings = self.sidecar.load_findings()
         self.waivers = self.sidecar.load_waivers()
         self._load_audit_run()
+        self.acade_model_json = self.sidecar.get_meta("acade_model") or ""
+        self.acade_wire_format = self.sidecar.get_meta("acade_wire_format") or ""
 
         # 4) per-page sheet numbers and roles: load saved edits, then
         #    best-effort auto-detection for pages we don't know yet
@@ -175,6 +179,18 @@ class Document:
 
     def waiver_for(self, key: str):
         return self.waivers.get(str(key or ""))
+
+    def set_acade_import(self, model_json: str, wire_format: str = "") -> None:
+        """Store an imported source-drawing model and persist it.
+
+        Every subsequent audit merges this into the plot-derived model before
+        the rules run. Re-importing replaces it wholesale: the source directory
+        is the authority on itself.
+        """
+        self.acade_model_json = model_json or ""
+        self.acade_wire_format = wire_format or ""
+        self.sidecar.set_meta("acade_model", self.acade_model_json)
+        self.sidecar.set_meta("acade_wire_format", self.acade_wire_format)
 
     # -- sheet numbers (per page) -------------------------------------------
 

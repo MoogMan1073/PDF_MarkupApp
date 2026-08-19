@@ -56,6 +56,29 @@ Only ladder sheets take part. A network topology or panel layout references
 other sheets by different conventions, and expecting a connector back from one
 would report correct drafting as an error.
 
+## Importing the source drawings
+
+**Tools ▸ Import project drawings…** points at the AutoCAD Electrical project
+folder. Drawings that already have a DXF beside them are read directly; DWGs
+are converted through the **ODA File Converter** if it is installed (a free
+download — set its location under [[Settings]] ▸ Design rules, or let the app
+find it). Conversions land in a cache folder, never beside your drawings.
+
+The import reads what the plot cannot carry: component ratings, catalog and
+manufacturer assignments, the declared wire layers — whose names carry each
+conductor's gauge — the ladder definitions, and the wire connectivity itself,
+derived the same way AutoCAD Electrical derives it. The audit then re-runs with
+both views merged, and electrical rules light up wherever the source data
+supports them: a fuse rated above what its conductor allows is reported with
+the clause and the arithmetic.
+
+The import also checks the source against itself. Stale terminal attributes
+that reference wire numbers no drawing contains, signal arrows with no
+cross-reference filled in, protective devices with no part assigned, and tags
+drawn as plain text where an intelligent symbol belongs — each becomes a
+finding a drafter can act on, which is how the source data gets better over
+time.
+
 ## What the title block claims
 
 A title block states its own sheet number and the number of the sheet after it.

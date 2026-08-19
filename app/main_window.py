@@ -419,6 +419,23 @@ class SettingsDialog(QDialog):
         self.drc_draw.setChecked(bool(self.config.audit_draw_on_sheet()))
         v.addWidget(self.drc_draw)
 
+        oda_row = QHBoxLayout()
+        oda_row.addWidget(QLabel("ODA File Converter:"))
+        self.drc_oda = QLineEdit(self.config.oda_converter_path())
+        self.drc_oda.setPlaceholderText("auto-detect (used to read DWG files)")
+        btn_oda = QPushButton("Browse…")
+
+        def _pick_oda():
+            path, _ = QFileDialog.getOpenFileName(
+                self, "ODA File Converter executable")
+            if path:
+                self.drc_oda.setText(path)
+
+        btn_oda.clicked.connect(_pick_oda)
+        oda_row.addWidget(self.drc_oda, 1)
+        oda_row.addWidget(btn_oda)
+        v.addLayout(oda_row)
+
         if not ok:
             v.addWidget(QLabel(
                 "Install the rule library to choose which rules run."))
@@ -464,6 +481,7 @@ class SettingsDialog(QDialog):
 
     def _apply_audit(self, c):
         c.set("audit/draw_on_sheet", self.drc_draw.isChecked())
+        c.set("audit/oda_path", self.drc_oda.text().strip())
         if not self.drc_rows:
             return
         disabled, overrides = [], {}
@@ -939,6 +957,11 @@ class MainWindow(QMainWindow):
             "Run design rule check…", self.run_audit, QKeySequence("F7"))
         self.act_run_audit.setToolTip(
             "Check the drawing against the design rules and list what to confirm")
+        self.act_import_drawings = m_tools.addAction(
+            "Import project drawings…", self.import_project_drawings)
+        self.act_import_drawings.setToolTip(
+            "Read the AutoCAD Electrical source drawings (DWG/DXF) to enrich "
+            "the design rule check")
 
         m_help = mb.addMenu("&Help")
         m_help.addAction("User Manual", self._show_help, QKeySequence.HelpContents)
@@ -1763,6 +1786,12 @@ class MainWindow(QMainWindow):
         excluded = frozenset(
             [w.label for w in doc.wires if not getattr(w, "included", True)]
             + [c.label for c in doc.components if not getattr(c, "included", True)])
+        acade_json = doc.acade_model_json
+        wire_cfg = self.config.wire_config()
+        # The source drawings state the wire numbering format; %S%N writes the
+        # line number unpadded, which the fixed-width parse would drop.
+        if (doc.acade_wire_format or "").strip() == "%S%N":
+            wire_cfg.unpadded_rung = True
         project = {"number": "", "title": os.path.splitext(
             os.path.basename(doc.path))[0]}
         packs = self.config.audit_packs()
@@ -1772,11 +1801,12 @@ class MainWindow(QMainWindow):
         def work(progress, cancel):
             return _run(pdf_path, labels, sources, roles,
                         options=AdapterOptions(
-                            wire_config=self.config.wire_config(),
+                            wire_config=wire_cfg,
                             component_config=self.config.component_config(),
                             excluded_labels=excluded),
                         pack_ids=packs, disabled_rules=disabled,
                         severity_overrides=overrides, waivers=waivers,
+                        acade_model_json=acade_json,
                         project=project, progress=progress, cancel=cancel)
 
         def done(result):
@@ -1798,6 +1828,53 @@ class MainWindow(QMainWindow):
                 self, "Running design rule check…", work, done, on_error=failed)
         except AuditUnavailable as e:               # pragma: no cover - guarded above
             QMessageBox.information(self, "Design rule check", str(e))
+
+    def import_project_drawings(self):
+        """Read the project's source drawings and fold them into the audit."""
+        from .audit import status as audit_status
+        from .audit import project_import
+        from .tools.runner import run_with_progress
+
+        doc = self.document
+        if doc is None:
+            return
+        ok, message = audit_status()
+        if not ok:
+            QMessageBox.information(self, "Import project drawings", message)
+            return
+        directory = QFileDialog.getExistingDirectory(
+            self, "Project drawings folder",
+            os.path.dirname(doc.path) or "")
+        if not directory:
+            return
+
+        oda_path = self.config.oda_converter_path()
+
+        def work(progress, cancel):
+            return project_import.import_project(
+                directory, converter_path=oda_path,
+                progress=progress, cancel=cancel)
+
+        def done(result):
+            if result is None:
+                return
+            if result.model_json:
+                self.document.set_acade_import(result.model_json,
+                                               result.wire_format)
+                self.statusBar().showMessage(result.summary(), 8000)
+                # The point of importing is what the audit can now see.
+                self.run_audit()
+            else:
+                QMessageBox.warning(
+                    self, "Import project drawings",
+                    "\n".join(result.errors) or "Nothing could be imported.")
+
+        def failed(message):
+            if message != "__cancelled__":
+                QMessageBox.warning(self, "Import failed", message)
+
+        self._import_task = run_with_progress(
+            self, "Reading project drawings…", work, done, on_error=failed)
 
     def _waive_finding(self, finding):
         """Record that a finding is acceptable on this project."""
@@ -1878,8 +1955,10 @@ class MainWindow(QMainWindow):
                   self.act_export_flat):
             a.setEnabled(markup)
         # The audit writes findings and waivers to the sidecar, so it degrades
-        # the same way markup does when a filename cannot back one.
+        # the same way markup does when a filename cannot back one. The import
+        # persists there too.
         self.act_run_audit.setEnabled(markup)
+        self.act_import_drawings.setEnabled(markup)
         # Printing is a view operation (it just rasterises the pages + marks), so
         # it stays available even when the file has no sidecar.
         self.act_print.setEnabled(on)

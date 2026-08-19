@@ -70,6 +70,7 @@ def run_audit(pdf_path: str, sheet_labels: dict, sheet_sources: dict,
               pack_ids=(), extra_pack_dirs=None,
               disabled_rules=(), severity_overrides=None,
               waivers: Optional[dict] = None,
+              acade_model_json: str = "",
               project: Optional[dict] = None,
               progress: Optional[Callable] = None,
               cancel: Optional[Callable] = None) -> AuditResult:
@@ -99,6 +100,18 @@ def run_audit(pdf_path: str, sheet_labels: dict, sheet_sources: dict,
                             progress=progress, cancel=cancel)
         if built is None:
             return AuditResult(cancelled=True)
+
+        if acade_model_json:
+            # Enrich the plot-derived model with the imported source drawings.
+            # The import is stored data, so a corrupt one degrades to an error
+            # in the run rather than a crash of it.
+            try:
+                from pydrc.adapters.acade_dxf import merge_models
+                from pydrc.model import loads as load_model
+                merge_models(built.model, load_model(acade_model_json))
+            except Exception as e:
+                return AuditResult(run=AuditRun(
+                    errors=[f"Imported project data could not be used: {e}"]))
 
         result = run_rules(built.model, packs,
                            disabled=set(disabled_rules or ()),

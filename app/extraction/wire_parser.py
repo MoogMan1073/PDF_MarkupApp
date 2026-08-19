@@ -61,6 +61,14 @@ class WireConfig:
     # flags.  Left off by default; only enable when title-block sheet numbers
     # can be supplied reliably (or you accept modal-prefix inference).
     cross_check_sheet: bool = False
+    # ACADE's %S%N wire format writes the line number unpadded, so widths vary:
+    # "30080" is 300-8-0 and "300140" is 300-14-0 on the same sheet. With this
+    # set, any total width from sheet+1+wire up to sheet+rung+wire digits
+    # parses; the sheet keeps its fixed width, the wire index its own, and the
+    # line number is whatever sits between. Off by default -- a project that
+    # zero-pads stays strict -- and switched on when a source-drawing import
+    # reports the unpadded format.
+    unpadded_rung: bool = False
     # OCG / layer name keywords (case-insensitive substring match).
     wire_layer_keywords: tuple = ("WIRE", "WIRENO", "WIRE_NO", "WIRENUM")
     jumper_layer_keywords: tuple = ("JUMPER",)
@@ -76,6 +84,9 @@ class WireConfig:
         """Anchored pattern matching a *whole* conforming label."""
         if self.regex_override:
             return re.compile(self.regex_override)
+        if self.unpadded_rung:
+            lo = self.sheet_width + 1 + self.wire_width
+            return re.compile(rf"^\d{{{lo},{self.total_width}}}$")
         return re.compile(rf"^\d{{{self.total_width}}}$")
 
     def token_search_pattern(self) -> "re.Pattern[str]":
@@ -84,6 +95,9 @@ class WireConfig:
             # Best effort: strip anchors for an in-token search.
             body = self.regex_override.lstrip("^").rstrip("$")
             return re.compile(body)
+        if self.unpadded_rung:
+            lo = self.sheet_width + 1 + self.wire_width
+            return re.compile(rf"\b\d{{{lo},{self.total_width}}}\b")
         return re.compile(rf"\b\d{{{self.total_width}}}\b")
 
 
@@ -171,11 +185,19 @@ def parse_label(label: str, config: WireConfig) -> Optional[tuple]:
     label = label.strip()
     if not config.label_pattern().match(label):
         return None
+    sw, rw, ww = config.sheet_width, config.rung_width, config.wire_width
+    if config.unpadded_rung and label.isdigit():
+        # Sheet keeps its fixed width and the wire index its own; the line
+        # number is whatever sits between ("30080" -> 300, 8, 0).
+        lo = sw + 1 + ww
+        if not (lo <= len(label) <= config.total_width):
+            return None
+        return (int(label[:sw]), int(label[sw:len(label) - ww]),
+                int(label[len(label) - ww:]))
     # If a custom regex matched but the length differs from the field layout we
     # cannot reliably slice it; bail out so it is treated as fixed/OEM.
     if len(label) != config.total_width or not label.isdigit():
         return None
-    sw, rw, ww = config.sheet_width, config.rung_width, config.wire_width
     sheet = int(label[0:sw])
     rung = int(label[sw:sw + rw])
     wire = int(label[sw + rw:sw + rw + ww])

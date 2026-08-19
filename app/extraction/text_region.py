@@ -36,8 +36,8 @@ TITLEBLOCK = "titleblock"
 
 REGION_ROLES = (DRAWING, NOTES, LEGEND, INDEX, TITLEBLOCK)
 
-# Regions whose text is prose or tabulation rather than the drawing itself.
-NON_DRAWING = frozenset({NOTES, LEGEND, INDEX})
+# Regions whose text is prose, tabulation or metadata rather than the drawing.
+NON_DRAWING = frozenset({NOTES, LEGEND, INDEX, TITLEBLOCK})
 
 # A sheet whose whole job is prose or tabulation: everything on it reads as
 # that region, without needing to look at the layout.
@@ -68,6 +68,14 @@ class TextRegionConfig:
     # fraction of a point within one printed line.
     row_band_tol: float = 6.0
     enable_prose_runs: bool = True
+    # The title-block strip along the bottom-right of a sheet. Its text is
+    # metadata about the drawing, not the drawing: an address's ZIP code parses
+    # exactly like a wire number once variable-width numbering is on. The band
+    # is deliberately tighter than the one sheet-number detection searches --
+    # a two-column ladder's bottom rows sit around 0.85 of the page height and
+    # must stay unmasked.
+    titleblock_x_frac: float = 0.55
+    titleblock_y_frac: float = 0.88
 
 
 # English words that appear in drafting notes and carry no meaning on a
@@ -155,15 +163,20 @@ def _flush(run: list, prose: set, config: TextRegionConfig) -> None:
 
 
 def classify_tokens(tokens: Iterable, sheet_roles: Optional[dict] = None,
-                    config: Optional[TextRegionConfig] = None) -> list:
+                    config: Optional[TextRegionConfig] = None,
+                    page_sizes: Optional[dict] = None) -> list:
     """Region role per token, in the order given.
 
     ``sheet_roles`` maps page index to a sheet role; pages whose role makes the
     whole sheet prose win outright, and prose-run detection fills the gaps on
-    ordinary drawing sheets.
+    ordinary drawing sheets.  ``page_sizes`` maps page index to ``(width,
+    height)`` in the displayed space; with it, tokens in the title-block strip
+    are marked ``titleblock`` -- without it that masking is skipped, since a
+    band computed against unknown dimensions would land anywhere.
     """
     config = config or TextRegionConfig()
     sheet_roles = sheet_roles or {}
+    page_sizes = page_sizes or {}
     items = list(tokens)
     prose = prose_token_ids(items, config)
 
@@ -172,6 +185,13 @@ def classify_tokens(tokens: Iterable, sheet_roles: Optional[dict] = None,
         page = getattr(tok, "page", 0)
         role = SHEET_ROLE_REGIONS.get(sheet_roles.get(page))
         if role is None:
+            size = page_sizes.get(page)
+            if size:
+                width, height = size
+                if (tok.x >= width * config.titleblock_x_frac
+                        and tok.y >= height * config.titleblock_y_frac):
+                    out.append(TITLEBLOCK)
+                    continue
             role = NOTES if idx in prose else DRAWING
         out.append(role)
     return out
