@@ -105,9 +105,9 @@ def extract_tokens(
             continue
         if rot is not None:
             r = (fitz.Rect(w[0], w[1], w[2], w[3]) * rot).normalize()
-            x0, y0 = r.x0, r.y0
+            x0, y0, x1, y1 = r.x0, r.y0, r.x1, r.y1
         else:
-            x0, y0 = w[0], w[1]
+            x0, y0, x1, y1 = w[0], w[1], w[2], w[3]
         tokens.append(
             Token(
                 text=text,
@@ -117,6 +117,8 @@ def extract_tokens(
                 layer=None,  # best-effort; populated only when OCGs exist
                 source=SOURCE_TEXT,
                 confidence=1.0,
+                w=float(x1) - float(x0),
+                h=float(y1) - float(y0),
             )
         )
     return tokens

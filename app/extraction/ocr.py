@@ -68,6 +68,8 @@ def ocr_page(page: "fitz.Page", page_index: int,
             text=text, x=float(x), y=float(y), page=page_index,
             layer=None, source=SOURCE_OCR,
             confidence=max(0.0, conf) / 100.0,
+            w=float(data.get("width", [0] * n)[i] or 0) / zoom,
+            h=float(data.get("height", [0] * n)[i] or 0) / zoom,
         ))
     return tokens
 

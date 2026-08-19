@@ -95,12 +95,26 @@ class Token:
     """A raw text token extracted from a page (text layer, OCR, or AI)."""
 
     text: str
-    x: float            # x position (left or centre - used only for ordering)
-    y: float            # y position (top - used only for ordering)
+    x: float            # left edge, in the page's DISPLAYED space
+    y: float            # top edge, in the page's DISPLAYED space
     page: int           # 0-based page index
     layer: Optional[str] = None
     source: str = SOURCE_TEXT
     confidence: float = 1.0
+    # Printed extent. Zero when a producer cannot supply it, so callers must
+    # tolerate that; with it, a mark can be drawn around the word rather than
+    # at a corner of it, and prose can be told from a table by real spacing
+    # rather than by guessing a width from the character count.
+    w: float = 0.0
+    h: float = 0.0
+
+    @property
+    def x1(self) -> float:
+        return self.x + self.w
+
+    @property
+    def y1(self) -> float:
+        return self.y + self.h
 
 
 @dataclass
