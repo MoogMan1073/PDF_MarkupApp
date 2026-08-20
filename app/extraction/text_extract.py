@@ -72,9 +72,21 @@ def extract_tokens(
 ) -> list:
     """Extract word-level :class:`Token` objects from a page.
 
-    Coordinates use the word's top-left corner (``x0``/``y0``) which is stable
-    for both horizontal and rotated (vertical) wire-number text and is what the
-    spatial reading-order sort expects.
+    Coordinates are the word's top-left corner **in the page's displayed
+    orientation** -- the same space the viewer, the annotations and the OCR path
+    all use.
+
+    ``get_text("words")`` reports in the *unrotated* space, which on a rotated
+    plot is a different coordinate system entirely: an AutoCAD Electrical sheet
+    is typically a 792x1224 page rotated 270 degrees for display as 1224x792, so
+    a raw ``y`` of 1110 is a perfectly ordinary text position that lies off the
+    bottom of a 792-point page. Left untransformed it sent every
+    double-click-to-jump on a rotated drawing to the wrong place (often off the
+    page), sorted "reading order" sideways, and would have placed audit findings
+    nowhere near the thing they describe. ``page.rotation_matrix`` maps into the
+    displayed space, matching what the search-highlight path already does.
+
+    Pages with no rotation are unaffected: the matrix is the identity.
     """
     tokens: list = []
     try:
@@ -82,11 +94,20 @@ def extract_tokens(
     except Exception:
         return tokens
 
+    try:
+        rot = page.rotation_matrix
+    except Exception:
+        rot = None
+
     for w in words:
-        x0, y0, x1, y1, text = w[0], w[1], w[2], w[3], w[4]
-        text = (text or "").strip()
+        text = (w[4] or "").strip()
         if not text:
             continue
+        if rot is not None:
+            r = (fitz.Rect(w[0], w[1], w[2], w[3]) * rot).normalize()
+            x0, y0, x1, y1 = r.x0, r.y0, r.x1, r.y1
+        else:
+            x0, y0, x1, y1 = w[0], w[1], w[2], w[3]
         tokens.append(
             Token(
                 text=text,
@@ -96,6 +117,8 @@ def extract_tokens(
                 layer=None,  # best-effort; populated only when OCGs exist
                 source=SOURCE_TEXT,
                 confidence=1.0,
+                w=float(x1) - float(x0),
+                h=float(y1) - float(y0),
             )
         )
     return tokens

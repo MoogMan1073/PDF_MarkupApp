@@ -8,6 +8,7 @@ import unittest
 import fitz
 
 from app.extraction.text_extract import read_titleblock_sheet_label
+from app.extraction import sheet_number, sheet_role
 from app.model.document import Document
 from app.model.annotations import Annotation
 from app.export.todo_export import _grouped, GROUP_PAGE, GROUP_SHEET, GROUP_NONE
@@ -100,3 +101,124 @@ class TestTodoGrouping(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSheetProvenance(unittest.TestCase):
+    """Where a page's sheet number came from.
+
+    An audit that cannot tell a number a human confirmed from one a heuristic
+    guessed cannot report its own coverage honestly, so every resolved sheet
+    records the strategy that produced it.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.src = os.path.join(self.tmp, "draw.pdf")
+
+    def _drawing_number_pdf(self, path, numbers):
+        doc = fitz.open()
+        for n in numbers:
+            page = doc.new_page(width=792, height=1224)
+            page.insert_text((40.0, 1000.0), f"EL2507777-{n}", rotate=270)
+            page.set_rotation(270)
+        doc.save(path)
+        doc.close()
+
+    def test_records_the_strategy_that_answered(self):
+        self._drawing_number_pdf(self.src, ["000", "300", "601"])
+        doc = Document(self.src)
+        doc.load()
+        self.assertEqual(doc.sheet_label(1), "300")
+        self.assertEqual(doc.sheet_source(1), sheet_number.DRAWING_NUMBER)
+        self.assertEqual(doc.sheet_confidence(1), 1.0)
+        doc.close()
+
+    def test_user_edit_outranks_detection_and_persists(self):
+        self._drawing_number_pdf(self.src, ["000", "300"])
+        doc = Document(self.src)
+        doc.load()
+        doc.set_sheet_label(1, "301")
+        doc.close()
+
+        again = Document(self.src)
+        again.load()
+        self.assertEqual(again.sheet_label(1), "301")
+        self.assertEqual(again.sheet_source(1), sheet_number.USER)
+        # …and detection has not quietly overwritten it.
+        self.assertEqual(again.sheet_label(0), "000")
+        again.close()
+
+    def test_unresolved_page_reports_zero_confidence(self):
+        doc = fitz.open()
+        doc.new_page(width=792, height=1224).insert_text((60, 60), "no numbering")
+        doc.save(self.src)
+        doc.close()
+        d = Document(self.src)
+        d.load()
+        self.assertEqual(d.sheet_label(0), "")
+        self.assertEqual(d.sheet_confidence(0), 0.0)
+        d.close()
+
+    def test_labels_from_an_older_sidecar_are_marked_unknown(self):
+        # A sidecar written before provenance existed carries labels but no
+        # sources. They may have been typed or guessed; saying "unknown" is the
+        # only honest answer.
+        self._drawing_number_pdf(self.src, ["000"])
+        doc = Document(self.src)
+        doc.load()
+        doc.sidecar.set_meta("sheet_labels", '{"0": "777"}')
+        doc.sidecar.set_meta("sheet_label_sources", "")
+        doc.close()
+
+        again = Document(self.src)
+        again.load()
+        self.assertEqual(again.sheet_label(0), "777")
+        self.assertEqual(again.sheet_source(0), sheet_number.UNKNOWN)
+        again.close()
+
+
+class TestSheetRoles(unittest.TestCase):
+    """A sheet's job decides which rules apply to it."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.src = os.path.join(self.tmp, "roles.pdf")
+        doc = fitz.open()
+        for title in ("TITLE PAGE", "BACK PANEL LAYOUT", "24 VDC DISTRIBUTION"):
+            page = doc.new_page(width=792, height=1224)
+            page.insert_text((40.0, 1000.0), title, rotate=270)
+            page.set_rotation(270)
+        doc.save(self.src)
+        doc.close()
+
+    def test_detects_roles_on_load(self):
+        doc = Document(self.src)
+        doc.load()
+        self.assertEqual(doc.sheet_role_of(0), sheet_role.INDEX)
+        self.assertEqual(doc.sheet_role_of(1), sheet_role.LAYOUT)
+        self.assertEqual(doc.sheet_role_of(2), sheet_role.SCHEMATIC)
+        doc.close()
+
+    def test_override_persists_and_survives_redetection(self):
+        doc = Document(self.src)
+        doc.load()
+        doc.set_sheet_role(2, sheet_role.PLC_IO)
+        doc.close()
+
+        again = Document(self.src)
+        again.load()
+        self.assertEqual(again.sheet_role_of(2), sheet_role.PLC_IO)
+        self.assertEqual(again.sheet_role_of(0), sheet_role.INDEX)
+        again.close()
+
+    def test_clearing_an_override_returns_to_detection(self):
+        doc = Document(self.src)
+        doc.load()
+        doc.set_sheet_role(1, sheet_role.PLC_IO)
+        doc.set_sheet_role(1, "")
+        doc.close()
+
+        again = Document(self.src)
+        again.load()
+        self.assertEqual(again.sheet_role_of(1), sheet_role.LAYOUT)
+        again.close()

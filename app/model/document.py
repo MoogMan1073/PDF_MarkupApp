@@ -12,6 +12,7 @@ from typing import Iterable, Optional
 
 import fitz  # PyMuPDF
 
+from ..extraction import sheet_number, sheet_role
 from .annotations import Annotation, AnnotationStore
 from .storage import (
     SidecarDB, NullSidecar, load_pdf_annotations, write_annotations_to_pdf,
@@ -51,7 +52,17 @@ class Document:
         )
         self.wires: list = []
         self.components: list = []
+        self.findings: list = []       # from the most recent audit
+        self.waivers: dict = {}        # finding key -> Waiver; outlives findings
+        self.audit_run = None          # AuditRun summary, or None
+        self.acade_model_json = ""     # imported source-drawing model, if any
+        self.acade_wire_format = ""    # its wire numbering format ("%S%N")
         self.sheet_labels: dict = {}   # page_index -> sheet number (str, e.g. "000")
+        # page_index -> how that number was resolved (a sheet_number strategy
+        # name, or "user"). An audit cannot report coverage honestly if it
+        # cannot tell a number a human confirmed from one a heuristic guessed.
+        self.sheet_sources: dict = {}
+        self.sheet_roles: dict = {}    # page_index -> sheet_role name
         self._dirty = False
 
     # -- basic page access ---------------------------------------------------
@@ -103,9 +114,83 @@ class Document:
         self.wires = self.sidecar.load_wires()
         self.components = self.sidecar.load_components()
 
-        # 4) per-page sheet numbers: load saved edits, then best-effort
-        #    title-block auto-detect for searchable pages we don't know yet
+        # 3b) the last audit's findings, the waivers recorded against them, and
+        #     what that run could not check
+        self.findings = self.sidecar.load_findings()
+        self.waivers = self.sidecar.load_waivers()
+        self._load_audit_run()
+        self.acade_model_json = self.sidecar.get_meta("acade_model") or ""
+        self.acade_wire_format = self.sidecar.get_meta("acade_wire_format") or ""
+
+        # 4) per-page sheet numbers and roles: load saved edits, then
+        #    best-effort auto-detection for pages we don't know yet
         self._load_sheet_labels()
+        self._load_sheet_roles()
+
+    # -- audit findings ------------------------------------------------------
+
+    def _load_audit_run(self) -> None:
+        from ..audit.findings import AuditRun, apply_waivers
+        self.audit_run = AuditRun.from_json(self.sidecar.get_meta("audit_run"))
+        apply_waivers(self.findings, self.waivers)
+
+    def set_findings(self, findings: list, run=None) -> None:
+        """Replace the findings from an audit run and persist immediately.
+
+        Written through rather than deferred to File > Save, matching how the
+        wire and component tabs persist their extractions.
+        """
+        from ..audit.findings import apply_waivers
+        self.findings = list(findings)
+        apply_waivers(self.findings, self.waivers)
+        self.audit_run = run
+        self.sidecar.save_findings(self.findings)
+        self.sidecar.set_meta("audit_run", run.to_json() if run is not None else "")
+
+    def waive_finding(self, key: str, reason: str, author: str = "") -> None:
+        """Record that a finding is acceptable here, and persist it.
+
+        Waivers are stored apart from findings so that re-running the audit --
+        which replaces every finding -- never discards a human decision.
+        """
+        from ..audit.findings import Waiver, STATUS_WAIVED
+        key = str(key or "")
+        if not key:
+            return
+        rule_id = subject = ""
+        for f in self.findings:
+            if f.key == key:
+                rule_id, subject = f.rule_id, f.subject_id
+                f.status = STATUS_WAIVED
+        waiver = Waiver(key=key, rule_id=rule_id, subject_id=subject,
+                        reason=reason, author=author)
+        self.waivers[key] = waiver
+        self.sidecar.save_waiver(waiver)
+
+    def clear_waiver(self, key: str) -> None:
+        """Withdraw a waiver, returning the finding to open."""
+        from ..audit.findings import STATUS_OPEN
+        key = str(key or "")
+        self.waivers.pop(key, None)
+        self.sidecar.delete_waiver(key)
+        for f in self.findings:
+            if f.key == key:
+                f.status = STATUS_OPEN
+
+    def waiver_for(self, key: str):
+        return self.waivers.get(str(key or ""))
+
+    def set_acade_import(self, model_json: str, wire_format: str = "") -> None:
+        """Store an imported source-drawing model and persist it.
+
+        Every subsequent audit merges this into the plot-derived model before
+        the rules run. Re-importing replaces it wholesale: the source directory
+        is the authority on itself.
+        """
+        self.acade_model_json = model_json or ""
+        self.acade_wire_format = wire_format or ""
+        self.sidecar.set_meta("acade_model", self.acade_model_json)
+        self.sidecar.set_meta("acade_wire_format", self.acade_wire_format)
 
     # -- sheet numbers (per page) -------------------------------------------
 
@@ -119,27 +204,53 @@ class Document:
             except Exception:
                 saved = {}
         self.sheet_labels = saved
+
+        # Provenance lives in its own meta key rather than being folded into
+        # sheet_labels, so a sidecar written here still opens in a build that
+        # predates it. Labels from such a sidecar are marked "unknown": they
+        # may have been typed or guessed and there is no way to tell.
+        raw = self.sidecar.get_meta("sheet_label_sources")
+        sources = {}
+        if raw:
+            try:
+                sources = {int(k): str(v) for k, v in json.loads(raw).items()}
+            except Exception:
+                sources = {}
+        self.sheet_sources = {p: sources.get(p, sheet_number.UNKNOWN)
+                              for p in self.sheet_labels}
         self._autodetect_sheet_labels()
 
     def _autodetect_sheet_labels(self) -> None:
-        """Fill sheet numbers from the title block of searchable pages, without
-        clobbering any the user has already saved/edited."""
-        from ..extraction.text_extract import page_has_text, read_titleblock_sheet_label
-        for i in range(self.page_count):
-            if i in self.sheet_labels:
+        """Resolve sheet numbers for pages we don't already know, recording
+        which strategy answered.
+
+        Never clobbers a saved value: a number the user confirmed outranks
+        anything detection can offer.
+        """
+        try:
+            resolved = sheet_number.resolve_document(self.fitz_doc)
+        except Exception:
+            return
+        for page_no, got in resolved.items():
+            if page_no in self.sheet_labels:
                 continue
-            try:
-                page = self.fitz_doc[i]
-                if not page_has_text(page):
-                    continue   # scanned page: leave blank for manual entry
-                label = read_titleblock_sheet_label(page)
-            except Exception:
-                label = None
-            if label:
-                self.sheet_labels[i] = label
+            if not got.resolved:
+                continue          # leave blank rather than guess
+            self.sheet_labels[page_no] = got.label
+            self.sheet_sources[page_no] = got.strategy
 
     def sheet_label(self, page_no: int) -> str:
         return self.sheet_labels.get(int(page_no), "")
+
+    def sheet_source(self, page_no: int) -> str:
+        """Which strategy produced this page's sheet number."""
+        return self.sheet_sources.get(int(page_no), sheet_number.UNKNOWN)
+
+    def sheet_confidence(self, page_no: int) -> float:
+        """How much to trust this page's sheet number, 0.0 when unresolved."""
+        if not self.sheet_label(page_no):
+            return 0.0
+        return sheet_number.CONFIDENCE.get(self.sheet_source(page_no), 0.5)
 
     def set_sheet_label(self, page_no: int, label: str) -> None:
         """Set (or clear, when blank) a page's sheet number and persist it."""
@@ -147,8 +258,10 @@ class Document:
         label = (label or "").strip()
         if label:
             self.sheet_labels[page_no] = label
+            self.sheet_sources[page_no] = sheet_number.USER
         else:
             self.sheet_labels.pop(page_no, None)
+            self.sheet_sources.pop(page_no, None)
         self._save_sheet_labels()
 
     def _save_sheet_labels(self) -> None:
@@ -156,6 +269,48 @@ class Document:
         self.sidecar.set_meta(
             "sheet_labels",
             json.dumps({str(k): v for k, v in self.sheet_labels.items()}))
+        self.sidecar.set_meta(
+            "sheet_label_sources",
+            json.dumps({str(k): v for k, v in self.sheet_sources.items()}))
+
+    # -- sheet roles (per page) ---------------------------------------------
+
+    def _load_sheet_roles(self) -> None:
+        """Saved roles first, then detection for pages we don't know yet."""
+        import json
+        raw = self.sidecar.get_meta("sheet_roles")
+        saved = {}
+        if raw:
+            try:
+                saved = {int(k): str(v) for k, v in json.loads(raw).items()}
+            except Exception:
+                saved = {}
+        self.sheet_roles = saved
+        try:
+            detected = sheet_role.detect_document_roles(self.fitz_doc)
+        except Exception:
+            return
+        for page_no, role in detected.items():
+            self.sheet_roles.setdefault(page_no, role)
+
+    def sheet_role_of(self, page_no: int) -> str:
+        return self.sheet_roles.get(int(page_no), sheet_role.SCHEMATIC)
+
+    def set_sheet_role(self, page_no: int, role: str) -> None:
+        """Override a page's detected role and persist it."""
+        page_no = int(page_no)
+        role = (role or "").strip()
+        if role and role != sheet_role.UNKNOWN:
+            self.sheet_roles[page_no] = role
+        else:
+            self.sheet_roles.pop(page_no, None)
+        self._save_sheet_roles()
+
+    def _save_sheet_roles(self) -> None:
+        import json
+        self.sidecar.set_meta(
+            "sheet_roles",
+            json.dumps({str(k): v for k, v in self.sheet_roles.items()}))
 
     # -- saving --------------------------------------------------------------
 
@@ -212,7 +367,11 @@ class Document:
             self.sidecar.save_wires(self.wires)
         if self.components:
             self.sidecar.save_components(self.components)
+        self.sidecar.save_findings(self.findings)
+        if self.audit_run is not None:
+            self.sidecar.set_meta("audit_run", self.audit_run.to_json())
         self._save_sheet_labels()
+        self._save_sheet_roles()
         self.sidecar.set_meta("source_pdf", os.path.basename(self.path))
         self._dirty = False
         return out
@@ -314,6 +473,7 @@ class Document:
         # Force them to mirror THIS document exactly (empty clears them).
         self.sidecar.save_wires(self.wires)
         self.sidecar.save_components(self.components)
+        self.sidecar.replace_waivers(self.waivers)
         return out
 
     # -- wire cache ----------------------------------------------------------

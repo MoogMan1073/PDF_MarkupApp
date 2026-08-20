@@ -104,6 +104,19 @@ Requires **Python 3.11+**.
 pip install -r requirements.txt
 ```
 
+### Design rule checking (optional)
+
+The rule library lives in [PyDRC](https://github.com/MoogMan1073/PyDRC), a
+separate project. It is kept out of `requirements.txt` so the app installs
+without needing access to that repository:
+
+```bash
+pip install -r requirements-drc.txt
+```
+
+Without it the Audit tab reports the rule library as unavailable and the rest
+of the app is unaffected. See [CI.md](CI.md) for the CI side.
+
 ### Tesseract (optional — only for scanned/raster pages)
 
 OCR fallback needs the Tesseract system binary in addition to the `pytesseract`

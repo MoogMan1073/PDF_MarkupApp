@@ -43,6 +43,30 @@ class TestNullSidecar(unittest.TestCase):
         s.save_annotations([]); s.save_wires([]); s.save_components([])
         s.set_meta("k", "v"); s.close()
 
+    def test_audit_methods_have_stubs(self):
+        # NullSidecar is duck-typed, not a subclass, so nothing catches a
+        # missing method: a view-only document would crash at runtime instead.
+        # This test is the parity contract -- extend it with every new
+        # SidecarDB method app code calls.
+        from app.audit.findings import Waiver
+        s = NullSidecar()
+        self.assertEqual(s.load_findings(), [])
+        self.assertEqual(s.load_waivers(), {})
+        s.save_findings([])
+        s.save_waiver(Waiver(key="k"))
+        s.delete_waiver("k")
+        s.replace_waivers({})
+        s.close()
+
+    def test_every_sidecar_method_app_code_calls_has_a_twin(self):
+        from app.model.storage import SidecarDB
+        public = {n for n in dir(SidecarDB)
+                  if not n.startswith("_") and callable(getattr(SidecarDB, n))}
+        missing = {n for n in public if not hasattr(NullSidecar, n)}
+        # app_state_map is a known, dead exception (no call sites anywhere).
+        self.assertEqual(missing - {"app_state_map"}, set(),
+                         f"NullSidecar is missing: {sorted(missing)}")
+
 
 class TestDocumentFallback(unittest.TestCase):
     def test_open_falls_back_and_still_loads(self):

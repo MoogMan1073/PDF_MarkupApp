@@ -1,0 +1,5 @@
+# The design rule check library. Separate from requirements.txt because the
+# repository is private: installing this needs credentials (a GitHub account
+# with access, or a token in CI -- see docs/CI.md). Everything else in the app
+# installs and runs without it.
+pydrc @ git+https://github.com/MoogMan1073/PyDRC@main

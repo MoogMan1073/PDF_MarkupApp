@@ -64,6 +64,12 @@ DEFAULTS: dict = {
     "ai/tiles": 2,          # NxN tiles per scanned page (1 = whole page)
     "ai/model": "claude-opus-4-8",
     "ai/api_key": "",
+    # design rule check
+    "audit/packs": json.dumps(["drc-base"]),
+    "audit/disabled_rules": json.dumps([]),
+    "audit/severity_overrides": json.dumps({}),
+    "audit/draw_on_sheet": True,
+    "audit/oda_path": "",
     # File ▸ Open Recent (most-recent-first list of PDF paths)
     "recent/files": json.dumps([]),
 }
@@ -221,6 +227,52 @@ class AppConfig:
             labels_per_wire=int(self.get("export/labels_per_wire")),
             sort=str(self.get("export/sort")),
         )
+
+    # -- design rule check ---------------------------------------------------
+
+    def _json_setting(self, key: str, fallback):
+        """A JSON-encoded setting, falling back when it is missing or corrupt.
+
+        QSettings values are strings; the same shape as component_families and
+        ignore_patterns, which store lists this way.
+        """
+        raw = self.get(key, DEFAULTS[key])
+        try:
+            value = json.loads(raw) if isinstance(raw, str) else raw
+        except (ValueError, TypeError):
+            return fallback
+        return value if isinstance(value, type(fallback)) else fallback
+
+    def audit_packs(self) -> list:
+        packs = self._json_setting("audit/packs", ["drc-base"])
+        return [str(p) for p in packs if str(p).strip()] or ["drc-base"]
+
+    def set_audit_packs(self, packs: list) -> None:
+        self.set("audit/packs", json.dumps([str(p) for p in packs]))
+
+    def audit_disabled_rules(self) -> list:
+        return [str(r) for r in self._json_setting("audit/disabled_rules", [])]
+
+    def set_audit_disabled_rules(self, rules) -> None:
+        self.set("audit/disabled_rules", json.dumps(sorted(set(map(str, rules)))))
+
+    def audit_severity_overrides(self) -> dict:
+        raw = self._json_setting("audit/severity_overrides", {})
+        return {str(k): str(v) for k, v in raw.items()}
+
+    def set_audit_severity_overrides(self, overrides: dict) -> None:
+        self.set("audit/severity_overrides",
+                 json.dumps({str(k): str(v) for k, v in (overrides or {}).items()}))
+
+    def audit_draw_on_sheet(self) -> bool:
+        return bool(self.get("audit/draw_on_sheet", True))
+
+    def oda_converter_path(self) -> str:
+        return str(self.get("audit/oda_path", "") or "")
+
+    def author(self) -> str:
+        """Who to attribute a waiver to — the name marks are already signed with."""
+        return self.your_name
 
     @property
     def ocr_enabled(self) -> bool:
