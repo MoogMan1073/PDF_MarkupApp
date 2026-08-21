@@ -1455,10 +1455,22 @@ class MainWindow(QMainWindow):
         network printer) before the user can do anything. ScreenResolution
         doesn't contact the printer; we then raise the logical DPI so the output
         still prints at a decent resolution.
+
+        600 dpi is the working resolution for the page raster — enough for the
+        fine line work and small text on an electrical drawing. Pages are
+        rasterised from the printer's own paint viewport, so the bitmap matches
+        the geometry it is drawn into exactly and is never enlarged to fill the
+        sheet (which is what used to make prints soft).
+
+        Note this 600 is the *app's* resolution, not the driver's. In
+        ScreenResolution mode Qt keeps the resolution we set, so the quality
+        setting in the print dialog does not raise it — 600 dpi is the ceiling
+        on how much detail we hand the driver, which then scales that raster to
+        its own device DPI.
         """
         from PySide6.QtPrintSupport import QPrinter
         printer = QPrinter(QPrinter.ScreenResolution)
-        printer.setResolution(300)
+        printer.setResolution(600)
         printer.setDocName(os.path.basename(self.document.path))
         return printer
 
@@ -1478,15 +1490,36 @@ class MainWindow(QMainWindow):
             dlg.setOption(QPrintDialog.PrintPageRange, True)
         if dlg.exec() != QPrintDialog.Accepted:
             return
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+        # Rendering a full 600 dpi page is what makes the output sharp, but it
+        # also costs about a second a page — long enough for a multi-sheet set
+        # to look like the app has locked up. Show progress (and let it be
+        # cancelled) instead of freezing.
+        from PySide6.QtWidgets import QProgressDialog
+        progress = QProgressDialog("Printing…", "Cancel", 0, 1, self)
+        progress.setWindowTitle("Printing")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(800)     # no flash for a quick one-pager
+
+        def on_page(done, total):
+            progress.setMaximum(total)
+            progress.setValue(done)
+            progress.setLabelText(
+                f"Printing page {min(done + 1, total)} of {total}…")
+            QApplication.processEvents()
+            return not progress.wasCanceled()
+
         try:
-            self._print_to(printer)
-            self.statusBar().showMessage(
-                f"Sent to {printer.printerName() or 'printer'}", 5000)
+            pages = self._print_to(printer, on_page=on_page)
+            if progress.wasCanceled():
+                self.statusBar().showMessage("Printing cancelled", 5000)
+            else:
+                self.statusBar().showMessage(
+                    f"Sent {pages} page{'' if pages == 1 else 's'} to "
+                    f"{printer.printerName() or 'printer'}", 5000)
         except Exception as e:
             QMessageBox.warning(self, "Print failed", str(e))
         finally:
-            QApplication.restoreOverrideCursor()
+            progress.close()
 
     def print_preview(self):
         """Optional: show the pages in a preview window, then print from there."""
@@ -1527,11 +1560,16 @@ class MainWindow(QMainWindow):
 
         act.toggled.connect(_toggle)
 
-    def _print_to(self, printer):
+    def _print_to(self, printer, on_page=None):
         """Paint each requested page onto ``printer``, fitted and centred on the
         sheet. Includes the app's markups unless ``_print_include_marks`` is off
         (the print-preview toggle). Kept separate from the dialog so it can be
-        unit-tested against a PDF-output printer."""
+        unit-tested against a PDF-output printer.
+
+        ``on_page(done, total)`` is called before each page if given; returning
+        False stops the job (the user cancelled). Returns the number of pages
+        actually painted.
+        """
         from PySide6.QtGui import QPainter
         work = self.document.annotated_fitz(
             with_marks=getattr(self, "_print_include_marks", True))
@@ -1540,35 +1578,151 @@ class MainWindow(QMainWindow):
             last = printer.toPage() or work.page_count
             first = max(1, first)
             last = min(work.page_count, last)
-            painter = QPainter(printer)
+            total = max(0, last - first + 1)
+            done = 0
+            # The painter is created only once a page is actually going to be
+            # drawn: starting one and ending it without painting still emits a
+            # sheet, so cancelling at the first page would waste a blank page.
+            painter = None
             try:
                 for n, i in enumerate(range(first - 1, last)):
-                    if n:
+                    if on_page is not None and not on_page(n, total):
+                        break
+                    if painter is None:
+                        painter = QPainter(printer)
+                    elif done:
                         printer.newPage()
-                    img = self._render_print_image(work[i], printer)
-                    target = painter.viewport()
-                    scaled = img.scaled(target.width(), target.height(),
-                                        Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                    x = (target.width() - scaled.width()) // 2
-                    y = (target.height() - scaled.height()) // 2
-                    painter.drawImage(x, y, scaled)
+                    self._print_page(painter, work[i], painter.viewport())
+                    done += 1
             finally:
-                painter.end()
+                if painter is not None:
+                    painter.end()
+            return done
         finally:
             work.close()
 
+    # One rasterised band is capped at this many pixels, so peak memory stays
+    # bounded no matter how big the sheet or how high the driver's dpi — an
+    # E-size plot at 1200 dpi would otherwise be a single ~6 GB bitmap. Two
+    # bitmaps of a band are live at once (the pixmap, and the trimmed copy handed
+    # to the painter), so 24 Mpx costs ~145 MB while a band is being drawn.
+    _PRINT_BAND_PX = 24_000_000
+
+    # Device pixels per PDF point for the *preview* raster (~150 dpi). The
+    # preview dialog paints every page into a stored QPicture and keeps them all
+    # at once, so rasterising there at the printer's real resolution would hold
+    # the whole document in memory (a 6-page preview at 600 dpi already costs
+    # ~1 GB). The preview only ever shows a scaled-down page, so it doesn't need
+    # print resolution; the real print is unaffected.
+    _PREVIEW_SCALE = 150 / 72.0
+
+    # ...and never more than this many pixels for one previewed page, whatever
+    # the sheet size. A dpi cap alone still scales with the paper: an E-size
+    # sheet at 150 dpi is 34 Mpx, so a preview of a large-format set would still
+    # retain ~145 MB per page. The preview is only ever shown scaled down.
+    _PREVIEW_MAX_PX = 4_000_000
+
+    # Device rows rendered past each end of a band and then trimmed off, so no
+    # kept row was antialiased against the edge of the band's clip. At this
+    # depth a banded page comes out identical to a single full-page render.
+    _BAND_MARGIN = 16
+
     @staticmethod
-    def _render_print_image(page, printer, max_dpi: float = 200.0):
-        """Rasterise one fitz page (with baked annotations) to a QImage, capped
-        at ``max_dpi`` so a full-size E sheet stays a sane bitmap."""
+    def _is_preview(painter):
+        """True when painting into the print-preview dialog rather than onto a
+        real printer — the preview backs its pages with QPicture."""
+        from PySide6.QtGui import QPaintEngine
+        try:
+            eng = painter.paintEngine()
+            return eng is not None and eng.type() == QPaintEngine.Picture
+        except Exception:
+            return False
+
+    @staticmethod
+    def _print_fit(rect, target):
+        """Where one page lands on the sheet: ``(scale, w, h, x, y)`` in device
+        pixels, fitted to ``target`` without distortion and centred on it."""
+        pw = max(1.0, float(rect.width))
+        ph = max(1.0, float(rect.height))
+        scale = min(target.width() / pw, target.height() / ph)
+        w = max(1, int(round(pw * scale)))
+        h = max(1, int(round(ph * scale)))
+        return (scale, w, h,
+                int(round((target.width() - w) / 2.0)),
+                int(round((target.height() - h) / 2.0)))
+
+    @classmethod
+    def _print_page(cls, painter, page, target):
+        """Draw one page (with its marks) onto the printer's viewport.
+
+        The page is rasterised at the *device's own* resolution and blitted 1:1.
+        Rasterising at a fixed dpi relative to the source page and then scaling
+        the result up to the sheet is what made prints look soft — and it made
+        asking the driver for higher quality actively worse, since that only
+        enlarged the same small bitmap further.
+
+        Tall pages are rasterised in horizontal bands so the peak bitmap stays
+        bounded (see ``_PRINT_BAND_PX``) without giving up any resolution.
+        """
         import fitz
-        from PySide6.QtGui import QImage
-        dpi = min(float(printer.resolution()), max_dpi)
-        zoom = dpi / 72.0
-        pm = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False, annots=True)
-        img = QImage(pm.samples, pm.width, pm.height, pm.stride,
-                     QImage.Format_RGB888)
-        return img.copy()   # detach from the pixmap buffer before it's freed
+        from PySide6.QtGui import QImage, QPainter
+        from PySide6.QtCore import QPoint, QRectF
+        r = page.rect
+        scale, w, h, x0, y0 = cls._print_fit(r, target)
+        if scale <= 0:
+            # No printable area at all — exotic paper, or margins wider than the
+            # sheet. There is nothing to draw, and going on would divide by the
+            # scale when clipping bands.
+            return
+
+        if cls._is_preview(painter):
+            area = max(1.0, float(r.width) * float(r.height))
+            pscale = min(scale, cls._PREVIEW_SCALE,
+                         (cls._PREVIEW_MAX_PX / area) ** 0.5)
+            if pscale < scale:
+                # a single modest raster, drawn up to the full sheet size
+                pm = page.get_pixmap(matrix=fitz.Matrix(pscale, pscale),
+                                     alpha=False, annots=True)
+                # samples_mv is a view on the pixmap; copy() owns its pixels, so
+                # the image outlives pm without duplicating the buffer twice
+                img = QImage(pm.samples_mv, pm.width, pm.height, pm.stride,
+                             QImage.Format_RGB888).copy()
+                painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+                painter.drawImage(QRectF(x0, y0, w, h), img)
+                return
+
+        mat = fitz.Matrix(scale, scale)
+        origin = (r * mat).irect          # where the whole page starts, scaled
+        band_h = max(1, min(h, int(cls._PRINT_BAND_PX // w)))
+        y = 0
+        while y < h:
+            rows = min(band_h, h - y)
+            # Render a few rows beyond the band and then throw them away. The
+            # renderer antialiases against the edge of the clip, so a row sitting
+            # right on a band boundary comes out lighter than it should — which
+            # would print as a faint line across the sheet at every join. Only
+            # rows well inside the clip are kept, so every row is rendered
+            # exactly as it would be in a single full-page pass.
+            top_px = max(0, y - cls._BAND_MARGIN)
+            bot_px = min(h, y + rows + cls._BAND_MARGIN)
+            pm = page.get_pixmap(
+                matrix=mat, alpha=False, annots=True,
+                clip=fitz.Rect(r.x0, r.y0 + top_px / scale,
+                               r.x1, r.y0 + bot_px / scale))
+            # samples_mv is a view on the pixmap's own buffer rather than a copy
+            # of it, and the single copy() below both trims the band and detaches
+            # it — so one band costs one extra bitmap, not three.
+            img = QImage(pm.samples_mv, pm.width, pm.height, pm.stride,
+                         QImage.Format_RGB888)
+            # Where this band's kept rows start inside the rendered strip. Clamp
+            # it: QImage.copy() pads out-of-range rows with black, and a black
+            # stripe across a drawing is far worse than a rounding artefact.
+            off = min(max(0, y - (pm.y - origin.y0)), max(0, img.height() - 1))
+            take = min(rows, img.height() - off)
+            if take > 0:
+                painter.drawImage(QPoint(x0 + pm.x - origin.x0, y0 + y),
+                                  img.copy(0, off, img.width(), take))
+            y += rows
 
     def open_settings(self):
         dlg = SettingsDialog(self.config, self)
