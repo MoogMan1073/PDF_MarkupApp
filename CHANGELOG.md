@@ -4,6 +4,21 @@ All notable changes to **DSI Redline** are documented here. Versions are tagged
 `vX.Y.Z`; each tag triggers the Windows build that publishes the installer and a
 portable zip to the matching GitHub release.
 
+## v1.4.0
+
+- **A real Find (`Ctrl+F`).** The search bar grew into a search panel — still
+  pinned top-right, still closed from its **✕** — that no longer vanishes when
+  you click the drawing, press `Esc` on the canvas, or open another file (it
+  re-runs your query in the new document instead). Under the box: **match case**,
+  **whole words** and **regex** toggles, plus **Marks**, which searches your
+  comments, text boxes, callouts and notes alongside the page text. Every hit is
+  listed in a scrollable **match list** grouped by page/sheet and shown with the
+  surrounding line — click one to jump to it with a pulse. Matched tokens that
+  parse as component tags or wire numbers are **decoded inline** (`CB-10412` →
+  *tag CB · sheet 104 · rung 12*). Recent searches come back as a dropdown while
+  you type (kept across sessions), `F3` / `Shift+F3` step matches, and a bad
+  regex shows a quiet — in the counter instead of an error popup.
+
 ## v1.3.1
 
 - **Sharper printing.** Printed pages were soft: each page was rasterized at a

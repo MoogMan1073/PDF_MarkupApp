@@ -88,10 +88,37 @@ empty page area selects text.
 
 ## Find in the document
 
-Press **`Ctrl+F`** to open a search bar (top-right of the viewer). It searches as
-you type and stays open until you close it (the **✕** or **`Esc`**). Step through
-matches with **`Enter`** / **`Shift+Enter`** or the ▲ / ▼ buttons; the current
-match is highlighted in orange and scrolled into view, with an *i/n* counter.
+Press **`Ctrl+F`** to open the search panel (pinned top-right of the viewer). It
+searches as you type and stays open until **you** close it — the **✕**, or
+**`Esc`** pressed inside the panel. Clicking or drawing on the drawing, loading
+another file, or pressing `Esc` on the canvas never dismisses it. Step through
+matches with **`Enter`** / **`Shift+Enter`**, **`F3`** / **`Shift+F3`**, or the
+▲ / ▼ buttons; the current match is highlighted in orange and scrolled into
+view, with an *i/n* counter.
+
+**Match list.** Every hit is listed in a scrollable dropdown under the search
+box, grouped by page (with the detected **sheet number**) and shown with the
+surrounding line of text. Click a row to jump straight to that match — it lands
+with a pulse ring so your eye finds it.
+
+**Options.** Toggles under the box:
+
+- **Aa** — match case.
+- **Word** — whole words only (`10` no longer matches inside `10412`).
+- **`.*`** — regular expressions, e.g. `CB-\d+` for every breaker tag or
+  `30{2}\d{3}` for a wire range. A bad pattern shows a — in the counter with
+  the reason as its tooltip, never an error popup.
+- **Marks** — also searches your markups: comments, text boxes, callouts and
+  the notes attached to any mark. Those hits carry a small ✎ and show the mark's
+  kind and author in the tooltip.
+
+**It knows the drawing's language.** When a matched token parses as a component
+tag or wire number under your naming convention (see [[Settings]]), the row
+decodes it inline — `CB-10412` shows *tag CB · sheet 104 · rung 12* — so you can
+tell at a glance which hits are device tags and where they claim to live.
+
+**History.** Recent searches (the last 10) come back as a dropdown while you
+type, remembered between sessions.
 
 ## Marking up
 
