@@ -521,6 +521,71 @@ class TestPlacesFromTheReport(unittest.TestCase):
 
 
 @unittest.skipUnless(_QT_OK, "PySide6 not available")
+class TestACoordinateFromTheSourceDrawing(unittest.TestCase):
+    """A drawing's model space is not the page's coordinate space.
+
+    Both are bare numbers, so nothing downstream can tell them apart. A
+    drawing runs about 31 x 21 inches; read as PDF points that is half an inch
+    square in the top-left corner of a 17 x 11 in sheet, y inverted -- every
+    such finding boxed in the same wrong place. Measured on a real audit with
+    the source drawings imported: 16 of 57 located places.
+    """
+
+    def _arrow(self, **kw):
+        raw = {
+            "rule_id": "DRC-XREF-ARROW-RECIP-001", "fingerprint": "sha256:a",
+            "severity": POTENTIAL, "message": "m",
+            # 12.5 x 8.25 inches into the drawing -- a plausible spot on a
+            # schematic, and a nonsense one on a page measured in points.
+            "location": {"sheet": "232", "rung": 16, "page_index": 5,
+                         "x": 12.5, "y": 8.25},
+            "subject": {"id": "232-16", "kind": "signal_arrow"},
+            "evidence": {},
+        }
+        raw.update(kw)
+        return raw
+
+    def test_it_is_dropped_rather_than_drawn_in_the_wrong_place(self):
+        f = Finding.from_pydrc(self._arrow(), extents={}, pages_by_sheet={})
+        self.assertEqual((f.x, f.y), (0.0, 0.0))
+        self.assertFalse(f.places[0].has_location)
+
+    def test_the_finding_still_names_its_sheet(self):
+        # Dropping the box must not cost the reader the place: no location
+        # means the overlay skips it and the row still says sheet 232.
+        f = Finding.from_pydrc(self._arrow(), extents={}, pages_by_sheet={})
+        self.assertEqual(f.sheets, ["232"])
+        self.assertEqual(f.places[0].label, "232-16")
+
+    def test_a_box_found_on_the_page_is_still_used(self):
+        # The gate is "no page coordinate was found", not "never trust this
+        # kind": if the subject's text is printed, that box is authoritative.
+        f = Finding.from_pydrc(self._arrow(),
+                               extents={(5, "232-16"): (400.0, 300.0, 26.0, 10.0)},
+                               pages_by_sheet={})
+        self.assertEqual((f.x, f.y, f.w, f.h), (400.0, 300.0, 26.0, 10.0))
+        self.assertTrue(f.places[0].has_location)
+
+    def test_a_devices_own_coordinate_is_left_alone(self):
+        """Keyed on the subject kind, not on provenance.
+
+        A device's id is printed on the sheet, so its coordinate comes from
+        the page and is correct however the model was built. Gating on
+        provenance instead would discard it: the merge that enriches a
+        plot-derived model copies `provenance` onto matched base devices that
+        kept their page coordinates.
+        """
+        raw = self._arrow(subject={"id": "FU-23216", "kind": "device"},
+                          provenance={"source": "acade", "resolved_by": "dxf"})
+        f = Finding.from_pydrc(raw, extents={}, pages_by_sheet={})
+        self.assertEqual((f.x, f.y), (12.5, 8.25))
+
+    def test_the_overlay_skips_a_place_with_no_location(self):
+        from app.audit.findings import Place
+        self.assertFalse(Place(sheet="232", rung=16, page=5).has_location)
+        self.assertTrue(Place(sheet="232", rung=16, page=5, x=400.0).has_location)
+
+
 class TestRolledUpFindingOnScreen(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

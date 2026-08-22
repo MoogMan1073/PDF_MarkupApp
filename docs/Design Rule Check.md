@@ -121,6 +121,23 @@ also keyed to the *set* of symbols involved, not to how many there are: if a
 later revision swaps one of them for another, the finding reopens rather than
 quietly extending your decision to something nobody looked at.
 
+## Where a finding is drawn
+
+A finding is outlined around the text it is about, found by looking its subject
+up among the page's printed words. Some subjects are not printed anywhere — a
+cross-reference arrow is identified by its sheet and rung, which is a label the
+report uses, not something drawn on the drawing.
+
+When the subject cannot be found on the page, the finding is filed against its
+sheet with no outline, and the row still names the sheet and rung. That is
+deliberate: a box in the wrong place is worse than no box, because it looks
+just as authoritative.
+
+This matters most with source drawings imported. A drawing's own coordinates
+measure the drawing, not the page, and the two are indistinguishable as bare
+numbers — so a coordinate that did not come from the page is discarded rather
+than trusted.
+
 ## A rule that ran against nothing
 
 The coverage header separates three states, not two. A rule can have **checked
