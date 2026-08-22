@@ -238,10 +238,22 @@ class Finding:
         x = float(loc.get("x") or 0.0)
         y = float(loc.get("y") or 0.0)
         w = h = 0.0
-        if extents and page is not None:
-            box = extents.get((int(page), subject_id))
-            if box:
-                x, y, w, h = box
+        box = extents.get((int(page), subject_id)) if (
+            extents and page is not None) else None
+        if box:
+            x, y, w, h = box
+        elif subject.get("kind") in _DRAWING_SPACE_KINDS:
+            # This coordinate is in the source drawing's model space, not the
+            # page's. Both are bare numbers, so nothing downstream can tell:
+            # a drawing runs about 31 x 21 inches, which as PDF points is
+            # half an inch square in the top-left corner, with y inverted --
+            # every such finding boxed in the same wrong spot.
+            #
+            # Zeroing it is not just damage control. A place with no location
+            # is skipped by the overlay and falls back to naming its sheet,
+            # which is honest; and it lets _places_from try the `on` tag,
+            # which a nonzero coordinate blocks.
+            x = y = 0.0
 
         places = _places_from(evidence, str(loc.get("sheet", "")),
                               loc.get("rung"),
@@ -454,6 +466,21 @@ def apply_waivers(findings, waivers: dict) -> list:
     for f in findings:
         f.status = STATUS_WAIVED if f.key in waivers else STATUS_OPEN
     return findings
+
+
+#: Subject kinds whose coordinates can only have come from a source drawing.
+#:
+#: The merge that enriches a plot-derived model replaces these wholesale
+#: rather than matching them onto plot-read entities, so they keep the DXF's
+#: model space -- and their subject ids are synthetic (a sheet-rung label like
+#: "232-16"), so they are never found among the page's printed text either.
+#: A device or wire number is different: its id is printed, so the extents
+#: lookup answers in page coordinates and this never applies.
+#:
+#: Keyed on the kind rather than on provenance deliberately. The merge copies
+#: `provenance` onto matched base devices that kept their correct page
+#: coordinates, so provenance would discard good boxes.
+_DRAWING_SPACE_KINDS = frozenset({"signal_arrow"})
 
 
 def _subjects_by_place(evidence: dict) -> dict:
