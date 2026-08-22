@@ -17,7 +17,10 @@ portable zip to the matching GitHub release.
   parse as component tags or wire numbers are **decoded inline** (`CB-10412` →
   *tag CB · sheet 104 · rung 12*). Recent searches come back as a dropdown while
   you type (kept across sessions), `F3` / `Shift+F3` step matches, and a bad
-  regex shows a quiet — in the counter instead of an error popup.
+  regex shows a quiet — in the counter instead of an error popup. The panel
+  also **stays put while you jump between matches** — it used to ride along
+  with the page scroll and vanish off-screen on `Enter` — and short context
+  lines no longer lose their last characters to a needless ellipsis.
 
 ## v1.3.1
 
