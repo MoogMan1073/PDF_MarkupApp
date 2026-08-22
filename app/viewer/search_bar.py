@@ -42,6 +42,26 @@ class _ResultDelegate(QStyledItemDelegate):
     ROW_H = 22
     HEADER_H = 20
 
+    # Extra px granted beyond each segment's measured advance. elidedText()
+    # at a width exactly equal to horizontalAdvance() still elides — integer
+    # metrics round below the true float advance — so a zero-slack budget
+    # elided every row by a character or two even with the whole row free.
+    SLACK = 4
+
+    @classmethod
+    def _budget(cls, fm, fmb, before, match, after, avail):
+        """Split ``avail`` px between the three context segments. The match
+        gets what it needs first; the leftovers go to before/after, either of
+        which may borrow the other's unused half."""
+        adv_b = fm.horizontalAdvance(before) + (cls.SLACK if before else 0)
+        adv_m = fmb.horizontalAdvance(match) + cls.SLACK
+        adv_a = fm.horizontalAdvance(after) + (cls.SLACK if after else 0)
+        match_w = min(adv_m, avail)
+        side = max(0, avail - match_w)
+        before_w = min(adv_b, side // 2 + max(0, side // 2 - adv_a))
+        after_w = min(adv_a, avail - match_w - before_w)
+        return before_w, match_w, after_w
+
     def sizeHint(self, option, index):
         is_header = index.data(ROLE_INDEX) == -1
         return QSize(option.rect.width(),
@@ -111,12 +131,8 @@ class _ResultDelegate(QStyledItemDelegate):
                              Qt.AlignVCenter | Qt.AlignRight,
                              dfm.elidedText(decode, Qt.ElideRight, decode_w))
         avail = right - decode_w - x - 4
-
-        match_w = min(fmb.horizontalAdvance(match), avail)
-        side = max(0, (avail - match_w))
-        before_w = min(fm.horizontalAdvance(before), side // 2 + max(
-            0, side // 2 - fm.horizontalAdvance(after)))
-        after_w = min(fm.horizontalAdvance(after), avail - match_w - before_w)
+        before_w, match_w, after_w = self._budget(fm, fmb, before, match,
+                                                  after, avail)
 
         painter.setFont(option.font)
         painter.setPen(dim_pen)

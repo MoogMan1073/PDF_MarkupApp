@@ -1490,7 +1490,11 @@ class PdfView(QGraphicsView):
     def show_search(self):
         if self._search_bar is None:
             from .search_bar import SearchBar
-            self._search_bar = SearchBar(self.viewport(), config=self.config)
+            # Parented to the view frame, NOT the viewport: scrolling a
+            # QGraphicsView calls viewport().scroll(), which drags viewport
+            # children along with the content — so a viewport-parented panel
+            # was carried off-screen by the very jump-to-match it triggered.
+            self._search_bar = SearchBar(self, config=self.config)
             self._search_bar.queryChanged.connect(self.run_search)
             self._search_bar.nextRequested.connect(self.search_next)
             self._search_bar.prevRequested.connect(self.search_prev)
@@ -1519,8 +1523,12 @@ class PdfView(QGraphicsView):
     def _position_search_bar(self):
         if self._search_bar is None:
             return
+        # viewport geometry is in view coords: hug its top-right corner, which
+        # also keeps the panel clear of the vertical scrollbar
+        vg = self.viewport().geometry()
         bw = self._search_bar.width()
-        self._search_bar.move(max(8, self.viewport().width() - bw - 16), 12)
+        self._search_bar.move(max(vg.left() + 8, vg.right() - bw - 15),
+                              vg.top() + 12)
 
     def run_search(self, query):
         self._clear_search_highlights()

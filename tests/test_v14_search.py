@@ -323,6 +323,61 @@ class TestSearchPanel(unittest.TestCase):
         n = len(self.view._search_matches)
         self.assertEqual(bar.count.text(), f"1/{n}")
 
+    def test_cycling_matches_does_not_scroll_the_panel_away(self):
+        # Jumping between matches scrolls the view; the panel used to be a
+        # child of the *viewport*, and QGraphicsView scrolls viewport children
+        # along with the content — so Enter carried the panel off-screen.
+        from app.model.document import Document
+        src = _make_pdf(self.tmp, "many.pdf", pages=6)
+        doc2 = Document(src); doc2.load()
+        self.view.set_document(doc2, self.view.config)
+        self.view.resize(1000, 700)
+        self.view.show()
+        self.app.processEvents()
+        try:
+            # "HELLO" appears once per page, so every jump scrolls a full page
+            # ("apple" would cluster several matches in view and never scroll)
+            self.view.show_search()
+            self.view.run_search("HELLO")
+            self.app.processEvents()
+            bar = self.view._search_bar
+            home = bar.pos()
+            moved = False
+            for _ in range(4):
+                before_y = self.view.verticalScrollBar().value()
+                self.view.search_next()
+                self.app.processEvents()
+                moved = moved or (self.view.verticalScrollBar().value()
+                                  != before_y)
+                self.assertEqual(bar.pos(), home)
+                self.assertFalse(bar.isHidden())
+                self.assertFalse(bar.visibleRegion().isEmpty())
+            self.assertTrue(moved, "test never scrolled — it proves nothing")
+        finally:
+            doc2.close()
+
+    def test_short_context_is_not_spuriously_elided(self):
+        # elidedText() at a width exactly equal to horizontalAdvance() still
+        # elides (integer metrics round below the true advance), so every row
+        # used to lose a character or two even with the whole row free.
+        from PySide6.QtGui import QFont, QFontMetrics
+        from app.viewer.search_bar import _ResultDelegate
+        from PySide6.QtCore import Qt
+        f = QFont(); fm = QFontMetrics(f)
+        b = QFont(); b.setBold(True); fmb = QFontMetrics(b)
+        before, match, after = "page 0 ", "apple", " target"
+        bw, mw, aw = _ResultDelegate._budget(fm, fmb, before, match, after,
+                                             avail=360)
+        self.assertEqual(fm.elidedText(before, Qt.ElideLeft, bw), before)
+        self.assertEqual(fmb.elidedText(match, Qt.ElideRight, mw), match)
+        self.assertEqual(fm.elidedText(after, Qt.ElideRight, aw), after)
+        # and a genuinely long line still gets cut down to the room available
+        long = "X" * 400
+        bw, mw, aw = _ResultDelegate._budget(fm, fmb, long, match, long,
+                                             avail=360)
+        self.assertLessEqual(bw + mw + aw, 360)
+        self.assertNotEqual(fm.elidedText(long, Qt.ElideLeft, bw), long)
+
     def test_panel_repositions_on_resize(self):
         # hidden widgets don't receive resize events — show the view (offscreen)
         self.view.show()
