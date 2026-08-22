@@ -88,9 +88,17 @@ def export_markdown(document, path: str) -> str:
                 "Read the coverage statement above before treating that as a "
                 "clean result.", ""]
 
-    if run is not None and not run.complete:
+    # Gated on everything_accounted_for, not complete: a rule with nothing
+    # eligible skips nothing, so `complete` is true of it, and this whole
+    # section used to vanish for a set whose only gap was four motor rules
+    # having been handed no motor circuits at all.
+    if run is not None and not run.everything_accounted_for:
         out += ["## Not checked", "", NOT_CHECKED, ""]
         for cov in run.coverage:
+            if not cov.ran:
+                out.append(f"- `{cov.rule_id}`: nothing to check against — "
+                           f"the model carries no entity this rule applies to")
+                continue
             if cov.complete:
                 continue
             why = ", ".join(f"{n} {r}" for r, n in (cov.reasons or {}).items())
@@ -125,6 +133,9 @@ def export_csv(document, path: str) -> str:
             w.writerow([])
             w.writerow(["Coverage", run.summary_line()])
             for cov in run.coverage:
+                if not cov.ran:
+                    w.writerow(["", f"{cov.rule_id}: nothing to check against"])
+                    continue
                 if cov.complete:
                     continue
                 w.writerow(["", f"{cov.rule_id}: {cov.checked} of {cov.eligible} "
@@ -207,14 +218,19 @@ def export_html(document, path: str, title: str = "") -> str:
 
     if run is not None:
         out.append("<h2>Coverage</h2>")
-        if not run.complete:
+        if not run.everything_accounted_for:
             out.append(f"<div class='note'>{esc(NOT_CHECKED)}</div>")
         out.append("<div class='scroll'><table><thead><tr><th>Rule</th>"
                    "<th>Eligible</th><th>Checked</th><th>Skipped</th><th>Why</th>"
                    "</tr></thead><tbody>")
         for cov in run.coverage:
             why = ", ".join(f"{n} {r}" for r, n in (cov.reasons or {}).items())
-            cls = " class='gap'" if cov.skipped else ""
+            # An idle rule is marked like a gap, because that is what it is:
+            # the table already lists it, and without this it reads as a row of
+            # zeroes a reader skims past.
+            cls = " class='gap'" if (cov.skipped or not cov.ran) else ""
+            if not cov.ran:
+                why = "nothing to check against"
             out.append(f"<tr><td>{esc(cov.rule_id)}</td><td>{cov.eligible}</td>"
                        f"<td>{cov.checked}</td><td{cls}>{cov.skipped}</td>"
                        f"<td>{esc(why)}</td></tr>")

@@ -323,6 +323,24 @@ class Coverage:
     def complete(self) -> bool:
         return self.skipped == 0
 
+    @property
+    def ran(self) -> bool:
+        """Whether the rule had anything to look at.
+
+        A rule with nothing eligible skips nothing, so it satisfies
+        ``complete`` -- and a report that only asks ``complete`` cannot tell it
+        apart from a rule that examined every entity and found them all sound.
+        That is the one confusion the rule library's coverage accounting exists
+        to prevent: "no findings" and "could not check" must never be the same
+        answer.
+
+        It is not hypothetical. A merge that dropped the source-derived motor
+        circuits left four enabled motor rules at eligible 0 -- 344 checks, 40
+        of them honest skips -- and every one of them was filed under
+        "complete" and dropped from the report.
+        """
+        return self.eligible > 0
+
     def to_dict(self) -> dict:
         return {"rule_id": self.rule_id, "eligible": self.eligible,
                 "checked": self.checked, "skipped": self.skipped,
@@ -351,6 +369,21 @@ class AuditRun:
     def complete(self) -> bool:
         return self.skipped == 0
 
+    @property
+    def idle_rules(self) -> list:
+        """Enabled rules that had nothing eligible to look at.
+
+        Reported separately from skips because the cause is different: a skip
+        is a rule that looked and could not judge, and this is a rule that was
+        never given anything -- usually a model missing a whole entity kind.
+        """
+        return [c for c in self.coverage if not c.ran]
+
+    @property
+    def everything_accounted_for(self) -> bool:
+        """Nothing skipped AND nothing left idle: the only true clean bill."""
+        return self.complete and not self.idle_rules
+
     def summary_line(self) -> str:
         """The one sentence the panel header shows.
 
@@ -359,6 +392,13 @@ class AuditRun:
         """
         if not self.eligible:
             return "Nothing to check."
+        idle = self.idle_rules
+        if self.complete and idle:
+            # Never just "N of N checked" while a rule sat idle: that sentence
+            # is what a reviewer reads as a clean bill.
+            return (f"{self.checked} of {self.eligible} checked — "
+                    f"{len(idle)} rule{'' if len(idle) == 1 else 's'} had "
+                    f"nothing to check against.")
         if self.complete:
             return f"{self.checked} of {self.eligible} checked."
         top = sorted(self._reason_totals().items(), key=lambda kv: -kv[1])

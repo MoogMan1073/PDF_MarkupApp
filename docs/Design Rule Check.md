@@ -121,6 +121,21 @@ also keyed to the *set* of symbols involved, not to how many there are: if a
 later revision swaps one of them for another, the finding reopens rather than
 quietly extending your decision to something nobody looked at.
 
+## A rule that ran against nothing
+
+The coverage header separates three states, not two. A rule can have **checked
+everything**, **skipped some of it with a reason**, or **had nothing to check
+against at all** — and the third is the one worth watching for, because it
+looks like the first.
+
+It happens when the model is missing a whole kind of thing the rule applies to.
+Import a drawing set without its source DWGs and the motor rules have no motor
+circuits to read, so they skip nothing and report nothing. That is not a clean
+bill; it is four rules that never ran.
+
+The header says so — "788 of 788 checked — 2 rules had nothing to check
+against" — and every exported report names them.
+
 ## What the rules need
 
 Some rules depend on data a plot does not contain — a device's catalog number,
