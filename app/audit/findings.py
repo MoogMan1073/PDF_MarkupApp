@@ -39,6 +39,75 @@ def now_iso() -> str:
 
 
 @dataclass
+class Place:
+    """One spot on the drawing set that a finding covers.
+
+    A finding used to have exactly one, and for most of them it still does.
+    The rule library now rolls a repeated drafting event into a single finding
+    -- one stale wire number carried onto eighteen symbols is one decision, not
+    eighteen rows -- and names every place it covers in the evidence. Reading
+    only the first would leave 287 of the 379 places a real 41-sheet audit
+    reports invisible, on sixteen sheets that would look clean.
+
+    ``x``/``y``/``w``/``h`` are the printed box of the text this place is
+    about, and are zero where the place is known only as a sheet and a rung.
+    That is not a failure: the finding still belongs to the sheet, still lists
+    under it, and simply has no box to outline.
+    """
+
+    sheet: str = ""
+    rung: Optional[int] = None
+    page: int = 0
+    x: float = 0.0
+    y: float = 0.0
+    w: float = 0.0
+    h: float = 0.0
+    subject_id: str = ""
+
+    @property
+    def has_location(self) -> bool:
+        return bool(self.x or self.y)
+
+    @property
+    def label(self) -> str:
+        """``232-16`` where the rung is known, ``232`` where it is not."""
+        if not self.sheet:
+            return ""
+        return f"{self.sheet}-{self.rung:02d}" if self.rung is not None \
+            else str(self.sheet)
+
+    def to_dict(self) -> dict:
+        d = {"sheet": self.sheet, "page": self.page,
+             "x": self.x, "y": self.y, "w": self.w, "h": self.h}
+        if self.rung is not None:
+            d["rung"] = self.rung
+        if self.subject_id:
+            d["subject_id"] = self.subject_id
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Place":
+        d = dict(d or {})
+        known = set(cls.__dataclass_fields__)
+        return cls(**{k: v for k, v in d.items() if k in known})
+
+
+def parse_place(text: str) -> tuple:
+    """``"232-16"`` -> ``("232", 16)``; ``"232"`` -> ``("232", None)``.
+
+    The rule library writes places in this one spelling, in ``also_at`` and in
+    its own rolled-up evidence, so one parser covers every producer.
+    """
+    text = str(text or "").strip()
+    if not text:
+        return "", None
+    sheet, sep, rung = text.rpartition("-")
+    if sep and sheet and rung.isdigit():
+        return sheet, int(rung)
+    return text, None
+
+
+@dataclass
 class Finding:
     """One thing the audit wants a person to confirm.
 
@@ -64,10 +133,48 @@ class Finding:
     y: float = 0.0
     w: float = 0.0
     h: float = 0.0
+    # Every place this finding covers, primary first. `sheet`, `page`, `x` and
+    # `y` above mirror `places[0]`, so anything that only ever wanted one place
+    # keeps working; anything that shows the reviewer where to go should walk
+    # this instead, or it shows one place out of eighteen.
+    places: list = field(default_factory=list)
     evidence: dict = field(default_factory=dict)
     provenance: dict = field(default_factory=dict)
     pack: str = ""
     pack_version: str = ""
+
+    def __post_init__(self):
+        # A finding built by hand, or loaded from a sidecar written before
+        # findings could cover more than one place, still has exactly one.
+        if not self.places and (self.sheet or self.x or self.y):
+            self.places = [Place(sheet=self.sheet, page=self.page, x=self.x,
+                                 y=self.y, w=self.w, h=self.h,
+                                 subject_id=self.subject_id)]
+
+    @property
+    def sheets(self) -> list:
+        """Every sheet this finding covers, in reading order, without repeats."""
+        out = []
+        for place in self.places:
+            if place.sheet and place.sheet not in out:
+                out.append(place.sheet)
+        return out
+
+    @property
+    def place_count(self) -> int:
+        return len(self.places)
+
+    @property
+    def sheet_label(self) -> str:
+        """``232`` for one sheet, ``232 +8`` where the finding covers nine.
+
+        The suffix is what tells a reviewer scanning the list that this row is
+        not the whole of the problem.
+        """
+        seen = self.sheets
+        if not seen:
+            return ""
+        return seen[0] if len(seen) == 1 else f"{seen[0]} +{len(seen) - 1}"
 
     @property
     def waived(self) -> bool:
@@ -93,6 +200,7 @@ class Finding:
             "subject_kind": self.subject_kind, "subject_id": self.subject_id,
             "sheet": self.sheet, "page": self.page,
             "x": self.x, "y": self.y, "w": self.w, "h": self.h,
+            "places": [p.to_dict() for p in self.places],
             "evidence": self.evidence, "provenance": self.provenance,
             "pack": self.pack, "pack_version": self.pack_version,
         }
@@ -101,16 +209,29 @@ class Finding:
     def from_dict(cls, d: dict) -> "Finding":
         d = dict(d or {})
         known = set(cls.__dataclass_fields__)
-        return cls(**{k: v for k, v in d.items() if k in known})
+        out = {k: v for k, v in d.items() if k in known}
+        # A sidecar written before findings could cover more than one place has
+        # no `places` at all, and __post_init__ synthesises the one it has.
+        out["places"] = [Place.from_dict(p) for p in (d.get("places") or [])]
+        return cls(**out)
 
     @classmethod
-    def from_pydrc(cls, raw: dict, extents: Optional[dict] = None) -> "Finding":
-        """Convert one finding from the rule library's JSON."""
+    def from_pydrc(cls, raw: dict, extents: Optional[dict] = None,
+                   pages_by_sheet: Optional[dict] = None) -> "Finding":
+        """Convert one finding from the rule library's JSON.
+
+        ``pages_by_sheet`` maps a sheet number to its page index, which is what
+        lets the other places a rolled-up finding covers be resolved to a page
+        at all. Without it only the primary place survives, which is what this
+        method used to do and what left five sixths of a real audit's places
+        invisible.
+        """
         raw = raw or {}
         loc = raw.get("location") or {}
         subject = raw.get("subject") or {}
         cites = raw.get("cites") or {}
         pack = raw.get("pack") or {}
+        evidence = dict(raw.get("evidence") or {})
         page = loc.get("page_index")
         subject_id = str(subject.get("id", ""))
 
@@ -121,6 +242,17 @@ class Finding:
             box = extents.get((int(page), subject_id))
             if box:
                 x, y, w, h = box
+
+        places = _places_from(evidence, str(loc.get("sheet", "")),
+                              loc.get("rung"),
+                              int(page) if page is not None else 0,
+                              x, y, w, h, subject_id,
+                              extents or {}, pages_by_sheet or {})
+        # The scalars mirror places[0], including a box _places_from resolved
+        # that the lookup above could not. Two answers to "where is this" that
+        # disagree is how an overlay ends up drawn somewhere the list does not
+        # mention.
+        x, y, w, h = places[0].x, places[0].y, places[0].w, places[0].h
 
         clause = " ".join(str(cites.get(k, "")) for k in
                           ("standard", "edition", "clause")).strip()
@@ -136,7 +268,8 @@ class Finding:
             sheet=str(loc.get("sheet", "")),
             page=int(page) if page is not None else 0,
             x=x, y=y, w=w, h=h,
-            evidence=dict(raw.get("evidence") or {}),
+            places=places,
+            evidence=evidence,
             provenance=dict(raw.get("provenance") or {}),
             pack=str(pack.get("id", "")),
             pack_version=str(pack.get("version", "")),
@@ -281,3 +414,66 @@ def apply_waivers(findings, waivers: dict) -> list:
     for f in findings:
         f.status = STATUS_WAIVED if f.key in waivers else STATUS_OPEN
     return findings
+
+
+def _subjects_by_place(evidence: dict) -> dict:
+    """``{"232-16": "CBL-23215"}`` from the rule library's ``on`` evidence.
+
+    Rules that roll several symbols into one finding list them as
+    ``TAG@sheet-rung``, which is what lets a place be outlined around the tag
+    it is about rather than marked vaguely on the sheet. Not every rolled-up
+    rule writes it -- the engine's own rollup names places without naming
+    symbols -- so this is an improvement where present, never a requirement.
+    """
+    out = {}
+    for entry in evidence.get("on") or ():
+        tag, sep, place = str(entry).rpartition("@")
+        if sep and tag and place:
+            out.setdefault(place, tag)
+    return out
+
+
+def _places_from(evidence, sheet, rung, page, x, y, w, h, subject_id,
+                 extents, pages_by_sheet) -> list:
+    """The primary place, then every other place the finding names.
+
+    ``also_at`` is the rule library's universal vocabulary for this: the engine
+    writes it when it rolls duplicate findings together, and the checks that
+    aggregate internally write the same key so a consumer reads one shape
+    either way. Anything else is a bonus.
+    """
+    tags = _subjects_by_place(evidence)
+    primary = Place(sheet=sheet, rung=rung if rung is None else int(rung),
+                    page=page, x=x, y=y, w=w, h=h, subject_id=subject_id)
+    # A rolled-up finding's subject is the thing repeated -- a wire number, a
+    # tag shape like CBL-*15 -- and no such text is printed on any sheet, so
+    # the caller's lookup found nothing. The symbol standing at this place is
+    # printed, and `on` names it.
+    if not primary.has_location:
+        tag = tags.get(primary.label, "")
+        box = extents.get((int(page), tag)) if tag else None
+        if box:
+            primary.subject_id = tag
+            (primary.x, primary.y, primary.w, primary.h) = (
+                float(box[0]), float(box[1]), float(box[2]), float(box[3]))
+    places = [primary]
+    seen = {primary.label} if primary.label else set()
+    for text in evidence.get("also_at") or ():
+        label = str(text).strip()
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        at_sheet, at_rung = parse_place(label)
+        at_page = pages_by_sheet.get(at_sheet)
+        tag = tags.get(label, "")
+        box = extents.get((int(at_page), tag)) if (
+            at_page is not None and tag) else None
+        places.append(Place(
+            sheet=at_sheet, rung=at_rung,
+            page=int(at_page) if at_page is not None else 0,
+            x=float(box[0]) if box else 0.0,
+            y=float(box[1]) if box else 0.0,
+            w=float(box[2]) if box else 0.0,
+            h=float(box[3]) if box else 0.0,
+            subject_id=tag))
+    return places

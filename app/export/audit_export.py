@@ -28,6 +28,22 @@ NOT_CHECKED = ("A skipped item is not a passing item. The rules below could not 
 _ORDER = (DEFINITE, POTENTIAL, INFO)
 
 
+def _where(f) -> str:
+    """"sheet 232", "sheets 232-240" or "set-wide".
+
+    A finding can cover more than one sheet since the rule library reports a
+    repeated drafting event once and names every place. An export that prints
+    only the first sends a contractor to one of nine sheets, which is the same
+    failure the report was rolled up to avoid.
+    """
+    seen = getattr(f, "sheets", None) or ([f.sheet] if f.sheet else [])
+    if not seen:
+        return "set-wide"
+    if len(seen) == 1:
+        return f"sheet {seen[0]}"
+    return "sheets " + ", ".join(seen)
+
+
 def _rows(document) -> list:
     from ..audit.findings import sort_findings
     return sort_findings(list(getattr(document, "findings", []) or []))
@@ -52,7 +68,7 @@ def export_markdown(document, path: str) -> str:
             continue
         out += [f"## {SEVERITY_LABELS[severity]} ({len(group)})", ""]
         for f in group:
-            where = f"sheet {f.sheet}" if f.sheet else "set-wide"
+            where = _where(f)
             mark = " *(waived)*" if f.waived else ""
             out.append(f"- **{f.message}**{mark}")
             out.append(f"  - `{f.rule_id}` · {where} · {f.subject_id}")
@@ -96,7 +112,9 @@ def export_csv(document, path: str) -> str:
                     "Cited", "Status", "Evidence"])
         for f in findings:
             w.writerow([
-                f.severity_label, f.rule_id, f.sheet,
+                f.severity_label, f.rule_id,
+                ", ".join(getattr(f, "sheets", None) or ([f.sheet] if f.sheet
+                                                         else [])),
                 f.page + 1 if f.has_location else "",
                 f.subject_id, f.message, f.clause,
                 "Waived" if f.waived else "Open",
@@ -173,7 +191,7 @@ def export_html(document, path: str, title: str = "") -> str:
                 out.append("<span class='tag waivedtag'>waived</span>")
             out.append(f"<span class='rid'>{esc(f.rule_id)}</span>")
             out.append(f"<div class='msg'>{esc(f.message)}</div>")
-            where = f"sheet {f.sheet}" if f.sheet else "set-wide"
+            where = _where(f)
             sub = f"{esc(where)} &nbsp;·&nbsp; {esc(f.subject_id)}"
             if f.clause:
                 sub += f" &nbsp;·&nbsp; cited: {esc(f.clause)}"
