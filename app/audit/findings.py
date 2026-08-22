@@ -232,8 +232,18 @@ class Finding:
         cites = raw.get("cites") or {}
         pack = raw.get("pack") or {}
         evidence = dict(raw.get("evidence") or {})
-        page = loc.get("page_index")
         subject_id = str(subject.get("id", ""))
+        page = loc.get("page_index")
+        if page is None:
+            # Not every entity kind carries one. A protective device, a
+            # terminal, a source, a load, a cross-reference and an index entry
+            # all reach here with no page at all, and defaulting them to 0
+            # files them on the first sheet of the set -- usually the drawing
+            # index -- so double-clicking the row navigates somewhere the
+            # finding has nothing to do with.
+            #
+            # The finding always names its sheet, and the sheet knows its page.
+            page = (pages_by_sheet or {}).get(str(loc.get("sheet", "")))
 
         x = float(loc.get("x") or 0.0)
         y = float(loc.get("y") or 0.0)
@@ -242,7 +252,8 @@ class Finding:
             extents and page is not None) else None
         if box:
             x, y, w, h = box
-        elif subject.get("kind") in _DRAWING_SPACE_KINDS:
+        elif (subject.get("kind") in _DRAWING_SPACE_KINDS
+              and (raw.get("provenance") or {}).get("source") == "acade"):
             # This coordinate is in the source drawing's model space, not the
             # page's. Both are bare numbers, so nothing downstream can tell:
             # a drawing runs about 31 x 21 inches, which as PDF points is
@@ -255,6 +266,8 @@ class Finding:
             # which a nonzero coordinate blocks.
             x = y = 0.0
 
+        # A finding that names no sheet keeps page 0: DRC-SHEET-INDEX-001 is
+        # about the index itself, and has nowhere better to point.
         places = _places_from(evidence, str(loc.get("sheet", "")),
                               loc.get("rung"),
                               int(page) if page is not None else 0,
@@ -468,7 +481,18 @@ def apply_waivers(findings, waivers: dict) -> list:
     return findings
 
 
-#: Subject kinds whose coordinates can only have come from a source drawing.
+#: Subject kinds whose coordinates are in drawing space **when the finding came
+#: from a source drawing**. Both halves are required.
+#:
+#: The kind alone is not enough: a plot-derived arrow is found by reading its
+#: reference text off the page, so its coordinates are page points and correct.
+#: Gating on kind alone zeroed all three arrow findings on a PDF-only audit,
+#: which were carrying good boxes at (254.8, 461.0), (383.9, 570.2) and
+#: (565.8, 48.2) on a 1224 x 792 page.
+#:
+#: And the source alone is not enough either: 25 of 36 non-arrow findings from
+#: a source drawing hold boxes resolved from the page's own text, and a gate on
+#: provenance would throw all of them away.
 #:
 #: The merge that enriches a plot-derived model replaces these wholesale
 #: rather than matching them onto plot-read entities, so they keep the DXF's

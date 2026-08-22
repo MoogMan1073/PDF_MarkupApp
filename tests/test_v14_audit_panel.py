@@ -521,6 +521,50 @@ class TestPlacesFromTheReport(unittest.TestCase):
 
 
 @unittest.skipUnless(_QT_OK, "PySide6 not available")
+class TestWhichPageAFindingOpensOn(unittest.TestCase):
+    """Not every entity kind carries a page index.
+
+    A protective device, a terminal, a source, a load, a cross-reference and
+    an index entry all reach the converter with no page at all. Defaulting
+    them to 0 files them on the first sheet of the set — usually the drawing
+    index — so double-clicking the row navigates somewhere the finding has
+    nothing to do with. On the demo pair that was 10 of 61 findings.
+    """
+
+    def _raw(self, **loc):
+        base = {"rule_id": "ERC-OCPD-SMALL-001", "fingerprint": "sha256:p",
+                "severity": POTENTIAL, "message": "m",
+                "subject": {"id": "FU-30014", "kind": "protective_device"},
+                "evidence": {}}
+        base["location"] = dict({"sheet": "300", "rung": 4}, **loc)
+        return base
+
+    def test_the_page_comes_from_the_sheet_the_finding_names(self):
+        f = Finding.from_pydrc(self._raw(), extents={},
+                               pages_by_sheet={"300": 6, "800": 9})
+        self.assertEqual(f.page, 6)
+        self.assertEqual(f.places[0].page, 6)
+
+    def test_an_explicit_page_index_still_wins(self):
+        f = Finding.from_pydrc(self._raw(page_index=2), extents={},
+                               pages_by_sheet={"300": 6})
+        self.assertEqual(f.page, 2)
+
+    def test_a_finding_that_names_no_sheet_keeps_page_zero(self):
+        # DRC-SHEET-INDEX-001 is about the index itself and has nowhere better
+        # to point; taking the default away would cost it its navigation.
+        raw = self._raw()
+        raw["location"] = {}
+        raw["subject"] = {"id": "302", "kind": "index_entry"}
+        f = Finding.from_pydrc(raw, extents={}, pages_by_sheet={"300": 6})
+        self.assertEqual(f.page, 0)
+
+    def test_an_unknown_sheet_falls_back_rather_than_guessing(self):
+        f = Finding.from_pydrc(self._raw(sheet="999"), extents={},
+                               pages_by_sheet={"300": 6})
+        self.assertEqual(f.page, 0)
+
+
 class TestACoordinateFromTheSourceDrawing(unittest.TestCase):
     """A drawing's model space is not the page's coordinate space.
 
@@ -540,6 +584,10 @@ class TestACoordinateFromTheSourceDrawing(unittest.TestCase):
             "location": {"sheet": "232", "rung": 16, "page_index": 5,
                          "x": 12.5, "y": 8.25},
             "subject": {"id": "232-16", "kind": "signal_arrow"},
+            # Both halves matter: this coordinate is drawing space because the
+            # finding came from a source drawing, not merely because it is an
+            # arrow. A plot-derived arrow's coordinates are page points.
+            "provenance": {"source": "acade", "resolved_by": "dxf"},
             "evidence": {},
         }
         raw.update(kw)
@@ -564,6 +612,23 @@ class TestACoordinateFromTheSourceDrawing(unittest.TestCase):
                                extents={(5, "232-16"): (400.0, 300.0, 26.0, 10.0)},
                                pages_by_sheet={})
         self.assertEqual((f.x, f.y, f.w, f.h), (400.0, 300.0, 26.0, 10.0))
+        self.assertTrue(f.places[0].has_location)
+
+    def test_a_plot_derived_arrow_keeps_its_page_coordinate(self):
+        """The regression this gate caused when it keyed on kind alone.
+
+        An arrow read from the plot is found by its reference text on the
+        page, so its coordinates are page points and correct. Gating on kind
+        alone zeroed all three arrow findings on a PDF-only audit of the demo
+        set, which were carrying good boxes at (254.8, 461.0), (383.9, 570.2)
+        and (565.8, 48.2) on a 1224 x 792 page.
+        """
+        raw = self._arrow(location={"sheet": "232", "rung": 16,
+                                    "page_index": 5, "x": 254.8, "y": 461.0},
+                          provenance={"source": "pdf-text",
+                                      "resolved_by": "text"})
+        f = Finding.from_pydrc(raw, extents={}, pages_by_sheet={})
+        self.assertEqual((f.x, f.y), (254.8, 461.0))
         self.assertTrue(f.places[0].has_location)
 
     def test_a_devices_own_coordinate_is_left_alone(self):

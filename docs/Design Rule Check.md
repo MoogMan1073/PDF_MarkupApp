@@ -138,6 +138,16 @@ measure the drawing, not the page, and the two are indistinguishable as bare
 numbers — so a coordinate that did not come from the page is discarded rather
 than trusted.
 
+### Which page a finding opens on
+
+A finding always names its sheet, and that is what decides the page it opens
+on. Some kinds of finding — a protective device, a terminal, an index entry —
+carry no page of their own, and for those the sheet is the only answer there
+is.
+
+Where a plot binds the same sheet number twice, the first one wins, matching
+how the rest of the extraction dedupes.
+
 ## A rule that ran against nothing
 
 The coverage header separates three states, not two. A rule can have **checked
