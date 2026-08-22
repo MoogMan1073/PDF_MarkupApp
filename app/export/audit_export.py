@@ -28,6 +28,22 @@ NOT_CHECKED = ("A skipped item is not a passing item. The rules below could not 
 _ORDER = (DEFINITE, POTENTIAL, INFO)
 
 
+def _where(f) -> str:
+    """"sheet 232", "sheets 232-240" or "set-wide".
+
+    A finding can cover more than one sheet since the rule library reports a
+    repeated drafting event once and names every place. An export that prints
+    only the first sends a contractor to one of nine sheets, which is the same
+    failure the report was rolled up to avoid.
+    """
+    seen = getattr(f, "sheets", None) or ([f.sheet] if f.sheet else [])
+    if not seen:
+        return "set-wide"
+    if len(seen) == 1:
+        return f"sheet {seen[0]}"
+    return "sheets " + ", ".join(seen)
+
+
 def _rows(document) -> list:
     from ..audit.findings import sort_findings
     return sort_findings(list(getattr(document, "findings", []) or []))
@@ -52,7 +68,7 @@ def export_markdown(document, path: str) -> str:
             continue
         out += [f"## {SEVERITY_LABELS[severity]} ({len(group)})", ""]
         for f in group:
-            where = f"sheet {f.sheet}" if f.sheet else "set-wide"
+            where = _where(f)
             mark = " *(waived)*" if f.waived else ""
             out.append(f"- **{f.message}**{mark}")
             out.append(f"  - `{f.rule_id}` · {where} · {f.subject_id}")
@@ -72,9 +88,17 @@ def export_markdown(document, path: str) -> str:
                 "Read the coverage statement above before treating that as a "
                 "clean result.", ""]
 
-    if run is not None and not run.complete:
+    # Gated on everything_accounted_for, not complete: a rule with nothing
+    # eligible skips nothing, so `complete` is true of it, and this whole
+    # section used to vanish for a set whose only gap was four motor rules
+    # having been handed no motor circuits at all.
+    if run is not None and not run.everything_accounted_for:
         out += ["## Not checked", "", NOT_CHECKED, ""]
         for cov in run.coverage:
+            if not cov.ran:
+                out.append(f"- `{cov.rule_id}`: nothing to check against — "
+                           f"the model carries no entity this rule applies to")
+                continue
             if cov.complete:
                 continue
             why = ", ".join(f"{n} {r}" for r, n in (cov.reasons or {}).items())
@@ -96,7 +120,9 @@ def export_csv(document, path: str) -> str:
                     "Cited", "Status", "Evidence"])
         for f in findings:
             w.writerow([
-                f.severity_label, f.rule_id, f.sheet,
+                f.severity_label, f.rule_id,
+                ", ".join(getattr(f, "sheets", None) or ([f.sheet] if f.sheet
+                                                         else [])),
                 f.page + 1 if f.has_location else "",
                 f.subject_id, f.message, f.clause,
                 "Waived" if f.waived else "Open",
@@ -107,6 +133,9 @@ def export_csv(document, path: str) -> str:
             w.writerow([])
             w.writerow(["Coverage", run.summary_line()])
             for cov in run.coverage:
+                if not cov.ran:
+                    w.writerow(["", f"{cov.rule_id}: nothing to check against"])
+                    continue
                 if cov.complete:
                     continue
                 w.writerow(["", f"{cov.rule_id}: {cov.checked} of {cov.eligible} "
@@ -173,7 +202,7 @@ def export_html(document, path: str, title: str = "") -> str:
                 out.append("<span class='tag waivedtag'>waived</span>")
             out.append(f"<span class='rid'>{esc(f.rule_id)}</span>")
             out.append(f"<div class='msg'>{esc(f.message)}</div>")
-            where = f"sheet {f.sheet}" if f.sheet else "set-wide"
+            where = _where(f)
             sub = f"{esc(where)} &nbsp;·&nbsp; {esc(f.subject_id)}"
             if f.clause:
                 sub += f" &nbsp;·&nbsp; cited: {esc(f.clause)}"
@@ -189,14 +218,19 @@ def export_html(document, path: str, title: str = "") -> str:
 
     if run is not None:
         out.append("<h2>Coverage</h2>")
-        if not run.complete:
+        if not run.everything_accounted_for:
             out.append(f"<div class='note'>{esc(NOT_CHECKED)}</div>")
         out.append("<div class='scroll'><table><thead><tr><th>Rule</th>"
                    "<th>Eligible</th><th>Checked</th><th>Skipped</th><th>Why</th>"
                    "</tr></thead><tbody>")
         for cov in run.coverage:
             why = ", ".join(f"{n} {r}" for r, n in (cov.reasons or {}).items())
-            cls = " class='gap'" if cov.skipped else ""
+            # An idle rule is marked like a gap, because that is what it is:
+            # the table already lists it, and without this it reads as a row of
+            # zeroes a reader skims past.
+            cls = " class='gap'" if (cov.skipped or not cov.ran) else ""
+            if not cov.ran:
+                why = "nothing to check against"
             out.append(f"<tr><td>{esc(cov.rule_id)}</td><td>{cov.eligible}</td>"
                        f"<td>{cov.checked}</td><td{cls}>{cov.skipped}</td>"
                        f"<td>{esc(why)}</td></tr>")

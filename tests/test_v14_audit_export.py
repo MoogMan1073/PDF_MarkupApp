@@ -149,3 +149,97 @@ class TestFormatChoice(_Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _idle_run():
+    """A run where nothing was skipped but a rule had nothing to look at.
+
+    The shape that used to read as a clean bill: DSI Redline's merge dropped
+    the source-derived motor circuits, so four enabled motor rules sat at
+    eligible 0 -- 344 checks, 40 of them honest skips -- and every one was
+    filed under "complete" and dropped from the report.
+    """
+    return AuditRun(
+        eligible=788, checked=788, skipped=0,
+        packs=["drc-base@1.23.0"],
+        coverage=[
+            Coverage(rule_id="DRC-TAG-LOC-001", eligible=788, checked=788,
+                     skipped=0),
+            Coverage(rule_id="ERC-MOTOR-DATA-001", eligible=0, checked=0,
+                     skipped=0),
+            Coverage(rule_id="ERC-MOTOR-OL-001", eligible=0, checked=0,
+                     skipped=0),
+        ])
+
+
+class TestARuleThatRanAgainstNothing(unittest.TestCase):
+    """"No findings" and "could not check" must never be the same answer.
+
+    That is the rule library's own stated invariant, and a rule with nothing
+    eligible defeats it: it skips nothing, so it satisfies `complete`, and a
+    report that only asks `complete` files it beside a rule that examined every
+    entity and found them all sound.
+    """
+
+    def test_a_rule_with_nothing_eligible_did_not_run(self):
+        self.assertFalse(Coverage(rule_id="R", eligible=0).ran)
+        self.assertTrue(Coverage(rule_id="R", eligible=788, checked=788).ran)
+
+    def test_it_is_still_complete_which_is_the_whole_problem(self):
+        # `complete` keeps its meaning -- it feeds AuditRun.complete and the
+        # summary line -- so the distinction is drawn with a second property
+        # rather than by redefining the first.
+        self.assertTrue(Coverage(rule_id="R", eligible=0).complete)
+
+    def test_the_run_names_its_idle_rules(self):
+        run = _idle_run()
+        self.assertEqual([c.rule_id for c in run.idle_rules],
+                         ["ERC-MOTOR-DATA-001", "ERC-MOTOR-OL-001"])
+        self.assertTrue(run.complete)
+        self.assertFalse(run.everything_accounted_for)
+
+    def test_the_summary_never_says_n_of_n_while_a_rule_sat_idle(self):
+        # "788 of 788 checked." is what a reviewer reads as a clean bill.
+        line = _idle_run().summary_line()
+        self.assertIn("788 of 788 checked", line)
+        self.assertIn("2 rules had nothing to check against", line)
+
+    def test_a_genuinely_clean_run_still_says_so(self):
+        run = AuditRun(eligible=63, checked=63, skipped=0,
+                       coverage=[Coverage(rule_id="R", eligible=63,
+                                          checked=63, skipped=0)])
+        self.assertTrue(run.everything_accounted_for)
+        self.assertEqual(run.summary_line(), "63 of 63 checked.")
+
+    def _exports(self, run):
+        tmp = tempfile.mkdtemp()
+        doc = _Doc(_doc().findings, run)
+        return {
+            "md": open(export_markdown(doc, os.path.join(tmp, "a.md")),
+                       encoding="utf-8").read(),
+            "csv": open(export_csv(doc, os.path.join(tmp, "a.csv")),
+                        encoding="utf-8").read(),
+            "html": open(export_html(doc, os.path.join(tmp, "a.html")),
+                         encoding="utf-8").read(),
+        }
+
+    def test_every_export_names_the_idle_rule(self):
+        out = self._exports(_idle_run())
+        for fmt, text in out.items():
+            with self.subTest(fmt):
+                self.assertIn("ERC-MOTOR-DATA-001", text)
+                self.assertIn("nothing to check against", text)
+
+    def test_the_not_checked_section_does_not_vanish(self):
+        # It was gated on `complete`, so a set whose only gap was idle rules
+        # printed no coverage caveat at all.
+        out = self._exports(_idle_run())
+        self.assertIn("## Not checked", out["md"])
+        self.assertIn("class='note'", out["html"])
+
+    def test_a_clean_run_still_has_no_not_checked_section(self):
+        run = AuditRun(eligible=63, checked=63, skipped=0,
+                       coverage=[Coverage(rule_id="R", eligible=63,
+                                          checked=63, skipped=0)])
+        out = self._exports(run)
+        self.assertNotIn("## Not checked", out["md"])

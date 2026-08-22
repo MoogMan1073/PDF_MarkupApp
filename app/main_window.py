@@ -178,7 +178,14 @@ class WaiveDialog(QDialog):
         summary.setWordWrap(True)
         lay.addWidget(summary)
 
-        where = f"sheet {finding.sheet}" if finding.sheet else "set-wide"
+        # Every sheet, because the waiver covers every one of them. A reviewer
+        # told "sheet 232" while agreeing to something that also stands on 233
+        # through 240 has not been asked the question they are answering.
+        seen = getattr(finding, "sheets", None) or (
+            [finding.sheet] if finding.sheet else [])
+        where = ("set-wide" if not seen
+                 else f"sheet {seen[0]}" if len(seen) == 1
+                 else f"sheets {', '.join(seen)}")
         detail = QLabel(f"{finding.rule_id} · {where}"
                         + (f" · cited: {finding.clause}" if finding.clause else ""))
         detail.setWordWrap(True)

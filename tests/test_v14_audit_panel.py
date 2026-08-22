@@ -416,3 +416,203 @@ class TestMainWindowIntegration(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _rolled(**kw):
+    """A finding that covers three sheets, as the rule library now reports one."""
+    from app.audit.findings import Place
+    base = dict(
+        key="roll1", rule_id="DRC-SYM-RUNG-001", severity=POTENTIAL,
+        message="CBL-*15 on each of 3 sheets sits on rung 16 where the tag "
+                "says rung 15.",
+        clause="internal source drawing hygiene", subject_id="CBL-*15",
+        sheet="400", page=1, x=50.0, y=60.0, w=40.0, h=8.0,
+        places=[Place(sheet="400", rung=15, page=1, x=50.0, y=60.0,
+                      w=40.0, h=8.0, subject_id="CBL-40015"),
+                Place(sheet="800", rung=15, page=2, x=110.0, y=210.0,
+                      w=40.0, h=8.0, subject_id="CBL-80015"),
+                Place(sheet="000", rung=15, page=0, subject_id="CBL-00015")])
+    base.update(kw)
+    return Finding(**base)
+
+
+class TestPlacesFromTheReport(unittest.TestCase):
+    """Every place a rolled-up finding names has to survive the conversion.
+
+    The rule library reports a repeated drafting event once and lists all of
+    it. On a real 41-sheet audit that is 379 places across 92 findings -- so a
+    converter that keeps only the first drops 287 of them, on 16 sheets that
+    then look clean.
+    """
+
+    def _raw(self, **kw):
+        raw = {
+            "rule_id": "DRC-SYM-RUNG-001", "fingerprint": "sha256:abc",
+            "severity": POTENTIAL, "message": "m",
+            "location": {"sheet": "232", "rung": 16, "page_index": 5},
+            "subject": {"id": "CBL-*15", "kind": "device"},
+            "evidence": {"also_at": ["233-16", "234-16"], "total_places": 3,
+                         "on": ["CBL-23215@232-16", "CBL-23315@233-16",
+                                "CBL-23415@234-16"]},
+        }
+        raw.update(kw)
+        return raw
+
+    def test_every_place_the_evidence_names_becomes_a_place(self):
+        f = Finding.from_pydrc(self._raw(), extents={},
+                               pages_by_sheet={"232": 5, "233": 6, "234": 7})
+        self.assertEqual([p.label for p in f.places],
+                         ["232-16", "233-16", "234-16"])
+        self.assertEqual([p.page for p in f.places], [5, 6, 7])
+        self.assertEqual(f.sheets, ["232", "233", "234"])
+        self.assertEqual(f.place_count, 3)
+
+    def test_a_place_is_outlined_around_the_symbol_standing_there(self):
+        # The subject of a rolled-up finding -- "CBL-*15" -- is printed on no
+        # sheet. The symbol at each place is, and the evidence names it.
+        f = Finding.from_pydrc(
+            self._raw(),
+            extents={(5, "CBL-23215"): (1.0, 2.0, 3.0, 4.0),
+                     (6, "CBL-23315"): (10.0, 20.0, 30.0, 8.0)},
+            pages_by_sheet={"232": 5, "233": 6, "234": 7})
+        self.assertEqual((f.places[0].x, f.places[0].y), (1.0, 2.0))
+        self.assertEqual((f.places[1].x, f.places[1].y), (10.0, 20.0))
+        # No box for the third: known as a sheet and a rung, and that is not a
+        # failure -- it still belongs to the sheet and still lists under it.
+        self.assertFalse(f.places[2].has_location)
+        self.assertEqual(f.places[2].sheet, "234")
+
+    def test_the_scalars_agree_with_the_first_place(self):
+        # Two answers to "where is this" that disagree is how an overlay ends
+        # up drawn somewhere the list does not mention.
+        f = Finding.from_pydrc(
+            self._raw(), extents={(5, "CBL-23215"): (1.0, 2.0, 3.0, 4.0)},
+            pages_by_sheet={"232": 5})
+        self.assertEqual((f.x, f.y, f.w, f.h), (1.0, 2.0, 3.0, 4.0))
+        self.assertTrue(f.has_location)
+
+    def test_a_finding_with_one_place_is_unchanged(self):
+        raw = self._raw(evidence={})
+        f = Finding.from_pydrc(raw, extents={}, pages_by_sheet={"232": 5})
+        self.assertEqual(f.place_count, 1)
+        self.assertEqual(f.sheet_label, "232")
+
+    def test_a_sheet_the_import_never_saw_still_lists(self):
+        # A place on a sheet outside the imported span has no page to draw on,
+        # and the finding still belongs to it.
+        f = Finding.from_pydrc(self._raw(), extents={},
+                               pages_by_sheet={"232": 5})
+        self.assertEqual(f.sheets, ["232", "233", "234"])
+        self.assertFalse(f.places[1].has_location)
+
+    def test_places_round_trip_through_the_sidecar(self):
+        f = _rolled()
+        again = Finding.from_dict(f.to_dict())
+        self.assertEqual([p.to_dict() for p in again.places],
+                         [p.to_dict() for p in f.places])
+
+    def test_a_sidecar_written_before_places_still_opens(self):
+        d = _findings()[0].to_dict()
+        d.pop("places", None)
+        f = Finding.from_dict(d)
+        self.assertEqual(f.place_count, 1)
+        self.assertEqual(f.places[0].sheet, "800")
+        self.assertEqual(f.places[0].page, 2)
+
+
+@unittest.skipUnless(_QT_OK, "PySide6 not available")
+class TestRolledUpFindingOnScreen(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def _panel(self):
+        from app.panels.audit_panel import AuditPanel, GROUP_SHEET
+
+        class _Doc:
+            findings = [_rolled()] + _findings()
+            audit_run = _run()
+
+            @staticmethod
+            def waiver_for(_key):
+                return None
+        panel = AuditPanel()
+        panel.set_document(_Doc())
+        return panel, GROUP_SHEET
+
+    def _sheet_groups(self, panel):
+        out = {}
+        for i in range(panel.tree.topLevelItemCount()):
+            node = panel.tree.topLevelItem(i)
+            out[node.text(0)] = [node.child(j).data(0, Qt.UserRole)
+                                 for j in range(node.childCount())]
+        return out
+
+    def test_it_lists_under_every_sheet_it_covers(self):
+        panel, group_sheet = self._panel()
+        panel.group_by.setCurrentIndex(2)          # group by sheet
+        panel.refresh()
+        groups = self._sheet_groups(panel)
+        for sheet in ("Sheet 000", "Sheet 400", "Sheet 800"):
+            self.assertIn(sheet, groups, sorted(groups))
+            self.assertIn("roll1", [f.key for f in groups[sheet]], sheet)
+
+    def test_the_sheet_column_says_it_covers_more_than_one(self):
+        panel, _ = self._panel()
+        panel.group_by.setCurrentIndex(3)          # no grouping
+        panel.refresh()
+        labels = {panel.tree.topLevelItem(i).data(0, Qt.UserRole).key:
+                  panel.tree.topLevelItem(i).text(2)
+                  for i in range(panel.tree.topLevelItemCount())}
+        self.assertEqual(labels["roll1"], "400 +2")
+        self.assertEqual(labels["k1"], "800")
+
+    def test_double_clicking_a_row_lands_on_that_row_s_sheet(self):
+        # Sending a reviewer who clicked under Sheet 800 to sheet 400 is how a
+        # rolled-up finding earns a reputation for lying about where things are.
+        panel, _ = self._panel()
+        panel.group_by.setCurrentIndex(2)
+        panel.refresh()
+        seen = []
+        panel.activated.connect(seen.append)
+        for i in range(panel.tree.topLevelItemCount()):
+            node = panel.tree.topLevelItem(i)
+            if node.text(0) != "Sheet 800":
+                continue
+            for j in range(node.childCount()):
+                row = node.child(j)
+                if row.data(0, Qt.UserRole).key == "roll1":
+                    panel._on_double(row, 0)
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0].sheet, "800")
+        self.assertEqual(seen[0].page, 2)
+
+    def test_searching_a_sheet_finds_the_finding_that_covers_it(self):
+        panel, _ = self._panel()
+        panel.search.setText("800")
+        panel.refresh()
+        keys = {f.key for f in panel._findings()}
+        self.assertIn("roll1", keys)
+
+    def test_the_overlay_marks_every_place_with_a_box(self):
+        from app.viewer.pdf_view import PdfView
+        view = PdfView()
+        view._page_items = [object(), object(), object()]
+        drawn = []
+
+        class _Item:
+            def __init__(self, *a, **k):
+                drawn.append(a)
+
+            def __getattr__(self, _n):
+                return lambda *a, **k: None
+        import PySide6.QtWidgets as W
+        real = W.QGraphicsRectItem
+        W.QGraphicsRectItem = _Item
+        try:
+            view.draw_findings([_rolled()])
+        finally:
+            W.QGraphicsRectItem = real
+        # Two of the three places carry a box; the third is sheet-and-rung only.
+        self.assertEqual(len(drawn), 2)
+        self.assertEqual({round(a[0], 1) for a in drawn}, {47.5, 107.5})

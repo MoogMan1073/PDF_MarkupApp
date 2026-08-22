@@ -36,6 +36,24 @@ Double-click a finding to jump to it on the drawing. Each one is outlined on
 the sheet, **underneath** your own markup — an audit mark can never cover
 something you drew, and the eraser will not touch it.
 
+## One finding, several places
+
+Panels are drawn from templates, so one mistake usually appears everywhere the
+template was pasted. The rule library reports that as **one finding naming
+every place**, rather than as eighteen identical rows: it is one decision, and
+one waiver.
+
+The Sheet column shows how far it reaches — `232 +8` means the finding also
+stands on eight other sheets. Group the list **by sheet** and it appears under
+every one of them, so working sheet by sheet still meets it; double-clicking a
+row lands on *that* row's sheet, not on the first. Every place is outlined on
+its own sheet, and the exported report names them all.
+
+This matters more than it sounds. On a real 41-sheet set the check reports 92
+findings covering 379 distinct places — so a list that showed only the first
+place of each would leave five sixths of the work invisible, on sixteen sheets
+that would look clean.
+
 ## Cross-references between sheets
 
 A signal leaving one sheet is marked with a connector — `to 70004`, `from
@@ -96,6 +114,27 @@ decision stays visible to the next reviewer.
 Waivers are stored per project and **survive re-running the check**. They are
 keyed to the finding itself rather than to where it sits, so re-extracting the
 drawing or nudging a tag in a revision does not lose them.
+
+A waiver covers **every place** the finding names, and the dialog lists the
+sheets so you are answering the question you are actually being asked. It is
+also keyed to the *set* of symbols involved, not to how many there are: if a
+later revision swaps one of them for another, the finding reopens rather than
+quietly extending your decision to something nobody looked at.
+
+## A rule that ran against nothing
+
+The coverage header separates three states, not two. A rule can have **checked
+everything**, **skipped some of it with a reason**, or **had nothing to check
+against at all** — and the third is the one worth watching for, because it
+looks like the first.
+
+It happens when the model is missing a whole kind of thing the rule applies to.
+Import a drawing set without its source DWGs and the motor rules have no motor
+circuits to read, so they skip nothing and report nothing. That is not a clean
+bill; it is four rules that never ran.
+
+The header says so — "788 of 788 checked — 2 rules had nothing to check
+against" — and every exported report names them.
 
 ## What the rules need
 

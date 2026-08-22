@@ -1665,33 +1665,52 @@ class PdfView(QGraphicsView):
     }
 
     def draw_findings(self, findings) -> None:
-        """Outline each finding on the sheet it belongs to."""
+        """Outline every place each finding covers.
+
+        A finding can cover more than one, since the rule library reports a
+        repeated drafting event once and names all of it. Outlining only the
+        first would leave the other sheets looking clean -- which is worse than
+        the un-rolled report it replaced, because the rows that used to be
+        there are gone too.
+        """
         from PySide6.QtWidgets import QGraphicsRectItem
         from PySide6.QtGui import QPen
         self.clear_findings()
         for f in findings or []:
-            pno = int(getattr(f, "page", -1) or 0)
-            if not getattr(f, "has_location", False):
-                continue
-            if pno < 0 or pno >= len(self._page_items):
-                continue
-            page = self._page_items[pno]
-            # A zero-size extent still deserves a visible target.
-            w = float(getattr(f, "w", 0.0) or 0.0) or 26.0
-            h = float(getattr(f, "h", 0.0) or 0.0) or 10.0
-            pad = 2.5
-            item = QGraphicsRectItem(
-                float(f.x) - pad, float(f.y) - pad, w + pad * 2, h + pad * 2, page)
-            rgb = self._FINDING_COLORS.get(getattr(f, "severity", ""), (154, 103, 0))
+            rgb = self._FINDING_COLORS.get(getattr(f, "severity", ""),
+                                           (154, 103, 0))
             waived = bool(getattr(f, "waived", False))
-            pen = QPen(QColor(*rgb, 110 if waived else 235), 1.4)
-            if waived:
-                pen.setStyle(Qt.DotLine)
-            item.setPen(pen)
-            item.setBrush(QBrush(QColor(*rgb, 18 if waived else 34)))
-            item.setZValue(self.FINDING_Z)
-            item.setToolTip(getattr(f, "message", ""))
-            self._finding_items.append(item)
+            for place in self._places_of(f):
+                pno = int(getattr(place, "page", -1) or 0)
+                if not getattr(place, "has_location", False):
+                    continue
+                if pno < 0 or pno >= len(self._page_items):
+                    continue
+                page = self._page_items[pno]
+                # A zero-size extent still deserves a visible target.
+                w = float(getattr(place, "w", 0.0) or 0.0) or 26.0
+                h = float(getattr(place, "h", 0.0) or 0.0) or 10.0
+                pad = 2.5
+                item = QGraphicsRectItem(float(place.x) - pad,
+                                         float(place.y) - pad,
+                                         w + pad * 2, h + pad * 2, page)
+                pen = QPen(QColor(*rgb, 110 if waived else 235), 1.4)
+                if waived:
+                    pen.setStyle(Qt.DotLine)
+                item.setPen(pen)
+                item.setBrush(QBrush(QColor(*rgb, 18 if waived else 34)))
+                item.setZValue(self.FINDING_Z)
+                item.setToolTip(getattr(f, "message", ""))
+                self._finding_items.append(item)
+
+    @staticmethod
+    def _places_of(f):
+        """A finding's places, or the finding itself where it has none.
+
+        Sidecars written before findings could cover more than one place carry
+        no `places`, and a caller may hand this view any object with x/y.
+        """
+        return getattr(f, "places", None) or [f]
 
     def clear_findings(self) -> None:
         for it in getattr(self, "_finding_items", []):

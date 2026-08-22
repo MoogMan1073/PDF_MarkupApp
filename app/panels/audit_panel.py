@@ -147,8 +147,10 @@ class AuditPanel(QWidget):
         return sort_findings(out)
 
     def _haystack(self, f) -> str:
+        # Every sheet, not just the first: searching "236" must find the
+        # finding that covers 236 even where it opens on 232.
         return " ".join(str(v).lower() for v in (
-            f.severity_label, f.rule_id, f.sheet, f.subject_id,
+            f.severity_label, f.rule_id, " ".join(f.sheets), f.subject_id,
             f.message, f.clause, f.status))
 
     def _group_mode(self):
@@ -173,6 +175,19 @@ class AuditPanel(QWidget):
             return (0, int(s), "")
         except (ValueError, TypeError):
             return (1, 0, s.lower())
+
+    @staticmethod
+    def _sheet_group_key(sheet: str) -> str:
+        return f"Sheet {sheet}" if sheet else "(set-wide)"
+
+    @staticmethod
+    def _sheet_group_sort(key: str):
+        """Sheet groups in numeric order, with the set-wide bucket last."""
+        number = key[6:] if key.startswith("Sheet ") else ""
+        try:
+            return (0, int(number), "")
+        except ValueError:
+            return (1, 0, key.lower())
 
     def _on_header_clicked(self, col):
         if self._sort_col == col:
@@ -210,17 +225,26 @@ class AuditPanel(QWidget):
             groups, order = {}, []
             for f in findings:
                 if mode == GROUP_SEVERITY:
-                    k = f.severity_label
+                    keys = [f.severity_label]
                 elif mode == GROUP_RULE:
-                    k = f"{f.rule_id}"
+                    keys = [f"{f.rule_id}"]
                 elif mode == GROUP_SHEET:
-                    k = f"Sheet {f.sheet}" if f.sheet else "(set-wide)"
+                    # Under EVERY sheet it covers. A finding that rolls one
+                    # pasted mistake across nine sheets is one decision, but a
+                    # reviewer working sheet 236 has to meet it on 236 -- and
+                    # before this it appeared only under the sheet it opened
+                    # on, leaving eight sheets looking clean.
+                    keys = [self._sheet_group_key(s) for s in f.sheets] \
+                        or [self._sheet_group_key("")]
                 else:
-                    k = None
-                if k not in groups:
-                    groups[k] = []
-                    order.append(k)
-                groups[k].append(f)
+                    keys = [None]
+                for k in keys:
+                    if k not in groups:
+                        groups[k] = []
+                        order.append(k)
+                    groups[k].append(f)
+            if mode == GROUP_SHEET:
+                order.sort(key=self._sheet_group_sort)
 
             for k in order:
                 parent = self.tree
@@ -231,21 +255,44 @@ class AuditPanel(QWidget):
                     self.tree.addTopLevelItem(node)
                     node.setExpanded(True)
                     parent = node
+                sheet = (k[6:] if mode == GROUP_SHEET and k
+                         and k.startswith("Sheet ") else "")
                 for f in self._sort_within_group(groups[k]):
-                    self._make_row(parent, f)
+                    self._make_row(parent, f, self._place_on(f, sheet))
 
             self._update_headers(findings)
         finally:
             self._loading = False
 
-    def _make_row(self, parent, f):
+    @staticmethod
+    def _place_on(f, sheet: str):
+        """The place this row is about, where the row is under one sheet.
+
+        Double-clicking a row filed under Sheet 236 has to land on 236. Sending
+        the reviewer to the sheet the finding happens to open at is how a
+        rolled-up finding earns a reputation for lying about where things are.
+        """
+        if not sheet:
+            return None
+        for place in getattr(f, "places", None) or ():
+            if str(place.sheet) == str(sheet):
+                return place
+        return None
+
+    def _make_row(self, parent, f, place=None):
         it = QTreeWidgetItem([
-            f.severity_label, f.rule_id, f.sheet or "",
-            str(f.page + 1) if f.has_location else "",
+            # "232 +8" where the finding covers nine sheets: the suffix is what
+            # tells a reviewer scanning the list that this row is not the whole
+            # of the problem.
+            f.severity_label, f.rule_id, f.sheet_label,
+            str((place or f).page + 1) if (place or f).has_location else "",
             f.message, f.clause,
             "Waived" if f.waived else "Open",
         ])
         it.setData(0, Qt.UserRole, f)
+        # Where THIS row points. Only set when the row is filed under one sheet
+        # of a finding that covers several; the rest navigate by the finding.
+        it.setData(0, Qt.UserRole + 1, place)
         it.setToolTip(self.COL_MSG, self._tooltip(f))
         if f.waived:
             self._apply_waived_style(it)
@@ -310,7 +357,7 @@ class AuditPanel(QWidget):
         f = item.data(0, Qt.UserRole)
         if f is None:
             return                       # group header
-        self.activated.emit(f)
+        self.activated.emit(item.data(0, Qt.UserRole + 1) or f)
 
     def _show_menu(self, pos):
         item = self.tree.itemAt(pos)
@@ -321,8 +368,9 @@ class AuditPanel(QWidget):
             return                       # group header
         self.tree.setCurrentItem(item)
         menu = QMenu(self)
-        if f.has_location:
-            menu.addAction("Go to in PDF", lambda: self.activated.emit(f))
+        target = item.data(0, Qt.UserRole + 1) or f
+        if target.has_location:
+            menu.addAction("Go to in PDF", lambda: self.activated.emit(target))
         if f.waived:
             menu.addAction("Remove waiver…",
                            lambda: self.clearWaiverRequested.emit(f))
@@ -334,7 +382,10 @@ class AuditPanel(QWidget):
         menu.exec(self.tree.viewport().mapToGlobal(pos))
 
     def _as_text(self, f) -> str:
-        where = f"sheet {f.sheet}" if f.sheet else "set-wide"
+        seen = f.sheets
+        where = ("set-wide" if not seen
+                 else f"sheet {seen[0]}" if len(seen) == 1
+                 else f"sheets {', '.join(seen)}")
         lines = [f"{f.severity_label}: {f.message}", f"  {f.rule_id} · {where}"]
         if f.clause:
             lines.append(f"  Cited: {f.clause}")

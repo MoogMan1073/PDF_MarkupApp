@@ -123,7 +123,11 @@ def run_audit(pdf_path: str, sheet_labels: dict, sheet_sources: dict,
         return AuditResult(cancelled=True)
 
     payload = result.to_dict()
-    findings = [Finding.from_pydrc(raw, built.extents)
+    # Sheet number to page index, so a finding that covers nine sheets can be
+    # placed on all nine rather than only on the one it happens to open at.
+    pages_by_sheet = {str(s.number): s.page_index for s in built.model.sheets
+                      if s.number and s.page_index is not None}
+    findings = [Finding.from_pydrc(raw, built.extents, pages_by_sheet)
                 for raw in payload.get("findings", [])]
     findings = sort_findings(apply_waivers(findings, waivers or {}))
 
