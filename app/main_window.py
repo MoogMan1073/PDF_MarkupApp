@@ -1759,7 +1759,12 @@ class MainWindow(QMainWindow):
                 # Same idea for the audit: re-apply severities and rule
                 # enablement to the findings already on screen rather than
                 # making the user run the check again to see the effect.
-                self._reapply_audit_settings()
+                # The dialog already loaded every rule's declared severity to
+                # populate its combo boxes, so the defaults come from there
+                # rather than costing a second pack load.
+                self._reapply_audit_settings(
+                    {rule_id: default_sev
+                     for rule_id, default_sev, _chk, _combo in dlg.drc_rows})
 
     # -- edit hooks ----------------------------------------------------------
 
@@ -1894,7 +1899,7 @@ class MainWindow(QMainWindow):
 
     # -- design rule check ----------------------------------------------------
 
-    def _reapply_audit_settings(self):
+    def _reapply_audit_settings(self, defaults=None):
         """Re-flag existing findings against changed rule settings.
 
         Cheap and immediate: a severity override changes how a finding reads,
@@ -1909,9 +1914,25 @@ class MainWindow(QMainWindow):
         if doc is None or not doc.findings:
             return
         overrides = self.config.audit_severity_overrides()
+        defaults = defaults or {}
         for f in doc.findings:
             if f.rule_id in overrides:
                 f.severity = overrides[f.rule_id]
+            elif f.rule_id in defaults:
+                # Withdrawing an override has to put the severity back. Without
+                # this the change was one-way: the finding kept whatever it was
+                # last set to, `set_findings` wrote it to the sidecar, and it
+                # survived closing and reopening the file -- so Settings read
+                # "potential" while the panel header, the overlay colour and
+                # every exported report said something else. Escalating and
+                # then withdrawing left sixteen rows reading "definite
+                # violation" that no rule had ever called one.
+                #
+                # Only for a rule whose default is actually known. A finding
+                # from a pack that is no longer loaded has no entry here, and
+                # resetting it to a guessed severity would be inventing an
+                # answer -- it keeps what it has.
+                f.severity = defaults[f.rule_id]
         doc.set_findings(doc.findings, doc.audit_run)
         self.audit_panel.refresh()
         self._refresh_finding_marks()

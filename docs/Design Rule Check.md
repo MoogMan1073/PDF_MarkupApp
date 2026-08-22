@@ -148,6 +148,17 @@ is.
 Where a plot binds the same sheet number twice, the first one wins, matching
 how the rest of the extraction dedupes.
 
+### Changing a rule's severity
+
+Severity is a setting, not a property of the finding, so changing it applies to
+the findings already on screen without re-running the check — and **withdrawing
+it puts them back**. Set a rule to informational, decide against it, and the
+findings return to whatever the rule itself declares.
+
+The one case where nothing is restored is a finding whose rule is no longer
+loaded. There is no declared severity to go back to, so it keeps what it has
+rather than being given a guessed one.
+
 ## A rule that ran against nothing
 
 The coverage header separates three states, not two. A rule can have **checked

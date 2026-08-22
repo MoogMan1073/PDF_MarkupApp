@@ -375,6 +375,56 @@ class TestMainWindowIntegration(unittest.TestCase):
         import app.tools.runner as runner_mod
         runner_mod.run_with_progress = self._real
 
+    def test_withdrawing_a_severity_override_puts_the_severity_back(self):
+        """The change used to be one-way.
+
+        A finding kept whatever it was last set to, `set_findings` wrote it to
+        the sidecar, and it survived closing and reopening the file -- so
+        Settings read the pack default while the panel header, the overlay
+        colour and every exported report said something else. Escalating and
+        then withdrawing left rows reading "definite violation" that no rule
+        had ever called one.
+        """
+        from app.main_window import MainWindow
+        win = MainWindow()
+        win.load_document(self.src)
+        win.run_audit()
+        doc = win.document
+        self.assertTrue(doc.findings)
+        rule = doc.findings[0].rule_id
+        was = {f.key: f.severity for f in doc.findings if f.rule_id == rule}
+        self.assertTrue(was)
+        defaults = {rule: next(iter(was.values()))}
+
+        win.config.set_audit_severity_overrides({rule: DEFINITE})
+        win._reapply_audit_settings(defaults)
+        self.assertTrue(all(f.severity == DEFINITE for f in doc.findings
+                            if f.rule_id == rule))
+
+        win.config.set_audit_severity_overrides({})
+        win._reapply_audit_settings(defaults)
+        self.assertEqual({f.key: f.severity for f in doc.findings
+                          if f.rule_id == rule}, was)
+        win.close()
+
+    def test_a_rule_with_no_known_default_keeps_what_it_has(self):
+        # A finding from a pack that is no longer loaded has no entry among
+        # the defaults. Resetting it to a guessed severity would be inventing
+        # an answer, so it is left alone.
+        from app.main_window import MainWindow
+        win = MainWindow()
+        win.load_document(self.src)
+        win.run_audit()
+        doc = win.document
+        rule = doc.findings[0].rule_id
+        win.config.set_audit_severity_overrides({rule: DEFINITE})
+        win._reapply_audit_settings({rule: POTENTIAL})
+        win.config.set_audit_severity_overrides({})
+        win._reapply_audit_settings({})          # defaults unknown
+        self.assertTrue(all(f.severity == DEFINITE for f in doc.findings
+                            if f.rule_id == rule))
+        win.close()
+
     def test_run_populates_panel_and_sheet_then_waiver_persists(self):
         from app.main_window import MainWindow
         from app.model.document import Document
