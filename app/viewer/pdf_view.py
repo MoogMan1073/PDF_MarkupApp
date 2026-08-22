@@ -130,9 +130,12 @@ class PdfView(QGraphicsView):
 
         # in-document search (Ctrl+F)
         self._search_bar = None
-        self._search_matches = []        # [(pno, fitz.Rect)]
+        self._search_matches = []        # [(pno, fitz.Rect)] — display coords
+        self._search_hits = []           # rich Match records, same order
+        self._search_capped = False
         self._search_index = -1
         self._search_items = []          # highlight QGraphicsRectItems
+        self._searcher = None            # DocumentSearch engine, per document
 
         # Ctrl+C copies the selected mark(s), or the text selection (view focus)
         copy_sc = QShortcut(QKeySequence.Copy, self)
@@ -196,10 +199,13 @@ class PdfView(QGraphicsView):
         self._text_selecting = False
         self._search_items = []
         self._search_matches = []
+        self._search_hits = []
         self._search_index = -1
         self._finding_items = []
-        if self._search_bar is not None:
-            self._search_bar.hide()
+        # a fresh engine for the new document (the old page index is stale);
+        # the search panel itself deliberately stays open across loads
+        from .doc_search import DocumentSearch
+        self._searcher = DocumentSearch(document.fitz_doc)
 
         self._rotation = 0
         for pno in range(document.page_count):
@@ -215,6 +221,14 @@ class PdfView(QGraphicsView):
 
         QTimer.singleShot(0, self.fit_width)
         QTimer.singleShot(0, self._render_visible)
+        # the search panel survives a document switch: re-run its query so the
+        # highlights and the match index follow into the new file
+        # (isHidden, not isVisible: the latter is False whenever the window
+        # itself isn't shown yet — e.g. during startup restore or in tests)
+        if self._search_bar is not None and not self._search_bar.isHidden():
+            q = self._search_bar.input.text().strip()
+            if q:
+                QTimer.singleShot(0, lambda: self.run_search(q))
 
     # -- page layout / rotation ---------------------------------------------
 
@@ -440,9 +454,9 @@ class PdfView(QGraphicsView):
 
     def cancel_action(self):
         """Abort an in-progress draw/erase/region-pick and drop any preview."""
-        if self._search_bar is not None and self._search_bar.isVisible():
-            self.hide_search()
-            return
+        # Esc in the canvas cancels drawing only. The search panel is closed
+        # from its own ✕ or Esc *inside* it — canvas events used to keep
+        # dismissing it mid-search.
         if self._region_pick or self._region_item is not None:
             self.cancel_region_pick()
         if self._cloud_pts is not None:
@@ -1476,11 +1490,13 @@ class PdfView(QGraphicsView):
     def show_search(self):
         if self._search_bar is None:
             from .search_bar import SearchBar
-            self._search_bar = SearchBar(self.viewport())
+            self._search_bar = SearchBar(self.viewport(), config=self.config)
             self._search_bar.queryChanged.connect(self.run_search)
             self._search_bar.nextRequested.connect(self.search_next)
             self._search_bar.prevRequested.connect(self.search_prev)
             self._search_bar.closed.connect(self.hide_search)
+            self._search_bar.optionsChanged.connect(self._research_current)
+            self._search_bar.matchActivated.connect(self.search_activate)
         self._position_search_bar()
         self._search_bar.show()
         self._search_bar.raise_()
@@ -1494,6 +1510,7 @@ class PdfView(QGraphicsView):
     def hide_search(self):
         self._clear_search_highlights()
         self._search_matches = []
+        self._search_hits = []
         self._search_index = -1
         if self._search_bar is not None:
             self._search_bar.hide()
@@ -1508,25 +1525,81 @@ class PdfView(QGraphicsView):
     def run_search(self, query):
         self._clear_search_highlights()
         self._search_matches = []
+        self._search_hits = []
+        self._search_capped = False
         self._search_index = -1
         q = (query or "").strip()
         if q and self.document is not None:
-            for pno in range(self.document.page_count):
-                try:
-                    page = self.document.fitz_doc[pno]
-                    rm = page.rotation_matrix          # unrotated -> visual coords
-                    rects = page.search_for(q)
-                except Exception:
-                    rects = []
-                for r in rects:
-                    vr = fitz.Rect(r) * rm
-                    vr.normalize()
-                    self._search_matches.append((pno, vr))
+            from .doc_search import (DocumentSearch, SearchOptions,
+                                     BadPatternError)
+            if self._searcher is None:
+                self._searcher = DocumentSearch(self.document.fitz_doc)
+            opts = (self._search_bar.options() if self._search_bar is not None
+                    else SearchOptions())
+            try:
+                result = self._searcher.search(
+                    q, opts,
+                    store=self.store if opts.include_marks else None,
+                    component_config=(self.config.component_config()
+                                      if self.config else None),
+                    wire_config=(self.config.wire_config()
+                                 if self.config else None))
+            except BadPatternError as e:
+                if self._search_bar is not None:
+                    self._search_bar.set_error(str(e))
+                    self._search_bar.set_matches([], {})
+                return
+            self._search_hits = result.matches
+            self._search_capped = result.capped
+            rms: dict = {}                     # unrotated -> visual, per page
+            for m in result.matches:
+                if m.source == "text":
+                    rm = rms.get(m.page)
+                    if rm is None:
+                        try:
+                            rm = self.document.fitz_doc[m.page].rotation_matrix
+                        except Exception:
+                            rm = fitz.Matrix(1.0, 1.0)
+                        rms[m.page] = rm
+                    vr = fitz.Rect(m.rect) * rm
+                else:
+                    vr = fitz.Rect(m.rect)     # marks are already page-local
+                vr.normalize()
+                self._search_matches.append((m.page, vr))
+        # fill the results index first: _focus_current_match syncs the list's
+        # selection, which only works once the rows exist
+        if self._search_bar is not None:
+            self._search_bar.set_matches(
+                self._search_hits,
+                dict(getattr(self.document, "sheet_labels", None) or {}),
+                self._search_capped)
         if self._search_matches:
             self._draw_search_highlights()
             self._search_index = 0
             self._focus_current_match()
         self._update_search_count()
+
+    def _research_current(self):
+        """Re-run the live query after an option toggle changed."""
+        if self._search_bar is not None:
+            self.run_search(self._search_bar.input.text())
+
+    def _remember_query(self):
+        if self._search_bar is not None:
+            self._search_bar.remember(self._search_bar.input.text())
+
+    def search_activate(self, i: int):
+        """Jump to match ``i`` picked from the results list."""
+        if not (0 <= i < len(self._search_matches)):
+            return
+        self._search_index = i
+        self._focus_current_match()
+        self._update_search_count()
+        self._remember_query()
+        pno, r = self._search_matches[i]
+        if 0 <= pno < len(self._page_items):
+            self._pulse_at(self._page_items[pno],
+                           (r.x0 + r.x1) / 2.0, (r.y0 + r.y1) / 2.0)
 
     def _research_if_stale(self) -> bool:
         """If there are no matches but the box still holds a query, search it
@@ -1546,6 +1619,7 @@ class PdfView(QGraphicsView):
         self._search_index = (self._search_index + 1) % len(self._search_matches)
         self._focus_current_match()
         self._update_search_count()
+        self._remember_query()
 
     def search_prev(self):
         if not self._search_matches:
@@ -1554,6 +1628,7 @@ class PdfView(QGraphicsView):
         self._search_index = (self._search_index - 1) % len(self._search_matches)
         self._focus_current_match()
         self._update_search_count()
+        self._remember_query()
 
     def _draw_search_highlights(self):
         from PySide6.QtWidgets import QGraphicsRectItem
@@ -1655,12 +1730,14 @@ class PdfView(QGraphicsView):
             page = self._page_items[pno]
             self.centerOn(page.mapToScene(QPointF((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2)))
             self._render_timer.start()
+        if self._search_bar is not None:
+            self._search_bar.set_current(self._search_index)
 
     def _update_search_count(self):
         if self._search_bar is not None:
             n = len(self._search_matches)
             i = self._search_index + 1 if n else 0
-            self._search_bar.set_count(i, n)
+            self._search_bar.set_count(i, n, self._search_capped)
 
     # -- keep the floating search bar pinned on resize ----------------------
 

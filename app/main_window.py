@@ -913,6 +913,10 @@ class MainWindow(QMainWindow):
         m_view.addAction("Zoom out", self.view.zoom_out, QKeySequence.ZoomOut)
         m_view.addSeparator()
         m_view.addAction("Find…", self.view.show_search, QKeySequence.Find)
+        m_view.addAction("Find next", self.view.search_next,
+                         QKeySequence.FindNext)
+        m_view.addAction("Find previous", self.view.search_prev,
+                         QKeySequence.FindPrevious)
         m_view.addSeparator()
         act_cmt = m_view.addAction(
             "Toggle comment sidebar",

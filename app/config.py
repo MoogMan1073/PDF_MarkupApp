@@ -23,6 +23,7 @@ APP = "PDFMarkupApp"
 
 # how many paths the File ▸ Open Recent list remembers
 MAX_RECENT_FILES = 10
+MAX_RECENT_SEARCHES = 10
 
 
 def _default_user() -> str:
@@ -72,6 +73,12 @@ DEFAULTS: dict = {
     "audit/oda_path": "",
     # File ▸ Open Recent (most-recent-first list of PDF paths)
     "recent/files": json.dumps([]),
+    # in-document search (Ctrl+F): option toggles + query history
+    "search/case": False,
+    "search/word": False,
+    "search/regex": False,
+    "search/marks": True,
+    "search/recent": json.dumps([]),
 }
 
 
@@ -166,6 +173,34 @@ class AppConfig:
 
     def clear_recent_files(self) -> None:
         self.set_recent_files([])
+
+    # -- search history ------------------------------------------------------
+
+    @property
+    def recent_searches(self) -> list:
+        """Recently committed Ctrl+F queries, most recent first."""
+        raw = self.get("search/recent")
+        try:
+            val = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(val, list):
+                return [str(q) for q in val][:MAX_RECENT_SEARCHES]
+        except Exception:
+            pass
+        return []
+
+    def add_recent_search(self, query: str) -> list:
+        """Move ``query`` to the top of the search history (deduplicated
+        case-insensitively, capped at :data:`MAX_RECENT_SEARCHES`)."""
+        q = str(query).strip()
+        if not q:
+            return self.recent_searches
+        out = [q] + [p for p in self.recent_searches if p.lower() != q.lower()]
+        out = out[:MAX_RECENT_SEARCHES]
+        self.set("search/recent", json.dumps(out))
+        return out
+
+    def clear_recent_searches(self) -> None:
+        self.set("search/recent", json.dumps([]))
 
     # -- derived config objects ---------------------------------------------
 
