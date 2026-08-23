@@ -24,13 +24,27 @@ def available() -> bool:
 
 
 def status() -> tuple:
-    """``(ok, message)`` describing why the audit is or is not usable."""
+    """``(ok, message)`` describing why the audit is or is not usable.
+
+    The not-installed message names the interpreter that did the looking and
+    the exact command that installs into it. "Not installed" after a
+    successful ``pip install`` is nearly always two Pythons -- the shell's and
+    the app's -- and a dialog that withholds which one it searched turns a
+    one-line fix into a support thread.
+    """
+    import sys
     try:
         import pydrc
         import pydrc.checks  # noqa: F401
     except ImportError:
-        return False, ("The design rule library (PyDRC) is not installed. "
-                       "Install it to enable design rule checking.")
+        return False, (
+            "The design rule library (PyDRC) is not installed for the Python "
+            "this app is running:\n"
+            f"    {sys.executable}\n\n"
+            "Install it with that same interpreter, from the app folder:\n"
+            f'    "{sys.executable}" -m pip install -r requirements-drc.txt\n\n'
+            "If you already installed it, it went into a different Python "
+            "(another venv, or the system install).")
     except Exception as e:                       # pragma: no cover - defensive
         return False, f"The design rule library failed to load: {e}"
     return True, f"PyDRC {getattr(pydrc, '__version__', '?')}"
