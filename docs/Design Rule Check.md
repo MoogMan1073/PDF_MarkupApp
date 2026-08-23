@@ -222,6 +222,18 @@ Two pieces of per-sheet information do most of the work, and both are editable:
 off and a severity you can override. Changes apply to the findings already on
 screen — no need to run the check again to see the effect.
 
+## Which rules produced a report
+
+Every exported report names the rule pack and its version — *Rule packs:
+drc-base@1.32.0* — at the foot of the HTML, beside the coverage line in
+Markdown, and as a row in CSV. The version moves with every rule change, so
+two reports that disagree about a finding can be told apart: if one says
+`1.29.0` and the other `1.32.0`, the rules changed between them.
+
+Worth checking after you update the rule library, because a `pip` install of
+a git-pinned package will happily report success without fetching anything
+new.
+
 ## Exporting
 
 **Export report…** writes HTML, Markdown or CSV. All three carry the findings,
