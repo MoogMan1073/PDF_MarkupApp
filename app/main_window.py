@@ -1322,6 +1322,11 @@ class MainWindow(QMainWindow):
                 self, "Already open",
                 f"“{os.path.basename(path)}” is already open.")
             return
+        # Opening another file drops this one's unsaved marks exactly as
+        # finally as closing the window does. Asked before anything is built,
+        # so Cancel leaves no half-opened document behind.
+        if not self._ok_to_lose_unsaved("Open another file"):
+            return
         # Build the new document BEFORE closing the old one. Closing first meant
         # a failed open (corrupt/locked/deleted file) returned with the window
         # still pointed at a *closed* Document — blank pages, "closed database"
@@ -1374,14 +1379,55 @@ class MainWindow(QMainWindow):
             f"Opened {os.path.basename(path)} ({doc.page_count} pages, "
             f"{len(doc.store.all())} existing marks)", 6000)
 
-    def save_markup(self):
+    def save_markup(self) -> bool:
+        """Write the markup out. Returns whether it actually landed on disk.
+
+        The return value matters to :meth:`_ok_to_lose_unsaved`, which offers
+        Save as the way *out* of losing work -- so it has to know the
+        difference between a save and a save that raised.
+        """
         if self.document is None:
-            return
+            return False
         try:
             out = self.document.save()
-            self.statusBar().showMessage(f"Saved {os.path.basename(out)}", 5000)
         except Exception as e:
             QMessageBox.warning(self, "Save failed", str(e))
+            return False
+        self.statusBar().showMessage(f"Saved {os.path.basename(out)}", 5000)
+        return True
+
+    def _ok_to_lose_unsaved(self, title: str) -> bool:
+        """Ask before dropping marks that only File > Save would have kept.
+
+        True means go ahead. The window used to close with no question and no
+        save, so every mark drawn since the last save went with it, silently,
+        on every sheet -- the one failure a markup tool does not get to have.
+
+        Only the marks and the wire/component ticks hang on this: findings,
+        waivers, sheet numbers and roles all write through as they change.
+        """
+        doc = self.document
+        if doc is None or not doc.dirty:
+            return True
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle(title)
+        box.setText(f"“{os.path.basename(doc.path)}” has unsaved markup.")
+        box.setInformativeText(
+            "Marks are written to disk when you save. Discarding loses every "
+            "change made since the last save.")
+        box.setStandardButtons(QMessageBox.Save | QMessageBox.Discard
+                               | QMessageBox.Cancel)
+        box.setDefaultButton(QMessageBox.Save)
+        choice = box.exec()
+        if choice == QMessageBox.Discard:
+            return True
+        if choice != QMessageBox.Save:
+            return False                  # Cancel, or the dialog was dismissed
+        # A save that raised (an unusable sidecar, a read-only folder) is not a
+        # save. Stay where we are rather than throw the work away on their
+        # behalf -- Discard is still on the box if that is really what they mean.
+        return self.save_markup()
 
     def save_as_fork(self):
         """Fork the current markup to a new working file and switch to editing it."""
@@ -1759,7 +1805,12 @@ class MainWindow(QMainWindow):
                 # Same idea for the audit: re-apply severities and rule
                 # enablement to the findings already on screen rather than
                 # making the user run the check again to see the effect.
-                self._reapply_audit_settings()
+                # The dialog already loaded every rule's declared severity to
+                # populate its combo boxes, so the defaults come from there
+                # rather than costing a second pack load.
+                self._reapply_audit_settings(
+                    {rule_id: default_sev
+                     for rule_id, default_sev, _chk, _combo in dlg.drc_rows})
 
     # -- edit hooks ----------------------------------------------------------
 
@@ -1894,7 +1945,7 @@ class MainWindow(QMainWindow):
 
     # -- design rule check ----------------------------------------------------
 
-    def _reapply_audit_settings(self):
+    def _reapply_audit_settings(self, defaults=None):
         """Re-flag existing findings against changed rule settings.
 
         Cheap and immediate: a severity override changes how a finding reads,
@@ -1909,9 +1960,25 @@ class MainWindow(QMainWindow):
         if doc is None or not doc.findings:
             return
         overrides = self.config.audit_severity_overrides()
+        defaults = defaults or {}
         for f in doc.findings:
             if f.rule_id in overrides:
                 f.severity = overrides[f.rule_id]
+            elif f.rule_id in defaults:
+                # Withdrawing an override has to put the severity back. Without
+                # this the change was one-way: the finding kept whatever it was
+                # last set to, `set_findings` wrote it to the sidecar, and it
+                # survived closing and reopening the file -- so Settings read
+                # "potential" while the panel header, the overlay colour and
+                # every exported report said something else. Escalating and
+                # then withdrawing left sixteen rows reading "definite
+                # violation" that no rule had ever called one.
+                #
+                # Only for a rule whose default is actually known. A finding
+                # from a pack that is no longer loaded has no entry here, and
+                # resetting it to a guessed severity would be inventing an
+                # answer -- it keeps what it has.
+                f.severity = defaults[f.rule_id]
         doc.set_findings(doc.findings, doc.audit_run)
         self.audit_panel.refresh()
         self._refresh_finding_marks()
@@ -1922,7 +1989,9 @@ class MainWindow(QMainWindow):
             self.view.clear_findings()
             return
         if self.config.audit_draw_on_sheet():
-            self.view.draw_findings(self.document.findings)
+            from .audit.findings import visible_findings
+            self.view.draw_findings(visible_findings(
+                self.document.findings, self.config.audit_disabled_rules()))
         else:
             self.view.clear_findings()
 
@@ -2253,6 +2322,11 @@ class MainWindow(QMainWindow):
         self._init_dock_sizes()
 
     def closeEvent(self, event):
+        # First, before a single panel is shut down or a handle released: if
+        # they cancel, the window has to still be a working window.
+        if not self._ok_to_lose_unsaved("Close"):
+            event.ignore()
+            return
         self._save_ui_state()            # remember the dock layout + geometry
         try:
             self.wire_panel.shutdown()   # stop any running extraction thread

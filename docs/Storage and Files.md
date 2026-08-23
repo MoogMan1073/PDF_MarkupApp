@@ -20,6 +20,19 @@ Next to your PDF (`drawing.pdf`):
 Save with **File ▸ Save markup** (`Ctrl+S`). Use **Export annotated PDF…**
 (`Ctrl+Shift+E`) to write a copy anywhere.
 
+> [!warning] Closing with unsaved marks
+> Marks live in memory until you save. If you close the window — or open a
+> different drawing — with marks you haven't saved, the app asks first and
+> offers **Save**, **Discard** or **Cancel**. Discard really does throw away
+> every change made since your last save. Which wires and components are
+> **ticked** for export counts as unsaved work too, so it's covered by the same
+> prompt.
+>
+> A few things don't wait for a save and so are never at risk: audit findings
+> and the waivers you record against them, sheet numbers and roles you set by
+> hand, and an imported source drawing. Those are written to the sidecar the
+> moment you make them.
+
 > [!tip] Sharing to viewers that don't show annotations
 > Most PDF apps (Adobe, Chrome/Edge) render the exported marks fine. If you're
 > sharing to a viewer that ignores annotations — some built-in previews, file

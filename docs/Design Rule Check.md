@@ -138,6 +138,39 @@ measure the drawing, not the page, and the two are indistinguishable as bare
 numbers — so a coordinate that did not come from the page is discarded rather
 than trusted.
 
+### Which page a finding opens on
+
+A finding always names its sheet, and that is what decides the page it opens
+on. Some kinds of finding — a protective device, a terminal, an index entry —
+carry no page of their own, and for those the sheet is the only answer there
+is.
+
+Where a plot binds the same sheet number twice, the first one wins, matching
+how the rest of the extraction dedupes.
+
+### Turning a rule off
+
+Turning a rule off hides its findings rather than deleting them, so turning it
+back on restores them without another run — and *hidden* means everywhere: the
+list, the boxes on the drawing, and all three exported reports.
+
+The report still says which rules were turned off. Dropping the rows silently
+would make "this rule found nothing" and "you switched this rule off" the same
+sentence, and they are not the same fact. The coverage table still lists a rule
+that ran before you turned it off, which is the honest record of what was
+examined.
+
+### Changing a rule's severity
+
+Severity is a setting, not a property of the finding, so changing it applies to
+the findings already on screen without re-running the check — and **withdrawing
+it puts them back**. Set a rule to informational, decide against it, and the
+findings return to whatever the rule itself declares.
+
+The one case where nothing is restored is a finding whose rule is no longer
+loaded. There is no declared severity to go back to, so it keeps what it has
+rather than being given a guessed one.
+
 ## A rule that ran against nothing
 
 The coverage header separates three states, not two. A rule can have **checked

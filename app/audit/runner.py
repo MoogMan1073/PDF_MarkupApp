@@ -125,8 +125,14 @@ def run_audit(pdf_path: str, sheet_labels: dict, sheet_sources: dict,
     payload = result.to_dict()
     # Sheet number to page index, so a finding that covers nine sheets can be
     # placed on all nine rather than only on the one it happens to open at.
-    pages_by_sheet = {str(s.number): s.page_index for s in built.model.sheets
-                      if s.number and s.page_index is not None}
+    # First occurrence wins, matching how the parsers and the extents index
+    # dedupe. A plot can carry one sheet number on two pages -- a revised sheet
+    # bound in beside the original -- and last-wins moved 18 of 71 places onto
+    # the wrong one of the pair.
+    pages_by_sheet: dict = {}
+    for s in built.model.sheets:
+        if s.number and s.page_index is not None:
+            pages_by_sheet.setdefault(str(s.number), s.page_index)
     findings = [Finding.from_pydrc(raw, built.extents, pages_by_sheet)
                 for raw in payload.get("findings", [])]
     findings = sort_findings(apply_waivers(findings, waivers or {}))

@@ -64,6 +64,17 @@ class Document:
         self.sheet_sources: dict = {}
         self.sheet_roles: dict = {}    # page_index -> sheet_role name
         self._dirty = False
+        # Every path a user's edit can take -- draw, move, resize, delete, edit
+        # the text, undo, redo, tick a TODO -- ends in a non-silent store CRUD
+        # call, and ``load`` below is the only caller that passes silent=True.
+        # So this one listener *is* the "are there unsaved marks?" question,
+        # and a file that was just loaded correctly comes up clean.
+        #
+        # Deliberately not set inside AnnotationStore.add/update/remove:
+        # ``silent`` gates only the emit, not the body, so a flag set there
+        # would mark a fifty-mark file dirty the instant it opened and prompt
+        # to save on every close.
+        self.store.add_listener(lambda *_: self.mark_dirty())
 
     # -- basic page access ---------------------------------------------------
 
@@ -489,6 +500,13 @@ class Document:
     # -- lifecycle -----------------------------------------------------------
 
     def mark_dirty(self) -> None:
+        """Record that there is work here that only :meth:`save` would keep.
+
+        Most state writes straight through to the sidecar as it changes --
+        findings, waivers, sheet numbers and roles, the imported source model.
+        Two things do not, and so are what this flag is about: the marks
+        themselves, and which wires and components are ticked for export.
+        """
         self._dirty = True
 
     @property

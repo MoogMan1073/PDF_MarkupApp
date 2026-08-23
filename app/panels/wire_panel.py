@@ -451,13 +451,20 @@ class WirePanel(QWidget):
             return
         checked = item.checkState() == Qt.Checked
         w.included = checked
+        self._mark_dirty()
         # group toggle: if this row is part of a multi-row selection
         # (shift/ctrl+click), apply the same state to every selected row
         sel_rows = {ix.row() for ix in self.table.selectionModel().selectedRows()}
         if item.row() in sel_rows and len(sel_rows) > 1:
             self._apply_check_to_rows(sel_rows, checked)
 
+    def _mark_dirty(self):
+        """A tick is a decision, and it only reaches disk on File > Save."""
+        if self.document is not None:
+            self.document.mark_dirty()
+
     def _apply_check_to_rows(self, rows, checked):
+        self._mark_dirty()
         self.table.blockSignals(True)
         try:
             state = Qt.Checked if checked else Qt.Unchecked
