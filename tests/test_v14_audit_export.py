@@ -243,3 +243,74 @@ class TestARuleThatRanAgainstNothing(unittest.TestCase):
                                           checked=63, skipped=0)])
         out = self._exports(run)
         self.assertNotIn("## Not checked", out["md"])
+
+
+
+class TestARuleTurnedOff(unittest.TestCase):
+    """Turning a rule off has to mean everywhere, not just the panel.
+
+    The disabled set was consulted at audit time and by the panel list, and
+    nowhere else -- so a rule switched off after a run kept painting boxes on
+    the drawing and kept filling rows in all three reports. On the demo pair,
+    switching off one rule left 17 mentions of it in every export and all 57
+    findings on the overlay.
+    """
+
+    def _doc(self):
+        return _Doc(_doc().findings, None)
+
+    def _rule_of(self, doc):
+        return doc.findings[0].rule_id
+
+    def test_its_findings_do_not_reach_any_export(self):
+        doc = self._doc()
+        rule = self._rule_of(doc)
+        tmp = tempfile.mkdtemp()
+        md = open(export_markdown(doc, os.path.join(tmp, "a.md"),
+                                  disabled=[rule]), encoding="utf-8").read()
+        csv_ = open(export_csv(doc, os.path.join(tmp, "a.csv"),
+                               disabled=[rule]), encoding="utf-8").read()
+        html = open(export_html(doc, os.path.join(tmp, "a.html"), "",
+                                [rule]), encoding="utf-8").read()
+        for fmt, text in (("md", md), ("csv", csv_), ("html", html)):
+            with self.subTest(fmt):
+                body = text.split("Turned off for this report")[-1]
+                self.assertNotIn(doc.findings[0].message, body)
+
+    def test_every_export_says_what_was_turned_off(self):
+        """Rows may go; the fact must not.
+
+        An export that silently drops rows makes "this rule found nothing" and
+        "you switched this rule off" the same answer -- the confusion the
+        coverage accounting exists to prevent, arriving by another door.
+        """
+        doc = self._doc()
+        rule = self._rule_of(doc)
+        tmp = tempfile.mkdtemp()
+        for fmt, path, fn in (("md", "a.md", export_markdown),
+                              ("csv", "a.csv", export_csv),
+                              ("html", "a.html", export_html)):
+            with self.subTest(fmt):
+                out = fn(doc, os.path.join(tmp, path), disabled=[rule]) \
+                    if fmt != "html" else fn(doc, os.path.join(tmp, path), "",
+                                             [rule])
+                text = open(out, encoding="utf-8").read()
+                self.assertIn("Turned off for this report", text)
+                self.assertIn(rule, text)
+
+    def test_nothing_changes_when_nothing_is_turned_off(self):
+        doc = self._doc()
+        tmp = tempfile.mkdtemp()
+        text = open(export_markdown(doc, os.path.join(tmp, "a.md")),
+                    encoding="utf-8").read()
+        self.assertNotIn("Turned off for this report", text)
+        self.assertIn(doc.findings[0].message, text)
+
+    def test_the_overlay_and_the_panel_read_the_same_filter(self):
+        from app.audit.findings import visible_findings
+        doc = self._doc()
+        rule = self._rule_of(doc)
+        kept = visible_findings(doc.findings, [rule])
+        self.assertTrue(kept)
+        self.assertNotIn(rule, [f.rule_id for f in kept])
+        self.assertEqual(visible_findings(doc.findings, []), doc.findings)

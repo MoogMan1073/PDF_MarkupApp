@@ -466,6 +466,26 @@ class AuditRun:
         )
 
 
+def visible_findings(findings, disabled) -> list:
+    """The findings left once the rules switched off in Settings are removed.
+
+    Turning a rule off hides its findings rather than deleting them, so turning
+    it back on restores the view without a re-run -- but "the view" has to mean
+    every view. The panel filtered its own list and nothing else did, so a
+    disabled rule kept painting boxes on the drawing and kept filling rows in
+    all three exported reports. On the demo set, switching off one rule dropped
+    the panel to 53 rows while the overlay still drew all 78 findings and every
+    export still listed the 25 that had been turned off.
+
+    Read by the panel, the overlay and the exports, so there is one answer to
+    "which findings is this report about".
+    """
+    rules = set(disabled or ())
+    if not rules:
+        return list(findings or [])
+    return [f for f in (findings or []) if f.rule_id not in rules]
+
+
 def sort_findings(findings) -> list:
     return sorted(findings, key=lambda f: f.sort_key)
 

@@ -132,11 +132,11 @@ class AuditPanel(QWidget):
             return []
         out = list(getattr(self.document, "findings", []) or [])
         # A rule turned off in Settings hides its findings rather than deleting
-        # them, so turning it back on restores the view without a re-run.
+        # them, so turning it back on restores the view without a re-run. The
+        # same filter serves the overlay and the exports, so all three agree.
         if self.config is not None:
-            disabled = set(self.config.audit_disabled_rules())
-            if disabled:
-                out = [f for f in out if f.rule_id not in disabled]
+            from ..audit.findings import visible_findings
+            out = visible_findings(out, self.config.audit_disabled_rules())
         if not self.show_info.isChecked():
             out = [f for f in out if f.severity != INFO]
         if self.hide_waived.isChecked():
@@ -428,6 +428,7 @@ class AuditPanel(QWidget):
             return
         from ..export.audit_export import export_report
         try:
-            export_report(self.document, path)
+            export_report(self.document, path, disabled=(
+                self.config.audit_disabled_rules() if self.config else ()))
         except Exception as e:                    # pragma: no cover - defensive
             QMessageBox.warning(self, "Export failed", str(e))

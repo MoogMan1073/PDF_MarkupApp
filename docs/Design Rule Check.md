@@ -148,6 +148,18 @@ is.
 Where a plot binds the same sheet number twice, the first one wins, matching
 how the rest of the extraction dedupes.
 
+### Turning a rule off
+
+Turning a rule off hides its findings rather than deleting them, so turning it
+back on restores them without another run — and *hidden* means everywhere: the
+list, the boxes on the drawing, and all three exported reports.
+
+The report still says which rules were turned off. Dropping the rows silently
+would make "this rule found nothing" and "you switched this rule off" the same
+sentence, and they are not the same fact. The coverage table still lists a rule
+that ran before you turned it off, which is the honest record of what was
+examined.
+
 ### Changing a rule's severity
 
 Severity is a setting, not a property of the finding, so changing it applies to

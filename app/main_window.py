@@ -1943,7 +1943,9 @@ class MainWindow(QMainWindow):
             self.view.clear_findings()
             return
         if self.config.audit_draw_on_sheet():
-            self.view.draw_findings(self.document.findings)
+            from .audit.findings import visible_findings
+            self.view.draw_findings(visible_findings(
+                self.document.findings, self.config.audit_disabled_rules()))
         else:
             self.view.clear_findings()
 

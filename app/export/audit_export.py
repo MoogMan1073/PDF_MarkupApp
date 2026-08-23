@@ -44,19 +44,38 @@ def _where(f) -> str:
     return "sheets " + ", ".join(seen)
 
 
-def _rows(document) -> list:
-    from ..audit.findings import sort_findings
-    return sort_findings(list(getattr(document, "findings", []) or []))
+def _rows(document, disabled=()) -> list:
+    from ..audit.findings import sort_findings, visible_findings
+    return sort_findings(visible_findings(
+        getattr(document, "findings", []) or [], disabled))
+
+
+def _turned_off(disabled) -> str:
+    """One sentence naming the rules a reader is not seeing.
+
+    An export that silently drops rows makes "this rule found nothing" and
+    "you switched this rule off" the same answer -- which is the one confusion
+    the coverage accounting exists to prevent, arriving by another door. So the
+    rows go and the sentence stays.
+    """
+    rules = sorted(set(disabled or ()))
+    if not rules:
+        return ""
+    return ("Turned off for this report, so their findings are not listed: "
+            + ", ".join(rules) + ".")
 
 
 def _run(document):
     return getattr(document, "audit_run", None)
 
 
-def export_markdown(document, path: str) -> str:
-    findings = _rows(document)
+def export_markdown(document, path: str, disabled=()) -> str:
+    findings = _rows(document, disabled)
     run = _run(document)
     out = ["# Design rule check", "", f"> {ADVISORY}", ""]
+    off = _turned_off(disabled)
+    if off:
+        out += [f"**{off}**", ""]
     if run is not None:
         out += [f"**Coverage.** {run.summary_line()}", ""]
         if run.packs:
@@ -112,10 +131,14 @@ def export_markdown(document, path: str) -> str:
     return path
 
 
-def export_csv(document, path: str) -> str:
-    findings = _rows(document)
+def export_csv(document, path: str, disabled=()) -> str:
+    findings = _rows(document, disabled)
     with open(path, "w", encoding="utf-8", newline="") as fh:
         w = csv.writer(fh)
+        off = _turned_off(disabled)
+        if off:
+            w.writerow([off])
+            w.writerow([])
         w.writerow(["Severity", "Rule", "Sheet", "Page", "Subject", "Finding",
                     "Cited", "Status", "Evidence"])
         for f in findings:
@@ -170,8 +193,8 @@ th{color:#5b6470}.gap{color:#b3261e;font-weight:600}
 """
 
 
-def export_html(document, path: str, title: str = "") -> str:
-    findings = _rows(document)
+def export_html(document, path: str, title: str = "", disabled=()) -> str:
+    findings = _rows(document, disabled)
     run = _run(document)
     esc = lambda v: _html.escape(str(v), quote=True)          # noqa: E731
     name = title or os.path.basename(getattr(document, "path", "") or "Drawing")
@@ -183,6 +206,9 @@ def export_html(document, path: str, title: str = "") -> str:
            f"<h1>Design rule check</h1><p class='sub'>{esc(name)}</p>",
            f"<div class='note'><strong>Advisory review.</strong> {esc(ADVISORY[18:])}</div>"]
 
+    off = _turned_off(disabled)
+    if off:
+        out.append(f"<div class='note'>{esc(off)}</div>")
     if run is not None:
         out.append(f"<p><strong>Coverage.</strong> {esc(run.summary_line())}</p>")
 
@@ -243,11 +269,11 @@ def export_html(document, path: str, title: str = "") -> str:
     return path
 
 
-def export_report(document, path: str) -> str:
+def export_report(document, path: str, disabled=()) -> str:
     """Export in the format implied by ``path``'s extension."""
     ext = os.path.splitext(path)[1].lower()
     if ext in (".md", ".markdown"):
-        return export_markdown(document, path)
+        return export_markdown(document, path, disabled=disabled)
     if ext == ".csv":
-        return export_csv(document, path)
-    return export_html(document, path)
+        return export_csv(document, path, disabled=disabled)
+    return export_html(document, path, disabled=disabled)
