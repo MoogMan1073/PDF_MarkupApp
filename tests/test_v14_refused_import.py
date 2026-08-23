@@ -198,6 +198,27 @@ class TestTheReportSaysSo(unittest.TestCase):
                 self.assertIn(wanted, text)
                 self.assertIn("did not run", text)
 
+    def test_every_format_names_the_rule_pack(self):
+        """The pack version is how a report says which rules produced it.
+
+        It reached only the Markdown export for a long while -- so the HTML
+        one, which is the format people actually keep, could not answer "which
+        build was this checked against" at all.
+        """
+        run = AuditRun(eligible=10, checked=10, packs=["drc-base@1.32.0"],
+                       coverage=[Coverage(rule_id="R", eligible=10, checked=10)])
+        for ext in (".md", ".csv", ".html"):
+            with self.subTest(ext):
+                self.assertIn("drc-base@1.32.0", self._export(run, ext))
+
+    def test_a_run_with_no_pack_says_nothing_rather_than_an_empty_label(self):
+        # "Rule packs:" with nothing after it invites a reader to wonder what
+        # was dropped.
+        run = AuditRun(eligible=10, checked=10, packs=[])
+        for ext in (".md", ".csv", ".html"):
+            with self.subTest(ext):
+                self.assertNotIn("Rule packs", self._export(run, ext))
+
     def test_the_advisory_note_keeps_its_first_letter(self):
         """The HTML export bolded the lead and printed the rest from a
         hand-counted offset one past the space, so every report ever exported

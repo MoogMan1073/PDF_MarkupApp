@@ -76,6 +76,19 @@ def _run(document):
     return getattr(document, "audit_run", None)
 
 
+def _packs_line(run) -> str:
+    """Which rule packs produced this report.
+
+    Stated in every format, not just Markdown. The pack version is how a
+    report says which rules it was checked against -- two reports carrying one
+    version string while disagreeing about a finding is a question nobody can
+    answer afterwards -- and for a long while the HTML export, which is the one
+    people actually keep, did not print it anywhere.
+    """
+    packs = list(getattr(run, "packs", None) or ()) if run is not None else []
+    return "Rule packs: " + ", ".join(packs) if packs else ""
+
+
 def _problems(run) -> list:
     """What went wrong during the run, for the reader of the report.
 
@@ -101,8 +114,9 @@ def export_markdown(document, path: str, disabled=()) -> str:
         out += [f"**Coverage.** {run.summary_line()}", ""]
         for problem in _problems(run):
             out += [f"> **{problem}**", ""]
-        if run.packs:
-            out += [f"Rule packs: {', '.join(run.packs)}", ""]
+        packs = _packs_line(run)
+        if packs:
+            out += [packs, ""]
 
     for severity in _ORDER:
         group = [f for f in findings if f.severity == severity]
@@ -187,6 +201,8 @@ def export_csv(document, path: str, disabled=()) -> str:
             w.writerow(["Coverage", run.summary_line()])
             for problem in _problems(run):
                 w.writerow(["Problem", problem])
+            if run.packs:
+                w.writerow(["Rule packs", ", ".join(run.packs)])
             for cov in run.coverage:
                 if not cov.ran:
                     w.writerow(["", f"{cov.rule_id}: nothing to check against"])
@@ -222,6 +238,8 @@ table{border-collapse:collapse;width:100%;font-size:.875rem}
 th,td{text-align:left;padding:.4rem .6rem;border-bottom:1px solid #e2e5ea}
 th{color:#5b6470}.gap{color:#b3261e;font-weight:600}
 .scroll{overflow-x:auto}
+.foot{margin-top:2rem;padding-top:.75rem;border-top:1px solid #e2e5ea;
+color:#5b6470;font-size:.8rem}
 """
 
 
@@ -302,6 +320,9 @@ def export_html(document, path: str, title: str = "", disabled=()) -> str:
                        f"<td>{esc(why)}</td></tr>")
         out.append("</tbody></table></div>")
 
+    packs = _packs_line(run)
+    if packs:
+        out.append(f"<p class='foot'>{esc(packs)}</p>")
     out.append("</div></body></html>")
     text = "\n".join(out)
     with open(path, "w", encoding="utf-8") as fh:
