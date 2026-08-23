@@ -47,8 +47,12 @@ CONFIDENCE = {
 
 # A project drawing number followed by a sheet suffix.  Letters first, so
 # catalog numbers on a bill of materials ("1783-US5T", "800T-QTH2B",
-# "25B-V2P5N104") cannot match.
-DEFAULT_DRAWING_NUMBER_PATTERN = r"\b([A-Za-z]{1,4}\d{4,10})-(\d{2,4})\b"
+# "25B-V2P5N104") cannot match.  The separator admits both spellings seen on
+# real sets: EL2507777-300 and EL2503311_011 are the same convention drawn by
+# two shops, and the hyphen-only pattern sent the second set's every page
+# through to the corner heuristic -- which then read the title block's
+# "REV: 0" cell and named all seventeen resolvable sheets "0".
+DEFAULT_DRAWING_NUMBER_PATTERN = r"\b([A-Za-z]{1,4}\d{4,10})[-_](\d{2,4})\b"
 
 _KEYWORD_RE = re.compile(r"^(?:SHEET|SHT)\.?$", re.IGNORECASE)
 _KEYWORD_INLINE_RE = re.compile(
@@ -235,19 +239,74 @@ def _from_keyword(page, config: SheetNumberConfig) -> SheetResolution:
     if m:
         return _made(m.group(1), KEYWORD)
 
-    # "SHEET:" in one cell and its value in the next, left to right.
-    for i, w in enumerate(band):
+    # "SHEET:" in one cell and its value in the next -- to the right, or on
+    # the line directly below, which is how the blocks that also print a
+    # "NEXT SHEET:" cell lay theirs out. A label whose preceding word is NEXT
+    # is skipped entirely: it names the following sheet, by its own words.
+    for w in band:
         if not _KEYWORD_RE.match(str(w[4]).strip().rstrip(":")):
             continue
         cy = (_num(w[1]) + _num(w[3])) / 2
+        line = max(_num(w[3]) - _num(w[1]), 4.0)
+        left = [o for o in band
+                if _num(o[2]) <= _num(w[0]) + 1
+                and abs((_num(o[1]) + _num(o[3])) / 2 - cy) < line * 0.8]
+        if left:
+            left.sort(key=lambda o: -_num(o[2]))
+            if str(left[0][4]).strip().rstrip(".:").upper() == "NEXT":
+                continue
+        # Half a line height, not a fixed six points: the reported glyph
+        # boxes scale with the text, and at small title-block sizes a fixed
+        # tolerance reaches into the line below -- where the NEXT SHEET value
+        # sits, which is exactly the number this must not read.
         same_row = [o for o in band
                     if _num(o[0]) > _num(w[2])
-                    and abs((_num(o[1]) + _num(o[3])) / 2 - cy) < 6
+                    and abs((_num(o[1]) + _num(o[3])) / 2 - cy) < line * 0.5
                     and str(o[4]).strip().isdigit()]
         if same_row:
             same_row.sort(key=lambda o: _num(o[0]))
             return _made(str(same_row[0][4]).strip(), KEYWORD)
+        below = [o for o in band
+                 if str(o[4]).strip().isdigit()
+                 and line * 0.5 <= ((_num(o[1]) + _num(o[3])) / 2 - cy) < line * 3
+                 and _num(o[0]) < _num(w[2]) + line
+                 and _num(o[2]) > _num(w[0]) - line * 3]
+        if below:
+            below.sort(key=lambda o: _num(o[1]))
+            return _made(str(below[0][4]).strip(), KEYWORD)
     return UNRESOLVED
+
+
+_REV_LABEL_RE = re.compile(r"^REV(?:ISION)?[.:]*$", re.IGNORECASE)
+
+
+def _is_revision_value(w, labels) -> bool:
+    """Whether numeric word ``w`` is the value of a ``REV`` title-block cell.
+
+    Two layouts cover the blocks seen so far: the value in the next cell to
+    the right of the label, or on the line directly below it. Measured on the
+    set that motivated this, "REV:" at y=748.5 with its "0" at y=754.2 in the
+    same column -- under six points apart, dead-aligned in x.
+    """
+    wx0, wy0, wx1, wy1 = _num(w[0]), _num(w[1]), _num(w[2]), _num(w[3])
+    wcy = (wy0 + wy1) / 2
+    for lab in labels:
+        lx0, ly0, lx1, ly1 = (_num(lab[0]), _num(lab[1]),
+                              _num(lab[2]), _num(lab[3]))
+        line = max(ly1 - ly0, 4.0)
+        # Rows are told apart by their centres, not their edges: the reported
+        # glyph boxes carry ascender/descender padding, so two visually
+        # distinct lines can overlap by a point or two and an edge test calls
+        # them one row.
+        dcy = wcy - (ly0 + ly1) / 2
+        same_row = abs(dcy) < line * 0.5
+        if same_row and 0 <= wx0 - lx1 < line * 6:
+            return True
+        below = line * 0.5 <= dcy < line * 3
+        x_overlap = wx0 < lx1 + line and wx1 > lx0 - line
+        if below and x_overlap:
+            return True
+    return False
 
 
 def _from_corner(page, config: SheetNumberConfig) -> SheetResolution:
@@ -256,6 +315,13 @@ def _from_corner(page, config: SheetNumberConfig) -> SheetResolution:
     AutoCAD title blocks often place ``THIS SHEET`` beside ``NEXT``; when both
     are present the current sheet is the smaller. Gives up when the corner is
     empty or crowded, because a wrong sheet number is worse than none.
+
+    A number belonging to a ``REV`` cell is not a candidate at all. The
+    revision lives in this same corner on every title block, it is small --
+    usually 0 -- and "the lesser number" is a rule that selects it every
+    time it appears: one real set came back with every sheet named "0" and
+    thirty-three findings about a drawing set whose only defect was being at
+    revision zero.
     """
     words = _words(page)
     if not words:
@@ -267,9 +333,11 @@ def _from_corner(page, config: SheetNumberConfig) -> SheetResolution:
     x_min = rect.x0 + rect.width * config.corner_x_frac
     y_min = rect.y0 + rect.height * config.corner_y_frac
 
-    nums = [str(w[4]).strip() for w in words
-            if _num(w[0]) >= x_min and _num(w[1]) >= y_min
-            and str(w[4]).strip().isdigit() and 1 <= len(str(w[4]).strip()) <= 4]
+    band = [w for w in words if _num(w[0]) >= x_min and _num(w[1]) >= y_min]
+    rev_labels = [w for w in band if _REV_LABEL_RE.match(str(w[4]).strip())]
+    nums = [str(w[4]).strip() for w in band
+            if str(w[4]).strip().isdigit() and 1 <= len(str(w[4]).strip()) <= 4
+            and not _is_revision_value(w, rev_labels)]
     if not nums or len(nums) > config.corner_max_candidates:
         return UNRESOLVED
     return _made(min(nums, key=int), CORNER)
