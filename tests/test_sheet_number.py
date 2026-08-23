@@ -168,6 +168,124 @@ class TestCorner(unittest.TestCase):
         self.assertLess(CONFIDENCE[CORNER], CONFIDENCE[DRAWING_NUMBER])
 
 
+def _tb_doc(entries):
+    """A page whose title-block text is plotted small, as real ones are.
+
+    The default ``insert_text`` size gives glyph boxes fifteen points tall, so
+    rows five points apart -- the real spacing measured off a real block --
+    overlap and "on the line below" stops meaning anything. Real plots write
+    this text around five points high.
+    """
+    doc = fitz.open()
+    page = doc.new_page(width=W, height=H)
+    for text, x, y in entries:
+        page.insert_text((x, y), text, fontsize=5)
+    return doc
+
+
+class TestUnderscoreSeparator(unittest.TestCase):
+    """EL2503311_011 is EL2507777-300 drawn by a different shop.
+
+    The hyphen-only pattern sent a real 28-sheet set's every page through to
+    the corner heuristic, which read the REV cell -- see TestRevisionCell.
+    """
+
+    def test_reads_an_underscore_suffix(self):
+        doc = _doc([[("EL2503311_011", *BODY)]])
+        got = resolve_page(doc[0], SheetNumberConfig(strategies=(DRAWING_NUMBER,)))
+        self.assertEqual((got.label, got.strategy), ("011", DRAWING_NUMBER))
+        doc.close()
+
+    def test_the_prefix_pins_across_an_underscore_set(self):
+        doc = _doc([[("EL2503311_000", *BODY)], [("EL2503311_609", *BODY)]])
+        self.assertEqual(dominant_prefix(doc), "EL2503311")
+        doc.close()
+
+    def test_a_snake_case_identifier_is_not_a_drawing_number(self):
+        # Letters-first with the digits hard against them, same as the hyphen
+        # guard for catalog numbers.
+        doc = _doc([[("TAG_1234_567", *BODY), ("MY_TABLE_01", W * 0.3, H * 0.2)]])
+        self.assertFalse(
+            resolve_page(doc[0], SheetNumberConfig(strategies=(DRAWING_NUMBER,)))
+            .resolved)
+        doc.close()
+
+
+class TestRevisionCell(unittest.TestCase):
+    """The corner heuristic's "lesser number" rule selects the revision every
+    time one appears: revisions live in the same corner and are usually 0.
+    One real set came back with all seventeen resolvable sheets named "0"."""
+
+    CFG = SheetNumberConfig(strategies=(CORNER,))
+
+    # The measured layout: "REV:" with its value on the line below, dead
+    # aligned; "THIS SHEET:" / "NEXT SHEET:" labels with their values below.
+    def _block(self, rev=("REV:", W * 0.945, H * 0.945),
+               revval=("0", W * 0.945, H * 0.952)):
+        return [
+            rev, revval,
+            ("THIS", W * 0.900, H * 0.964), ("SHEET:", W * 0.912, H * 0.964),
+            ("NEXT", W * 0.938, H * 0.964), ("SHEET:", W * 0.950, H * 0.964),
+            ("011", W * 0.910, H * 0.971), ("012", W * 0.944, H * 0.971),
+        ]
+
+    def test_the_revision_is_not_a_candidate(self):
+        doc = _tb_doc(self._block())
+        got = resolve_page(doc[0], self.CFG)
+        self.assertEqual(got.label, "011", "the lesser of THIS and NEXT, "
+                         "never the REV cell's value")
+        doc.close()
+
+    def test_a_rev_beside_its_label_is_excluded_too(self):
+        doc = _tb_doc(self._block(rev=("REV:", W * 0.930, H * 0.952),
+                                revval=("0", W * 0.947, H * 0.952)))
+        self.assertEqual(resolve_page(doc[0], self.CFG).label, "011")
+        doc.close()
+
+    def test_a_corner_holding_only_the_revision_stays_unresolved(self):
+        doc = _tb_doc([("REV:", W * 0.945, H * 0.945), ("0", W * 0.945, H * 0.952)])
+        self.assertFalse(resolve_page(doc[0], self.CFG).resolved)
+        doc.close()
+
+    def test_a_bare_zero_with_no_rev_label_is_still_believed(self):
+        # Exclusion needs the label: a sheet genuinely numbered 0 keeps
+        # resolving, and absence of evidence excludes nothing.
+        doc = _tb_doc([("0", W * 0.80, H * 0.90)])
+        self.assertEqual(resolve_page(doc[0], self.CFG).label, "0")
+        doc.close()
+
+
+class TestKeywordValueBelow(unittest.TestCase):
+    CFG = SheetNumberConfig(strategies=(KEYWORD,))
+
+    def test_reads_the_value_on_the_line_below_the_label(self):
+        doc = _tb_doc([("THIS", W * 0.900, H * 0.964),
+                       ("SHEET:", W * 0.912, H * 0.964),
+                       ("011", W * 0.910, H * 0.971)])
+        got = resolve_page(doc[0], self.CFG)
+        self.assertEqual((got.label, got.strategy), ("011", KEYWORD))
+        doc.close()
+
+    def test_next_sheet_is_not_this_sheet(self):
+        # Only the NEXT cell present: its label says, in its own words, that
+        # the value is the following sheet. Refusing is the honest answer.
+        doc = _tb_doc([("NEXT", W * 0.938, H * 0.964),
+                       ("SHEET:", W * 0.950, H * 0.964),
+                       ("012", W * 0.944, H * 0.971)])
+        self.assertFalse(resolve_page(doc[0], self.CFG).resolved)
+        doc.close()
+
+    def test_with_both_cells_the_this_value_wins(self):
+        doc = _tb_doc([("THIS", W * 0.900, H * 0.964),
+                       ("SHEET:", W * 0.912, H * 0.964),
+                       ("NEXT", W * 0.938, H * 0.964),
+                       ("SHEET:", W * 0.950, H * 0.964),
+                       ("011", W * 0.910, H * 0.971),
+                       ("012", W * 0.944, H * 0.971)])
+        self.assertEqual(resolve_page(doc[0], self.CFG).label, "011")
+        doc.close()
+
+
 class TestStrategyOrder(unittest.TestCase):
     def test_drawing_number_wins_over_a_conflicting_keyword(self):
         doc = _doc([[("EL2507777-300", *BODY), ("SHEET 999", *TB)]])
