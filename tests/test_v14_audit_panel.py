@@ -555,6 +555,64 @@ class TestPlacesFromTheReport(unittest.TestCase):
         self.assertEqual(f.sheets, ["232", "233", "234"])
         self.assertFalse(f.places[1].has_location)
 
+    def test_two_symbols_on_one_rung_less_sheet_are_two_places(self):
+        """A place is a sheet and a rung, so symbols with no rung all share
+        their sheet's label. Keeping one tag per label drew two boxes for
+        sixteen field instruments the drawing gives sixteen positions for."""
+        raw = self._raw(
+            rule_id="DRC-TAG-CONFORM-001",
+            location={"sheet": "301", "rung": None, "page_index": 13},
+            subject={"id": "ZIR", "kind": "device"},
+            evidence={"also_at": ["302"], "total_places": 2,
+                      "on": ["ZIR-301@301", "ZIR-302@301",
+                             "ZIR-303@302", "ZIR-304@302"]})
+        f = Finding.from_pydrc(
+            raw,
+            extents={(13, "ZIR-301"): (10.0, 20.0, 5.0, 5.0),
+                     (13, "ZIR-302"): (10.0, 80.0, 5.0, 5.0),
+                     (14, "ZIR-303"): (30.0, 20.0, 5.0, 5.0),
+                     (14, "ZIR-304"): (30.0, 80.0, 5.0, 5.0)},
+            pages_by_sheet={"301": 13, "302": 14})
+        self.assertEqual([p.subject_id for p in f.places],
+                         ["ZIR-301", "ZIR-302", "ZIR-303", "ZIR-304"])
+        self.assertEqual([(p.x, p.y) for p in f.places],
+                         [(10.0, 20.0), (10.0, 80.0), (30.0, 20.0), (30.0, 80.0)])
+        self.assertTrue(all(p.has_location for p in f.places))
+
+    def test_the_first_named_symbol_is_the_finding_itself(self):
+        """Not a place beside the primary -- the primary's own identity. Both
+        producers put it first, and appending it instead reported seventeen
+        places for sixteen symbols with a box drawn twice on the first."""
+        raw = self._raw(
+            location={"sheet": "232", "rung": 16, "page_index": 5},
+            evidence={"also_at": ["233-16"], "total_places": 2,
+                      "on": ["CBL-23215@232-16", "CBL-23315@233-16"]})
+        f = Finding.from_pydrc(
+            raw, extents={(5, "CBL-23215"): (1.0, 2.0, 3.0, 4.0)},
+            pages_by_sheet={"232": 5, "233": 6})
+        self.assertEqual(len(f.places), 2)
+        self.assertEqual(f.places[0].subject_id, "CBL-23215")
+        self.assertEqual((f.x, f.y), (1.0, 2.0))
+
+    def test_a_name_the_page_does_not_print_gets_no_box_not_a_wrong_one(self):
+        raw = self._raw(evidence={"also_at": ["233-16"], "total_places": 2,
+                                  "on": ["CBL-23215@232-16", "GHOST@233-16"]})
+        f = Finding.from_pydrc(raw, extents={}, pages_by_sheet={"232": 5,
+                                                                "233": 6})
+        self.assertEqual(f.places[1].subject_id, "GHOST")
+        self.assertFalse(f.places[1].has_location)
+        self.assertEqual(f.places[1].sheet, "233")
+
+    def test_a_finding_without_on_still_reads_its_places(self):
+        """`also_at` remains the universal shape; `on` is the finer spelling
+        where a producer offers it."""
+        raw = self._raw(evidence={"also_at": ["233-16", "234-16"],
+                                  "total_places": 3})
+        f = Finding.from_pydrc(raw, extents={},
+                               pages_by_sheet={"232": 5, "233": 6, "234": 7})
+        self.assertEqual([p.label for p in f.places],
+                         ["232-16", "233-16", "234-16"])
+
     def test_places_round_trip_through_the_sidecar(self):
         f = _rolled()
         again = Finding.from_dict(f.to_dict())
