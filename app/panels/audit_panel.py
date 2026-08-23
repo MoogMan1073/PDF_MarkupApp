@@ -333,7 +333,16 @@ class AuditPanel(QWidget):
         else:
             note = ("Advisory review — confirm each finding against the "
                     "governing standard.")
-            self.coverage_label.setText(f"{run.summary_line()}  {note}")
+            text = f"{run.summary_line()}  {note}"
+            # A run that recorded a problem says so here, beside the coverage
+            # sentence. These used to be kept in `errors` and displayed
+            # nowhere -- so a check that ran on the PDF alone because the
+            # imported drawings would not load read as an ordinary one.
+            # `blocked` already puts the first line in the summary.
+            rest = run.errors[1:] if run.blocked else list(run.errors)
+            if rest:
+                text += "\n" + "\n".join(rest)
+            self.coverage_label.setText(text)
 
         waived = sum(1 for f in all_findings if f.waived)
         by = {s: sum(1 for f in all_findings if f.severity == s and not f.waived)

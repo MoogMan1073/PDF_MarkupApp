@@ -36,6 +36,15 @@ class AuditResult:
         return [f for f in self.findings if not f.waived]
 
 
+def _one_line(e: Exception) -> str:
+    """An exception's text as one line.
+
+    Model validation reports each problem on its own line, and every place
+    these notices are read -- the panel header, a CSV cell -- is one line.
+    """
+    return " ".join(str(e).split())
+
+
 def user_pack_dirs() -> list:
     """Directories to search for rule packs besides the built-in ones.
 
@@ -101,17 +110,41 @@ def run_audit(pdf_path: str, sheet_labels: dict, sheet_sources: dict,
         if built is None:
             return AuditResult(cancelled=True)
 
+        # Enrich the plot-derived model with the imported source drawings.
+        # Read in two steps on purpose: loading the stored model cannot touch
+        # anything, so a stored blob that will not parse -- the overwhelmingly
+        # likely failure, and the only one measured -- leaves the plot-derived
+        # model pristine and its audit worth running. Merging enriches in
+        # place, so a failure part-way through leaves a model that is neither
+        # the plot's nor the source's, and auditing that is worse than not
+        # auditing at all.
+        #
+        # Both used to abort the whole run and report "Nothing to check." --
+        # 29 real findings and 1048 eligible checks thrown away because a
+        # separate stored blob was corrupt, with the reason recorded in
+        # `errors`, which nothing displayed.
+        notices = []
         if acade_model_json:
-            # Enrich the plot-derived model with the imported source drawings.
-            # The import is stored data, so a corrupt one degrades to an error
-            # in the run rather than a crash of it.
+            from pydrc.model import loads as load_model
             try:
-                from pydrc.adapters.acade_dxf import merge_models
-                from pydrc.model import loads as load_model
-                merge_models(built.model, load_model(acade_model_json))
+                acade = load_model(acade_model_json)
             except Exception as e:
-                return AuditResult(run=AuditRun(
-                    errors=[f"Imported project data could not be used: {e}"]))
+                acade = None
+                notices.append(
+                    "The imported source drawings could not be read, so this "
+                    "check ran on the PDF alone -- every rule that needs the "
+                    "source was skipped. Re-import the drawings and run it "
+                    f"again. ({_one_line(e)})")
+            if acade is not None:
+                try:
+                    from pydrc.adapters.acade_dxf import merge_models
+                    merge_models(built.model, acade)
+                except Exception as e:
+                    return AuditResult(run=AuditRun(errors=[
+                        "The imported source drawings could not be merged "
+                        "into the drawing, and the half-merged result is not "
+                        "safe to check. Re-import the drawings and run the "
+                        f"check again. ({_one_line(e)})"]))
 
         result = run_rules(built.model, packs,
                            disabled=set(disabled_rules or ()),
@@ -145,6 +178,6 @@ def run_audit(pdf_path: str, sheet_labels: dict, sheet_sources: dict,
         checked=int(summary.get("checked", 0)),
         skipped=int(summary.get("skipped", 0)),
         coverage=[Coverage.from_dict(c) for c in cov_rows],
-        errors=list((payload.get("run") or {}).get("errors") or []),
+        errors=notices + list((payload.get("run") or {}).get("errors") or []),
     )
     return AuditResult(findings=findings, run=run)
