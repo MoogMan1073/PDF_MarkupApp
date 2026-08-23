@@ -18,9 +18,16 @@ import os
 from ..audit.findings import DEFINITE, POTENTIAL, INFO, SEVERITY_LABELS
 
 # Deliberate wording: this is a review, not a determination of compliance.
-ADVISORY = ("Advisory review. Findings identify things to confirm against the "
-            "governing standard and the authority having jurisdiction. This "
-            "report is not a determination of compliance.")
+#
+# Held in two pieces because the HTML export bolds the lead and prints the rest
+# after it. It used to do that by slicing ADVISORY at a hand-counted offset,
+# which was one past the space -- so every HTML report ever exported opened with
+# "Advisory review. indings identify things to confirm...".
+ADVISORY_LEAD = "Advisory review."
+ADVISORY_BODY = ("Findings identify things to confirm against the governing "
+                 "standard and the authority having jurisdiction. This report "
+                 "is not a determination of compliance.")
+ADVISORY = f"{ADVISORY_LEAD} {ADVISORY_BODY}"
 
 NOT_CHECKED = ("A skipped item is not a passing item. The rules below could not "
                "run on part of the drawing; supply the missing data to check them.")
@@ -69,6 +76,20 @@ def _run(document):
     return getattr(document, "audit_run", None)
 
 
+def _problems(run) -> list:
+    """What went wrong during the run, for the reader of the report.
+
+    A run records these in ``errors`` and, until this existed, displayed them
+    in no format at all -- so a check that ran on the PDF alone because the
+    imported source drawings would not load produced a report indistinguishable
+    from one where they had. ``summary_line`` already carries the first line of
+    a blocked run.
+    """
+    if run is None:
+        return []
+    return list(run.errors[1:] if run.blocked else run.errors)
+
+
 def export_markdown(document, path: str, disabled=()) -> str:
     findings = _rows(document, disabled)
     run = _run(document)
@@ -78,6 +99,8 @@ def export_markdown(document, path: str, disabled=()) -> str:
         out += [f"**{off}**", ""]
     if run is not None:
         out += [f"**Coverage.** {run.summary_line()}", ""]
+        for problem in _problems(run):
+            out += [f"> **{problem}**", ""]
         if run.packs:
             out += [f"Rule packs: {', '.join(run.packs)}", ""]
 
@@ -103,9 +126,16 @@ def export_markdown(document, path: str, disabled=()) -> str:
         out.append("")
 
     if not findings:
-        out += ["No findings.", "",
-                "Read the coverage statement above before treating that as a "
-                "clean result.", ""]
+        # A blocked run has no findings because it did not look, which is not
+        # what "No findings" says to anyone reading it.
+        if run is not None and run.blocked:
+            out += ["## No findings were produced", "",
+                    "This report is not a result. The check did not run — see "
+                    "the coverage statement above.", ""]
+        else:
+            out += ["No findings.", "",
+                    "Read the coverage statement above before treating that "
+                    "as a clean result.", ""]
 
     # Gated on everything_accounted_for, not complete: a rule with nothing
     # eligible skips nothing, so `complete` is true of it, and this whole
@@ -155,6 +185,8 @@ def export_csv(document, path: str, disabled=()) -> str:
         if run is not None:
             w.writerow([])
             w.writerow(["Coverage", run.summary_line()])
+            for problem in _problems(run):
+                w.writerow(["Problem", problem])
             for cov in run.coverage:
                 if not cov.ran:
                     w.writerow(["", f"{cov.rule_id}: nothing to check against"])
@@ -204,13 +236,16 @@ def export_html(document, path: str, title: str = "", disabled=()) -> str:
            f"<title>Design rule check — {esc(name)}</title>",
            f"<style>{_CSS}</style></head><body><div class='wrap'>",
            f"<h1>Design rule check</h1><p class='sub'>{esc(name)}</p>",
-           f"<div class='note'><strong>Advisory review.</strong> {esc(ADVISORY[18:])}</div>"]
+           f"<div class='note'><strong>{esc(ADVISORY_LEAD)}</strong> "
+           f"{esc(ADVISORY_BODY)}</div>"]
 
     off = _turned_off(disabled)
     if off:
         out.append(f"<div class='note'>{esc(off)}</div>")
     if run is not None:
         out.append(f"<p><strong>Coverage.</strong> {esc(run.summary_line())}</p>")
+        for problem in _problems(run):
+            out.append(f"<div class='note'><strong>{esc(problem)}</strong></div>")
 
     shown = False
     for severity in _ORDER:
@@ -239,8 +274,13 @@ def export_html(document, path: str, title: str = "", disabled=()) -> str:
             out.append("</div>")
 
     if not shown:
-        out.append("<h2>No findings</h2><p>Read the coverage statement above "
-                   "before treating that as a clean result.</p>")
+        if run is not None and run.blocked:
+            out.append("<h2>No findings were produced</h2><p>This report is "
+                       "not a result. The check did not run — see the "
+                       "coverage statement above.</p>")
+        else:
+            out.append("<h2>No findings</h2><p>Read the coverage statement "
+                       "above before treating that as a clean result.</p>")
 
     if run is not None:
         out.append("<h2>Coverage</h2>")

@@ -409,12 +409,28 @@ class AuditRun:
         """Nothing skipped AND nothing left idle: the only true clean bill."""
         return self.complete and not self.idle_rules
 
+    @property
+    def blocked(self) -> bool:
+        """The run produced nothing, and said why.
+
+        Distinct from a run that produced nothing because there was nothing to
+        produce, and distinct from a completed run that recorded a non-fatal
+        error alongside real coverage.
+        """
+        return bool(self.errors) and not self.eligible
+
     def summary_line(self) -> str:
         """The one sentence the panel header shows.
 
         Says what was *not* checked first when anything was missed, because
         that is the part a reader is most likely to assume away.
         """
+        if self.blocked:
+            # Never "Nothing to check." here. That sentence describes a drawing
+            # with nothing in it, and this is a check that could not run -- the
+            # exact confusion the coverage accounting exists to prevent,
+            # arriving in the one line most likely to be read.
+            return "The check could not be run: " + self.errors[0]
         if not self.eligible:
             return "Nothing to check."
         idle = self.idle_rules

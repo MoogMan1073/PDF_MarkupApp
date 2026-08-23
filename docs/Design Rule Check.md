@@ -97,6 +97,19 @@ drawn as plain text where an intelligent symbol belongs — each becomes a
 finding a drafter can act on, which is how the source data gets better over
 time.
 
+> [!warning] When the stored import can't be read
+> The imported drawings are kept in the markup database. If that copy is
+> damaged and won't load, the check still runs — on the PDF alone — and says
+> so at the top of the panel and of every exported report: *"The imported
+> source drawings could not be read, so this check ran on the PDF alone."*
+> Every rule that needs the source is then listed as having had nothing to
+> check against. Re-import the drawings and run the check again to get those
+> rules back.
+>
+> The findings you do get are real; they are the same ones you would get
+> having never imported anything. What you are missing is the electrical half
+> — so read the notice before treating the result as the whole picture.
+
 ## What the title block claims
 
 A title block states its own sheet number and the number of the sheet after it.
