@@ -1322,6 +1322,11 @@ class MainWindow(QMainWindow):
                 self, "Already open",
                 f"“{os.path.basename(path)}” is already open.")
             return
+        # Opening another file drops this one's unsaved marks exactly as
+        # finally as closing the window does. Asked before anything is built,
+        # so Cancel leaves no half-opened document behind.
+        if not self._ok_to_lose_unsaved("Open another file"):
+            return
         # Build the new document BEFORE closing the old one. Closing first meant
         # a failed open (corrupt/locked/deleted file) returned with the window
         # still pointed at a *closed* Document — blank pages, "closed database"
@@ -1374,14 +1379,55 @@ class MainWindow(QMainWindow):
             f"Opened {os.path.basename(path)} ({doc.page_count} pages, "
             f"{len(doc.store.all())} existing marks)", 6000)
 
-    def save_markup(self):
+    def save_markup(self) -> bool:
+        """Write the markup out. Returns whether it actually landed on disk.
+
+        The return value matters to :meth:`_ok_to_lose_unsaved`, which offers
+        Save as the way *out* of losing work -- so it has to know the
+        difference between a save and a save that raised.
+        """
         if self.document is None:
-            return
+            return False
         try:
             out = self.document.save()
-            self.statusBar().showMessage(f"Saved {os.path.basename(out)}", 5000)
         except Exception as e:
             QMessageBox.warning(self, "Save failed", str(e))
+            return False
+        self.statusBar().showMessage(f"Saved {os.path.basename(out)}", 5000)
+        return True
+
+    def _ok_to_lose_unsaved(self, title: str) -> bool:
+        """Ask before dropping marks that only File > Save would have kept.
+
+        True means go ahead. The window used to close with no question and no
+        save, so every mark drawn since the last save went with it, silently,
+        on every sheet -- the one failure a markup tool does not get to have.
+
+        Only the marks and the wire/component ticks hang on this: findings,
+        waivers, sheet numbers and roles all write through as they change.
+        """
+        doc = self.document
+        if doc is None or not doc.dirty:
+            return True
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle(title)
+        box.setText(f"“{os.path.basename(doc.path)}” has unsaved markup.")
+        box.setInformativeText(
+            "Marks are written to disk when you save. Discarding loses every "
+            "change made since the last save.")
+        box.setStandardButtons(QMessageBox.Save | QMessageBox.Discard
+                               | QMessageBox.Cancel)
+        box.setDefaultButton(QMessageBox.Save)
+        choice = box.exec()
+        if choice == QMessageBox.Discard:
+            return True
+        if choice != QMessageBox.Save:
+            return False                  # Cancel, or the dialog was dismissed
+        # A save that raised (an unusable sidecar, a read-only folder) is not a
+        # save. Stay where we are rather than throw the work away on their
+        # behalf -- Discard is still on the box if that is really what they mean.
+        return self.save_markup()
 
     def save_as_fork(self):
         """Fork the current markup to a new working file and switch to editing it."""
@@ -2276,6 +2322,11 @@ class MainWindow(QMainWindow):
         self._init_dock_sizes()
 
     def closeEvent(self, event):
+        # First, before a single panel is shut down or a handle released: if
+        # they cancel, the window has to still be a working window.
+        if not self._ok_to_lose_unsaved("Close"):
+            event.ignore()
+            return
         self._save_ui_state()            # remember the dock layout + geometry
         try:
             self.wire_panel.shutdown()   # stop any running extraction thread
