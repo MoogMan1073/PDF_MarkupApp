@@ -543,20 +543,33 @@ def apply_waivers(findings, waivers: dict) -> list:
 _DRAWING_SPACE_KINDS = frozenset({"signal_arrow"})
 
 
-def _subjects_by_place(evidence: dict) -> dict:
-    """``{"232-16": "CBL-23215"}`` from the rule library's ``on`` evidence.
+def _named_places(evidence: dict) -> list:
+    """``[("CBL-23215", "232-16"), ...]`` from the rule library's ``on``.
 
     Rules that roll several symbols into one finding list them as
     ``TAG@sheet-rung``, which is what lets a place be outlined around the tag
-    it is about rather than marked vaguely on the sheet. Not every rolled-up
-    rule writes it -- the engine's own rollup names places without naming
-    symbols -- so this is an improvement where present, never a requirement.
+    it is about rather than marked vaguely on the sheet.
+
+    A list of pairs, not a dict keyed by place: a place is a sheet and a rung,
+    so symbols with no rung all share their sheet's label, and keeping one tag
+    per place threw the rest away. Sixteen field instruments across two sheets
+    came back as two boxes when the drawing gives sixteen positions.
     """
-    out = {}
+    out, seen = [], set()
     for entry in evidence.get("on") or ():
         tag, sep, place = str(entry).rpartition("@")
-        if sep and tag and place:
-            out.setdefault(place, tag)
+        tag, place = tag.strip(), place.strip()
+        if sep and tag and place and (tag, place) not in seen:
+            seen.add((tag, place))
+            out.append((tag, place))
+    return out
+
+
+def _first_tag_by_place(named: list) -> dict:
+    """The tag to fall back on for a place named without one."""
+    out = {}
+    for tag, place in named:
+        out.setdefault(place, tag)
     return out
 
 
@@ -569,7 +582,8 @@ def _places_from(evidence, sheet, rung, page, x, y, w, h, subject_id,
     aggregate internally write the same key so a consumer reads one shape
     either way. Anything else is a bonus.
     """
-    tags = _subjects_by_place(evidence)
+    named = _named_places(evidence)
+    tags = _first_tag_by_place(named)
     primary = Place(sheet=sheet, rung=rung if rung is None else int(rung),
                     page=page, x=x, y=y, w=w, h=h, subject_id=subject_id)
     # A rolled-up finding's subject is the thing repeated -- a wire number, a
@@ -584,6 +598,44 @@ def _places_from(evidence, sheet, rung, page, x, y, w, h, subject_id,
             (primary.x, primary.y, primary.w, primary.h) = (
                 float(box[0]), float(box[1]), float(box[2]), float(box[3]))
     places = [primary]
+    # `on` names a symbol per place and `also_at` names places alone, so a
+    # finding carrying both is read from `on`: it is the same set of places,
+    # spelled finely enough to tell two symbols on one rung-less sheet apart.
+    # Each entry still has to resolve its own box -- a name the page does not
+    # print gets a place with no location, which the overlay skips and the
+    # report renders as the sheet. A place is never invented, only named.
+    if named:
+        rest = named
+        # The first entry names the symbol the finding opens at -- both
+        # producers put it there, the engine's rollup by construction and an
+        # aggregating check by passing that symbol as the violation's entity.
+        # It is the primary, so it takes over the primary's identity instead
+        # of being appended beside it; without this a finding about sixteen
+        # symbols reports seventeen places, the extra one a second box drawn
+        # exactly on the first. Guarded on the place matching, so a producer
+        # that ever breaks the contract loses the naming rather than the box.
+        if named[0][1] == primary.label:
+            tag = named[0][0]
+            rest = named[1:]
+            box = extents.get((int(page), tag)) if page is not None else None
+            primary.subject_id = tag
+            if box and not primary.has_location:
+                (primary.x, primary.y, primary.w, primary.h) = (
+                    float(box[0]), float(box[1]), float(box[2]), float(box[3]))
+        for tag, label in rest:
+            at_sheet, at_rung = parse_place(label)
+            at_page = pages_by_sheet.get(at_sheet)
+            box = extents.get((int(at_page), tag)) if at_page is not None else None
+            places.append(Place(
+                sheet=at_sheet, rung=at_rung,
+                page=int(at_page) if at_page is not None else 0,
+                x=float(box[0]) if box else 0.0,
+                y=float(box[1]) if box else 0.0,
+                w=float(box[2]) if box else 0.0,
+                h=float(box[3]) if box else 0.0,
+                subject_id=tag))
+        return places
+
     seen = {primary.label} if primary.label else set()
     for text in evidence.get("also_at") or ():
         label = str(text).strip()
