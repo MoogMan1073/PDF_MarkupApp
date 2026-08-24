@@ -69,9 +69,9 @@ The **Comments** panel docks on the right of the Viewer — see
 - **File ▸ Export annotated PDF…** writes a standalone annotated copy anywhere.
 - **File ▸ Print…** (`Ctrl+P`) prints the drawing — with its marks — to any
   installed printer through the system print dialog, with page-range selection.
-  Pages are rasterized at 600 dpi and drawn 1:1 into the printer's page
-  geometry — never enlarged to fit — so fine line work and small title-block
-  text print crisply. A progress dialog (with **Cancel**) shows the job going.
+  Pages are rasterized at the printer's own resolution (at least 600 dpi) and
+  handed to the driver at full detail — never enlarged to fit — so fine line
+  work and small title-block text print crisply. A progress dialog (with **Cancel**) shows the job going.
 - **File ▸ Print preview…** shows the pages first and has an **Include markups**
   toggle (on by default) so you can print either the marked-up or a clean drawing.
 
