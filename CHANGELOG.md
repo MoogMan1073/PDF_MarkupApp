@@ -4,6 +4,74 @@ All notable changes to **DSI Redline** are documented here. Versions are tagged
 `vX.Y.Z`; each tag triggers the Windows build that publishes the installer and a
 portable zip to the matching GitHub release.
 
+## v1.5.0
+
+Design rule checking, taken through two drawing sets it had never seen. Most
+of this release is the audit growing up: findings that land where they belong,
+say what they mean once instead of fifty times, and never claim to have checked
+something they did not.
+
+- **Your work is no longer lost when you close.** `Document.mark_dirty()`
+  existed with no caller, so the document was *structurally* never dirty —
+  nothing ever set the flag, the close path never read it, and there is no
+  autosave. Measured: fifty marks across fourteen sheets, close, reopen, **zero
+  survived**, with no prompt and no warning. Closing the window or opening
+  another drawing now asks **Save / Discard / Cancel**, and Cancel leaves a
+  working window rather than a half-torn-down one. Which wires and components
+  are ticked for export counts as unsaved work too.
+
+- **A sheet is read from its drawing number, not its revision.** On a set whose
+  drawing numbers use an underscore (`EL2503311_011`) rather than a hyphen, the
+  confident strategy matched nothing, the keyword strategy only knew
+  value-to-the-right layouts, and everything fell through to a corner heuristic
+  that takes the *smallest* number in the title block — which is the revision.
+  Every resolvable sheet came back numbered **"0"**, with thirty-three findings
+  about a set whose only defect was being at revision zero. All twenty-eight
+  sheets now resolve to their true numbers at full confidence, and a number
+  belonging to a `REV` cell is never a candidate.
+
+- **Findings open on the page they are actually on.** A source drawing numbers
+  its sheets by position in the DXF package; the PDF numbers them by page. Both
+  landed on one field, so a finding followed the wrong ordinal — invisible on a
+  set where the two happen to agree, and **32 of 60 findings on the wrong page**
+  on one where they do not.
+
+- **A box on every symbol a finding names.** A place is a sheet and a rung, so
+  symbols with no rung shared one — sixteen field instruments across two sheets
+  drew **two** boxes. Now one per symbol, and the same fix recovered boxes the
+  demo set had been losing all along (three fuses on a terminal strip beside
+  the one that did get a box).
+
+- **A refused import is not a clean drawing.** A damaged stored import
+  abandoned the whole audit and reported **"Nothing to check."** — 29 findings
+  and 1048 eligible checks thrown away because a separate blob was corrupt,
+  with the reason recorded in a field nothing displayed. The check now runs on
+  the PDF alone and says so, at the top of the panel and of every export.
+
+- **Rules say things once.** Instrument tags following FAMILY-LOOP numbering
+  (48 rows → 14, one per family), protective devices with no part assigned (50
+  → 2, split so that *"32 fuses carry neither a catalog assignment nor a
+  rating"* is not buried among breakers that at least have ratings), and signal
+  arrows with no cross-reference (61 rows → 1 — and that one reports **121**
+  arrows, because two arrows on a rung used to collapse and sixty were never
+  reported at all).
+
+- **Two rules stopped reporting correct drawings as defects.** Plain text on a
+  PLC I/O sheet is how an I/O sheet is drawn, not a missing symbol (70
+  findings, none of them on a schematic sheet). A terminal landing on a supply
+  bus with no wire number does not contradict a connection claim — an absence
+  of a number is not a contradicting number (5 of 9 checked symbols).
+
+- **Reports say which rules produced them.** Every export now carries
+  `Rule packs: drc-base@1.34.0` — a footer in HTML, a line in Markdown, a row
+  in CSV. The rule pack's version moves with every rule change, so two reports
+  that disagree about a finding can be told apart.
+
+- **Turning a rule off hides its boxes and its report lines too**, a withdrawn
+  severity override puts the severity back, and the "PyDRC is not installed"
+  dialog names the interpreter it searched and the exact command to install
+  into it.
+
 ## v1.4.0
 
 - **A real Find (`Ctrl+F`).** The search bar grew into a search panel — still

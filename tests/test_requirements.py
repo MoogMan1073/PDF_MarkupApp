@@ -43,3 +43,42 @@ class TestRequirements(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestVersionIsStatedOnce(unittest.TestCase):
+    """The installer carries its own copy of the version, and it must agree.
+
+    `app/__init__.py` is what the About box and the audit report show;
+    `packaging/installer.iss` is what names the setup executable and what
+    Windows records in Add/Remove Programs. They are two files, so they drift
+    -- the installer sat at 1.4.0 while the app moved on, which would have
+    shipped `DSI_Redline_Setup_1.4.0.exe` containing 1.5.0.
+
+    A release is tagged `vX.Y.Z` and the tag triggers the build, so a third
+    copy of the number lives in the tag. This test cannot see that one; it can
+    at least stop the two in the tree disagreeing.
+    """
+
+    def _installer_version(self):
+        import re
+        path = os.path.join(HERE, "packaging", "installer.iss")
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            m = re.search(r'#define\s+MyAppVersion\s+"([^"]+)"', fh.read())
+        self.assertIsNotNone(m, "installer.iss no longer defines MyAppVersion")
+        return m.group(1)
+
+    def test_the_installer_and_the_app_agree(self):
+        from app import __version__
+        self.assertEqual(
+            self._installer_version(), __version__,
+            "packaging/installer.iss and app/__init__.py disagree about the "
+            "version; bump both in the same commit.")
+
+    def test_the_changelog_documents_the_current_version(self):
+        from app import __version__
+        path = os.path.join(HERE, "CHANGELOG.md")
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+        self.assertIn(f"## v{__version__}", text,
+                      f"CHANGELOG.md has no section for v{__version__}; the "
+                      "changelog is the release notes for the tag.")
