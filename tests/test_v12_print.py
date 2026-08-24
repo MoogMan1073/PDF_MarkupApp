@@ -431,6 +431,106 @@ class TestPrint(unittest.TestCase):
         win._print_to(printer, on_page=lambda d, t: (totals.append(t) or True))
         self.assertEqual(totals, [3, 3, 3])
 
+    def test_render_dpi_uses_the_device_not_the_viewport(self):
+        # On Windows the Win32 print engine pins the paint viewport to the
+        # screen's 96 dpi whatever setResolution() asked for, so the render
+        # dpi must come from the device's physical resolution instead —
+        # measured from a real Microsoft Print to PDF export that came out at
+        # exactly 96 dpi on a 17x11 sheet.
+        from app.main_window import MainWindow
+
+        class Fake:
+            def __init__(self, logical, phys):
+                self._l, self._p = logical, phys
+            def resolution(self): return self._l
+            def physicalDpiX(self): return self._p
+            def physicalDpiY(self): return self._p
+
+        dpi = MainWindow._print_render_dpi
+        self.assertEqual(dpi(Fake(96, 600)), 600)     # the Windows situation
+        self.assertEqual(dpi(Fake(96, 1200)), 1200)   # high-res driver
+        self.assertEqual(dpi(Fake(96, 0)), 600)       # unknown device: floor
+        self.assertEqual(dpi(Fake(96, 2400)), 1200)   # photo driver: cap
+        # engines that honour the logical resolution render 1:1 with it; the
+        # Qt PDF engine claims a flat 1200 physical, which must NOT win here
+        self.assertEqual(dpi(Fake(600, 1200)), 600)
+        self.assertEqual(dpi(Fake(1200, 1200)), 1200)
+
+    @needs_native_print
+    def test_screen_resolution_viewport_still_prints_at_device_dpi(self):
+        # End-to-end regression for the Windows blur: a printer whose logical
+        # viewport is screen resolution but whose device is 600 dpi must still
+        # place a ~600 dpi raster on the sheet — not a 96 dpi one stretched.
+        class ScreenPinned(QPrinter):
+            def __init__(self):
+                super().__init__(QPrinter.ScreenResolution)
+                self.setResolution(96)          # what Windows paints at
+            def physicalDpiX(self): return 600  # what the device can do
+            def physicalDpiY(self): return 600
+
+        win, tmp = self._win_with(pages=1)
+        out = os.path.join(tmp, "winlike.pdf")
+        printer = ScreenPinned()
+        printer.setOutputFormat(QPrinter.PdfFormat)
+        printer.setOutputFileName(out)
+        win._print_to(printer)
+        chk = fitz.open(out)
+        try:
+            infos = chk[0].get_image_info()
+            self.assertTrue(infos, "no raster was placed on the page")
+            im = max(infos, key=lambda i: i["width"] * i["height"])
+            bb = fitz.Rect(im["bbox"])
+            effective_dpi = im["width"] / (bb.width / 72.0)
+            self.assertGreater(effective_dpi, 550)     # was exactly 96
+            # and the page still fills the sheet rather than shrinking
+            page_rect = chk[0].rect
+            self.assertGreater(bb.width / page_rect.width, 0.5)
+        finally:
+            chk.close()
+
+    def test_bands_join_when_raster_outruns_the_viewport(self):
+        # The scaled path (device dpi above the logical viewport, i.e. the
+        # Windows fix): banded output must match a single-shot render of the
+        # same page. Band placement uses shared-edge float rects, so a band
+        # shifted by even one raster row would blow these thresholds apart.
+        from PySide6.QtCore import QRect
+        from PySide6.QtGui import QImage, QPainter
+        from app.main_window import MainWindow
+        win, tmp = self._win_with(pages=1)
+        src = os.path.join(tmp, "dense.pdf")
+        d = fitz.open(); pg = d.new_page(width=612, height=792)
+        for i in range(0, 780, 3):              # dense: any seam would show
+            pg.draw_line((20, i), (592, i + 2), width=0.3)
+        d.save(src); d.close()
+
+        def render(band_px):
+            doc = fitz.open(src)
+            target = QRect(0, 0, 768, 994)      # a 96 dpi Letter viewport
+            canvas = QImage(768, 994, QImage.Format_RGB888)
+            canvas.fill(0xFFFFFFFF)
+            painter = QPainter(canvas)
+            keep = MainWindow._PRINT_BAND_PX
+            MainWindow._PRINT_BAND_PX = band_px
+            try:
+                MainWindow._print_page(painter, doc[0], target, dpi=600)
+            finally:
+                MainWindow._PRINT_BAND_PX = keep
+                painter.end(); doc.close()
+            return canvas
+
+        one, many = render(10 ** 9), render(400_000)
+        worst_row = 0
+        total = 0
+        for y in range(one.height()):
+            a, b = bytes(one.constScanLine(y)), bytes(many.constScanLine(y))
+            if a != b:
+                deltas = [abs(p - q) for p, q in zip(a, b)]
+                worst_row = max(worst_row, sum(deltas) / len(deltas))
+                total += sum(deltas)
+        mean = total / (one.height() * one.width() * 3)
+        self.assertLess(mean, 2.0, "banded render diverged from single-shot")
+        self.assertLess(worst_row, 30.0, "a band is visibly out of place")
+
     @needs_native_print
     def test_new_printer_avoids_highres_query(self):
         # HighResolution (1200 dpi) queries the printer at construction and can

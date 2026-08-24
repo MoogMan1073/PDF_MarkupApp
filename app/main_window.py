@@ -1513,17 +1513,12 @@ class MainWindow(QMainWindow):
         doesn't contact the printer; we then raise the logical DPI so the output
         still prints at a decent resolution.
 
-        600 dpi is the working resolution for the page raster — enough for the
-        fine line work and small text on an electrical drawing. Pages are
-        rasterised from the printer's own paint viewport, so the bitmap matches
-        the geometry it is drawn into exactly and is never enlarged to fill the
-        sheet (which is what used to make prints soft).
-
-        Note this 600 is the *app's* resolution, not the driver's. In
-        ScreenResolution mode Qt keeps the resolution we set, so the quality
-        setting in the print dialog does not raise it — 600 dpi is the ceiling
-        on how much detail we hand the driver, which then scales that raster to
-        its own device DPI.
+        setResolution(600) sets the *logical* coordinate space to the 600 dpi
+        working resolution where the engine honours it (Qt's PDF and CUPS
+        engines do). The raster resolution itself is chosen per job by
+        ``_print_render_dpi`` — on Windows the Win32 engine ignores this call
+        for paint metrics and pins the viewport to screen dpi, which is why
+        the render dpi must never be derived from the viewport.
         """
         from PySide6.QtPrintSupport import QPrinter
         printer = QPrinter(QPrinter.ScreenResolution)
@@ -1647,9 +1642,11 @@ class MainWindow(QMainWindow):
                         break
                     if painter is None:
                         painter = QPainter(printer)
+                        dpi = self._print_render_dpi(printer)
                     elif done:
                         printer.newPage()
-                    self._print_page(painter, work[i], painter.viewport())
+                    self._print_page(painter, work[i], painter.viewport(),
+                                     dpi=dpi)
                     done += 1
             finally:
                 if painter is not None:
@@ -1657,6 +1654,43 @@ class MainWindow(QMainWindow):
             return done
         finally:
             work.close()
+
+    @staticmethod
+    def _print_render_dpi(printer) -> int:
+        """The dpi pages are rasterised at for this print job.
+
+        Never inferred from the paint viewport. On Windows the Win32 print
+        engine in ScreenResolution mode pins the painter's logical metrics to
+        the *screen* dpi (96) no matter what setResolution() asked for — that
+        call only reaches the driver's DEVMODE — so "render 1:1 with the
+        viewport" faithfully produced 96 dpi pages that GDI then stretched
+        ~6x onto the sheet. Verified from a Microsoft Print to PDF export:
+        one 1573x1018 raster on a 17x11 sheet, exactly 96 dpi.
+
+        The device's *physical* dpi is the printer DC's true resolution in
+        every mode, so render at that — floored at the app's 600 dpi working
+        resolution, and bounded so a 2400 dpi photo driver can't demand an
+        absurd raster.
+        """
+        phys = logical = 0
+        try:
+            phys = max(int(printer.physicalDpiX() or 0),
+                       int(printer.physicalDpiY() or 0))
+        except Exception:
+            pass
+        try:
+            logical = int(printer.resolution() or 0)
+        except Exception:
+            pass
+        if logical >= 600:
+            # the engine honours the working resolution (Qt's PDF/CUPS path):
+            # render 1:1 with it. Don't chase phys here — Qt's PDF engine
+            # reports a flat 1200 dpi physical whatever was asked for, which
+            # would quadruple every spool for no visible gain.
+            return min(logical, 1200)
+        # a low logical resolution is the screen-pinned Windows viewport:
+        # take the device's own dpi, floored at the 600 working resolution
+        return max(600, min(phys, 1200))
 
     # One rasterised band is capped at this many pixels, so peak memory stays
     # bounded no matter how big the sheet or how high the driver's dpi — an
@@ -1709,21 +1743,25 @@ class MainWindow(QMainWindow):
                 int(round((target.height() - h) / 2.0)))
 
     @classmethod
-    def _print_page(cls, painter, page, target):
+    def _print_page(cls, painter, page, target, dpi=None):
         """Draw one page (with its marks) onto the printer's viewport.
 
-        The page is rasterised at the *device's own* resolution and blitted 1:1.
-        Rasterising at a fixed dpi relative to the source page and then scaling
-        the result up to the sheet is what made prints look soft — and it made
-        asking the driver for higher quality actively worse, since that only
-        enlarged the same small bitmap further.
+        The page is rasterised at ``dpi`` (see ``_print_render_dpi``) and drawn
+        into the *logical* target rect. The two are deliberately decoupled: the
+        raster carries the detail, the logical rect only says where it lands,
+        and the print engine passes the full-resolution pixels through — the
+        PDF engine embeds them, GDI stretches them in device space at the
+        driver's real resolution. Sizing the raster to the paint viewport
+        instead is what silently produced 96 dpi prints on Windows, where the
+        viewport is screen-resolution whatever the device can do.
 
-        Tall pages are rasterised in horizontal bands so the peak bitmap stays
-        bounded (see ``_PRINT_BAND_PX``) without giving up any resolution.
+        With ``dpi=None`` the raster simply matches the logical rect pixel for
+        pixel. Tall pages are rasterised in horizontal bands so the peak
+        bitmap stays bounded (see ``_PRINT_BAND_PX``) at no resolution cost.
         """
         import fitz
         from PySide6.QtGui import QImage, QPainter
-        from PySide6.QtCore import QPoint, QRectF
+        from PySide6.QtCore import QRectF
         r = page.rect
         scale, w, h, x0, y0 = cls._print_fit(r, target)
         if scale <= 0:
@@ -1748,12 +1786,27 @@ class MainWindow(QMainWindow):
                 painter.drawImage(QRectF(x0, y0, w, h), img)
                 return
 
-        mat = fitz.Matrix(scale, scale)
+        # raster pixels per PDF point: enough that the page lands on paper at
+        # ``dpi``, independent of the viewport's own (possibly screen) density
+        logical = 0
+        try:
+            logical = int(painter.device().logicalDpiX() or 0)
+        except Exception:
+            pass
+        if dpi and logical > 0:
+            s = scale * float(dpi) / float(logical)
+        else:
+            s = scale                     # raster == logical px
+        mat = fitz.Matrix(s, s)
         origin = (r * mat).irect          # where the whole page starts, scaled
-        band_h = max(1, min(h, int(cls._PRINT_BAND_PX // w)))
+        W = max(1, origin.width)
+        H = max(1, origin.height)
+        ratio = h / float(H)              # logical units per raster row
+        band_rows = max(1, min(H, int(cls._PRINT_BAND_PX // W)))
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
         y = 0
-        while y < h:
-            rows = min(band_h, h - y)
+        while y < H:
+            rows = min(band_rows, H - y)
             # Render a few rows beyond the band and then throw them away. The
             # renderer antialiases against the edge of the clip, so a row sitting
             # right on a band boundary comes out lighter than it should — which
@@ -1761,11 +1814,11 @@ class MainWindow(QMainWindow):
             # rows well inside the clip are kept, so every row is rendered
             # exactly as it would be in a single full-page pass.
             top_px = max(0, y - cls._BAND_MARGIN)
-            bot_px = min(h, y + rows + cls._BAND_MARGIN)
+            bot_px = min(H, y + rows + cls._BAND_MARGIN)
             pm = page.get_pixmap(
                 matrix=mat, alpha=False, annots=True,
-                clip=fitz.Rect(r.x0, r.y0 + top_px / scale,
-                               r.x1, r.y0 + bot_px / scale))
+                clip=fitz.Rect(r.x0, r.y0 + top_px / s,
+                               r.x1, r.y0 + bot_px / s))
             # samples_mv is a view on the pixmap's own buffer rather than a copy
             # of it, and the single copy() below both trims the band and detaches
             # it — so one band costs one extra bitmap, not three.
@@ -1777,8 +1830,16 @@ class MainWindow(QMainWindow):
             off = min(max(0, y - (pm.y - origin.y0)), max(0, img.height() - 1))
             take = min(rows, img.height() - off)
             if take > 0:
-                painter.drawImage(QPoint(x0 + pm.x - origin.x0, y0 + y),
-                                  img.copy(0, off, img.width(), take))
+                # Band edges share the *identical* float expression
+                # (y0 + K * ratio), so however the engine rounds logical to
+                # device coordinates, adjacent bands round together — no
+                # hairline gap or double-drawn seam between them.
+                t0 = y0 + y * ratio
+                t1 = y0 + (y + take) * ratio
+                painter.drawImage(
+                    QRectF(x0 + (pm.x - origin.x0) * ratio, t0,
+                           img.width() * ratio, t1 - t0),
+                    img.copy(0, off, img.width(), take))
             y += rows
 
     def open_settings(self):

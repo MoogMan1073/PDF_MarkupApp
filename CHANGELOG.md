@@ -4,6 +4,17 @@ All notable changes to **DSI Redline** are documented here. Versions are tagged
 `vX.Y.Z`; each tag triggers the Windows build that publishes the installer and a
 portable zip to the matching GitHub release.
 
+## v1.5.1
+
+- **Windows prints are actually sharp now.** The v1.3.1 print fix rendered
+  each page "1:1 with the printer's viewport" — but on Windows, Qt pins that
+  viewport to the **screen's** 96 dpi no matter what resolution the app asks
+  for, so prints were still a 96 dpi image stretched onto the sheet (confirmed
+  from a Microsoft Print to PDF export). Pages are now rasterized at the
+  printer's **real device resolution** (at least 600 dpi, at most 1200) and the
+  full-detail bitmap is handed to the driver, independent of the viewport's
+  density. Linux/macOS output is unchanged.
+
 ## v1.5.0
 
 Design rule checking, taken through two drawing sets it had never seen. Most
