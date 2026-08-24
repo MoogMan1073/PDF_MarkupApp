@@ -531,6 +531,159 @@ class TestPrint(unittest.TestCase):
         self.assertLess(mean, 2.0, "banded render diverged from single-shot")
         self.assertLess(worst_row, 30.0, "a band is visibly out of place")
 
+    # -- minimum line weight -------------------------------------------------
+
+    @staticmethod
+    def _hairline_px(path, dpi=600):
+        """Thickness in device px of the single hairline in a probe PDF."""
+        import numpy as np
+        doc = fitz.open(path)
+        try:
+            pm = doc[0].get_pixmap(matrix=fitz.Matrix(dpi / 72, dpi / 72),
+                                   alpha=False)
+            a = np.frombuffer(pm.samples, dtype=np.uint8)
+            a = a.reshape(pm.height, pm.width, 3).mean(axis=2)
+        finally:
+            doc.close()
+        return int((a[:, a.shape[1] // 2] < 200).sum())
+
+    def _hairline_pdf(self, tmp, name="hair.pdf"):
+        # width 0.12 pt: a real hairline. (Note width=0.0 in PyMuPDF means the
+        # *default* 1 pt, not a hairline — it would mask the whole effect.)
+        p = os.path.join(tmp, name)
+        d = fitz.open(); pg = d.new_page(width=612, height=792)
+        pg.draw_line((72, 300), (540, 300), width=0.12)
+        pg.insert_text((72, 500), "WIRE 300801", fontsize=5)
+        d.save(p); d.close()
+        return p
+
+    def test_min_line_width_thickens_only_below_the_floor(self):
+        # The floor lifts hairlines and leaves heavier geometry alone.
+        from app.main_window import MainWindow
+        tmp = tempfile.mkdtemp()
+        p = os.path.join(tmp, "mixed.pdf")
+        d = fitz.open(); pg = d.new_page(width=612, height=792)
+        pg.draw_line((72, 200), (540, 200), width=0.12)   # hairline
+        pg.draw_line((72, 400), (540, 400), width=2.0)    # already heavy
+        d.save(p); d.close()
+
+        def widths():
+            import numpy as np
+            doc = fitz.open(p)
+            try:
+                pm = doc[0].get_pixmap(matrix=fitz.Matrix(600 / 72, 600 / 72),
+                                       alpha=False)
+                a = np.frombuffer(pm.samples, dtype=np.uint8)
+                a = a.reshape(pm.height, pm.width, 3).mean(axis=2)
+            finally:
+                doc.close()
+            col = a[:, a.shape[1] // 2] < 200
+            runs, n = [], 0
+            for v in col:
+                if v:
+                    n += 1
+                elif n:
+                    runs.append(n); n = 0
+            if n:
+                runs.append(n)
+            return runs
+
+        plain = widths()
+        with MainWindow._min_line_width(0.75 / 72 * 600):     # Heavy, in px
+            boosted = widths()
+        self.assertEqual(len(plain), len(boosted))
+        self.assertGreater(boosted[0], plain[0], "hairline was not thickened")
+        self.assertEqual(boosted[1], plain[1], "heavy line must be untouched")
+
+    def test_min_line_width_leaves_text_alone(self):
+        # Thickening strokes must not blob small title-block text.
+        import numpy as np
+        from app.main_window import MainWindow
+        tmp = tempfile.mkdtemp()
+        p = self._hairline_pdf(tmp)
+
+        def text_ink():
+            doc = fitz.open(p)
+            try:
+                pm = doc[0].get_pixmap(matrix=fitz.Matrix(600 / 72, 600 / 72),
+                                       alpha=False)
+                a = np.frombuffer(pm.samples, dtype=np.uint8)
+                a = a.reshape(pm.height, pm.width, 3).mean(axis=2)
+            finally:
+                doc.close()
+            band = a[int(492 / 72 * 600):int(504 / 72 * 600)]
+            return int((band < 128).sum())
+
+        plain = text_ink()
+        with MainWindow._min_line_width(0.75 / 72 * 600):
+            self.assertEqual(text_ink(), plain)
+
+    def test_min_line_width_is_always_restored(self):
+        # It is a *global* MuPDF setting: leaking it would silently thicken the
+        # on-screen viewer too, so it must be restored even when rendering
+        # raises.
+        from app.main_window import MainWindow
+        tmp = tempfile.mkdtemp()
+        p = self._hairline_pdf(tmp)
+        before = self._hairline_px(p)
+
+        with MainWindow._min_line_width(0.75 / 72 * 600):
+            self.assertGreater(self._hairline_px(p), before)
+        self.assertEqual(self._hairline_px(p), before)
+
+        class Boom(Exception):
+            pass
+
+        with self.assertRaises(Boom):
+            with MainWindow._min_line_width(0.75 / 72 * 600):
+                raise Boom()
+        self.assertEqual(self._hairline_px(p), before,
+                         "the global floor leaked after an exception")
+
+    def test_zero_min_line_width_is_a_no_op(self):
+        from app.main_window import MainWindow
+        tmp = tempfile.mkdtemp()
+        p = self._hairline_pdf(tmp)
+        before = self._hairline_px(p)
+        for value in (0, 0.0, None):
+            with MainWindow._min_line_width(value):
+                self.assertEqual(self._hairline_px(p), before)
+
+    @needs_native_print
+    def test_printing_applies_the_line_weight_floor(self):
+        # End to end: the same page printed Heavy carries more ink than printed
+        # as drawn, and the floor scales with the render dpi rather than being
+        # a fixed pixel count.
+        import numpy as np
+        tmp = tempfile.mkdtemp()
+        src = self._hairline_pdf(tmp)
+        from app.main_window import MainWindow
+        win = MainWindow(); win.load_document(src)
+
+        def ink(min_pt):
+            win._print_min_line_pt = min_pt
+            out = os.path.join(tmp, f"out{min_pt}.pdf")
+            pr = QPrinter(QPrinter.ScreenResolution)
+            pr.setResolution(600)
+            pr.setOutputFormat(QPrinter.PdfFormat)
+            pr.setOutputFileName(out)
+            win._print_to(pr)
+            doc = fitz.open(out)
+            try:
+                pm = doc[0].get_pixmap(matrix=fitz.Matrix(300 / 72, 300 / 72),
+                                       alpha=False)
+                a = np.frombuffer(pm.samples, dtype=np.uint8)
+                a = a.reshape(pm.height, pm.width, 3).mean(axis=2)
+            finally:
+                doc.close()
+            return int((a < 200).sum())
+
+        as_drawn = ink(0.0)
+        medium = ink(0.5)
+        heavy = ink(0.75)
+        self.assertGreater(medium, as_drawn, "Medium added no ink")
+        self.assertGreater(heavy, medium, "Heavy is not heavier than Medium")
+
     @needs_native_print
     def test_new_printer_avoids_highres_query(self):
         # HighResolution (1200 dpi) queries the printer at construction and can

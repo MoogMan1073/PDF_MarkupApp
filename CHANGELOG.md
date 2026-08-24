@@ -15,6 +15,20 @@ portable zip to the matching GitHub release.
   full-detail bitmap is handed to the driver, independent of the viewport's
   density. Linux/macOS output is unchanged.
 
+- **Minimum line weight for printing.** Printing at the real resolution has a
+  side effect worth naming: it stops fattening your hairlines. AutoCAD plots
+  schematic geometry at 0.1–0.15 pt, and no renderer can draw thinner than one
+  device pixel — so at the 96 dpi the old path was really using, every hairline
+  came out 1 px = **0.75 pt**, and that heaviness is what everyone got used to.
+  At 600 dpi the same line is drawn at its true **0.12 pt**: correct, and far
+  too thin on paper. So the app now applies a minimum pen width the way CAD
+  plotting always has. **Settings ▸ General ▸ Printing** offers *As drawn*,
+  *Light* (0.25 pt), *Medium* (0.5 pt, the default) and *Heavy* (0.75 pt, which
+  reproduces the weight of the older prints at the new sharpness), and the same
+  picker sits in **Print preview** so you can judge it before committing. It is
+  a floor, not a multiplier: heavier geometry is left alone, and text is never
+  touched.
+
 ## v1.5.0
 
 Design rule checking, taken through two drawing sets it had never seen. Most

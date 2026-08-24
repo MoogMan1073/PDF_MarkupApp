@@ -4,6 +4,7 @@ settings dialog (Phases 1-9 integration)."""
 
 from __future__ import annotations
 
+import contextlib
 import os
 
 from PySide6.QtCore import Qt, QEvent, QTimer
@@ -347,6 +348,24 @@ class SettingsDialog(QDialog):
         self._on_ai_toggled(self.ai.isChecked())
         self._refresh_api_status()
 
+        # printing
+        gb_p = QGroupBox("Printing")
+        fp = QFormLayout(gb_p)
+        from .config import PRINT_LINE_WEIGHTS
+        self.min_line = QComboBox()
+        for label, pt in PRINT_LINE_WEIGHTS:
+            self.min_line.addItem(label, pt)
+        cur = config.print_min_line_pt
+        self.min_line.setCurrentIndex(
+            min(range(len(PRINT_LINE_WEIGHTS)),
+                key=lambda i: abs(PRINT_LINE_WEIGHTS[i][1] - cur)))
+        self.min_line.setToolTip(
+            "AutoCAD plots most schematic geometry as a hairline. Printed at "
+            "the printer's true resolution those come out around 0.1 pt — "
+            "faithful to the file, but anemic on paper. This raises them to a "
+            "minimum weight; heavier geometry and all text are untouched.")
+        fp.addRow("Minimum line weight:", self.min_line)
+
         gb_drc = self._build_audit_group()
 
         # organise the group boxes into tabs so the dialog never outgrows the
@@ -357,7 +376,7 @@ class SettingsDialog(QDialog):
                 v.addWidget(b)
             v.addStretch(1)
             return w
-        tabs.addTab(_page(gb_id, gb_e, gb_c), "General")
+        tabs.addTab(_page(gb_id, gb_e, gb_c, gb_p), "General")
         tabs.addTab(_page(gb_w), "Wire numbers")
         tabs.addTab(_page(gb_cmp), "Component labels")
         tabs.addTab(_page(gb_a), "OCR / AI")
@@ -392,6 +411,8 @@ class SettingsDialog(QDialog):
         c.set("comments/treat_all_as_todo", self.treat_todo.isChecked())
         c.set("filter/show_ignored", self.show_ignored.isChecked())
         c.set_ignore_patterns([l.strip() for l in self.ignore.toPlainText().splitlines() if l.strip()])
+        c.set("print/min_line_pt",
+              float(self.min_line.currentData() or 0.0))
         c.set("ocr/enabled", self.ocr.isChecked())
         c.set("ai/enabled", self.ai.isChecked())
         c.set("ai/api_key", self.ai_key.text().strip())
@@ -746,6 +767,9 @@ class MainWindow(QMainWindow):
         self.config = AppConfig()
         self.document = None
         self._print_include_marks = True   # print the app's markups by default
+        # minimum printed line weight in points; the preview toolbar can
+        # override it for the current job without touching the saved setting
+        self._print_min_line_pt = self.config.print_min_line_pt
 
         self._progress("Preparing the canvas…", 62)
         self.view = PdfView(self)
@@ -1611,6 +1635,41 @@ class MainWindow(QMainWindow):
                 pv.updatePreview()   # re-render with/without marks
 
         act.toggled.connect(_toggle)
+        self._add_line_weight_picker(preview, tb)
+
+    def _add_line_weight_picker(self, preview, tb):
+        """Add a minimum line-weight picker to the print-preview toolbar.
+
+        Preview is where you actually judge line weight, so the control lives
+        here as well as in Settings. Changing it re-renders immediately and
+        applies to the job printed from the preview; Settings holds the
+        default for next time.
+        """
+        from PySide6.QtWidgets import QComboBox, QLabel
+        from PySide6.QtPrintSupport import QPrintPreviewWidget
+        from .config import PRINT_LINE_WEIGHTS
+        tb.addSeparator()
+        tb.addWidget(QLabel(" Min line: "))
+        combo = QComboBox()
+        for label, pt in PRINT_LINE_WEIGHTS:
+            combo.addItem(label, pt)
+        current = min(range(len(PRINT_LINE_WEIGHTS)),
+                      key=lambda i: abs(PRINT_LINE_WEIGHTS[i][1]
+                                        - self._print_min_line_pt))
+        combo.setCurrentIndex(current)
+        combo.setToolTip(
+            "Thicken hairlines to at least this weight when printing.\n"
+            "Heavier geometry and all text are left exactly as drawn.")
+
+        def _changed(i):
+            self._print_min_line_pt = float(combo.itemData(i) or 0.0)
+            pv = preview.findChild(QPrintPreviewWidget)
+            if pv is not None:
+                pv.updatePreview()
+
+        combo.currentIndexChanged.connect(_changed)
+        tb.addWidget(combo)
+        self._preview_weight_combo = combo
 
     def _print_to(self, printer, on_page=None):
         """Paint each requested page onto ``printer``, fitted and centred on the
@@ -1646,7 +1705,8 @@ class MainWindow(QMainWindow):
                     elif done:
                         printer.newPage()
                     self._print_page(painter, work[i], painter.viewport(),
-                                     dpi=dpi)
+                                     dpi=dpi,
+                                     min_line_pt=self._print_min_line_pt)
                     done += 1
             finally:
                 if painter is not None:
@@ -1719,6 +1779,31 @@ class MainWindow(QMainWindow):
     _BAND_MARGIN = 16
 
     @staticmethod
+    @contextlib.contextmanager
+    def _min_line_width(px):
+        """Raise MuPDF's minimum stroke width to ``px`` device pixels.
+
+        AutoCAD plots schematic geometry as hairlines, which a renderer draws
+        one device pixel wide — 1/96 in at the screen resolution the old print
+        path really used, but only 1/600 in once pages are rendered at the
+        printer's own dpi. True to the file, far too thin on paper. This lifts
+        anything below the floor and leaves heavier geometry (and all text)
+        exactly as drawn.
+
+        The setting is *global* to MuPDF, so it is always restored — leaking it
+        would silently thicken the on-screen viewer as well.
+        """
+        import fitz
+        if not px or px <= 0:
+            yield
+            return
+        try:
+            fitz.TOOLS.set_graphics_min_line_width(float(px))
+            yield
+        finally:
+            fitz.TOOLS.set_graphics_min_line_width(0.0)
+
+    @staticmethod
     def _is_preview(painter):
         """True when painting into the print-preview dialog rather than onto a
         real printer — the preview backs its pages with QPicture."""
@@ -1743,7 +1828,7 @@ class MainWindow(QMainWindow):
                 int(round((target.height() - h) / 2.0)))
 
     @classmethod
-    def _print_page(cls, painter, page, target, dpi=None):
+    def _print_page(cls, painter, page, target, dpi=None, min_line_pt=0.0):
         """Draw one page (with its marks) onto the printer's viewport.
 
         The page is rasterised at ``dpi`` (see ``_print_render_dpi``) and drawn
@@ -1758,6 +1843,10 @@ class MainWindow(QMainWindow):
         With ``dpi=None`` the raster simply matches the logical rect pixel for
         pixel. Tall pages are rasterised in horizontal bands so the peak
         bitmap stays bounded (see ``_PRINT_BAND_PX``) at no resolution cost.
+
+        ``min_line_pt`` raises hairlines to that weight in PDF points (see
+        ``PRINT_LINE_WEIGHTS``). It is a floor, not a multiplier: geometry
+        already heavier is untouched, and text is never affected.
         """
         import fitz
         from PySide6.QtGui import QImage, QPainter
@@ -1775,9 +1864,12 @@ class MainWindow(QMainWindow):
             pscale = min(scale, cls._PREVIEW_SCALE,
                          (cls._PREVIEW_MAX_PX / area) ** 0.5)
             if pscale < scale:
-                # a single modest raster, drawn up to the full sheet size
-                pm = page.get_pixmap(matrix=fitz.Matrix(pscale, pscale),
-                                     alpha=False, annots=True)
+                # a single modest raster, drawn up to the full sheet size.
+                # The floor is scaled to *this* raster so the preview shows the
+                # same relative weight the print will have.
+                with cls._min_line_width(min_line_pt * pscale):
+                    pm = page.get_pixmap(matrix=fitz.Matrix(pscale, pscale),
+                                         alpha=False, annots=True)
                 # samples_mv is a view on the pixmap; copy() owns its pixels, so
                 # the image outlives pm without duplicating the buffer twice
                 img = QImage(pm.samples_mv, pm.width, pm.height, pm.stride,
@@ -1805,42 +1897,45 @@ class MainWindow(QMainWindow):
         band_rows = max(1, min(H, int(cls._PRINT_BAND_PX // W)))
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
         y = 0
-        while y < H:
-            rows = min(band_rows, H - y)
-            # Render a few rows beyond the band and then throw them away. The
-            # renderer antialiases against the edge of the clip, so a row sitting
-            # right on a band boundary comes out lighter than it should — which
-            # would print as a faint line across the sheet at every join. Only
-            # rows well inside the clip are kept, so every row is rendered
-            # exactly as it would be in a single full-page pass.
-            top_px = max(0, y - cls._BAND_MARGIN)
-            bot_px = min(H, y + rows + cls._BAND_MARGIN)
-            pm = page.get_pixmap(
-                matrix=mat, alpha=False, annots=True,
-                clip=fitz.Rect(r.x0, r.y0 + top_px / s,
-                               r.x1, r.y0 + bot_px / s))
-            # samples_mv is a view on the pixmap's own buffer rather than a copy
-            # of it, and the single copy() below both trims the band and detaches
-            # it — so one band costs one extra bitmap, not three.
-            img = QImage(pm.samples_mv, pm.width, pm.height, pm.stride,
-                         QImage.Format_RGB888)
-            # Where this band's kept rows start inside the rendered strip. Clamp
-            # it: QImage.copy() pads out-of-range rows with black, and a black
-            # stripe across a drawing is far worse than a rounding artefact.
-            off = min(max(0, y - (pm.y - origin.y0)), max(0, img.height() - 1))
-            take = min(rows, img.height() - off)
-            if take > 0:
-                # Band edges share the *identical* float expression
-                # (y0 + K * ratio), so however the engine rounds logical to
-                # device coordinates, adjacent bands round together — no
-                # hairline gap or double-drawn seam between them.
-                t0 = y0 + y * ratio
-                t1 = y0 + (y + take) * ratio
-                painter.drawImage(
-                    QRectF(x0 + (pm.x - origin.x0) * ratio, t0,
-                           img.width() * ratio, t1 - t0),
-                    img.copy(0, off, img.width(), take))
-            y += rows
+        # ``s`` is raster px per PDF point, so this converts the weight floor
+        # from points into the device pixels MuPDF wants
+        with cls._min_line_width(min_line_pt * s):
+            while y < H:
+                rows = min(band_rows, H - y)
+                # Render a few rows beyond the band and then throw them away. The
+                # renderer antialiases against the edge of the clip, so a row sitting
+                # right on a band boundary comes out lighter than it should — which
+                # would print as a faint line across the sheet at every join. Only
+                # rows well inside the clip are kept, so every row is rendered
+                # exactly as it would be in a single full-page pass.
+                top_px = max(0, y - cls._BAND_MARGIN)
+                bot_px = min(H, y + rows + cls._BAND_MARGIN)
+                pm = page.get_pixmap(
+                    matrix=mat, alpha=False, annots=True,
+                    clip=fitz.Rect(r.x0, r.y0 + top_px / s,
+                                   r.x1, r.y0 + bot_px / s))
+                # samples_mv is a view on the pixmap's own buffer rather than a copy
+                # of it, and the single copy() below both trims the band and detaches
+                # it — so one band costs one extra bitmap, not three.
+                img = QImage(pm.samples_mv, pm.width, pm.height, pm.stride,
+                             QImage.Format_RGB888)
+                # Where this band's kept rows start inside the rendered strip. Clamp
+                # it: QImage.copy() pads out-of-range rows with black, and a black
+                # stripe across a drawing is far worse than a rounding artefact.
+                off = min(max(0, y - (pm.y - origin.y0)), max(0, img.height() - 1))
+                take = min(rows, img.height() - off)
+                if take > 0:
+                    # Band edges share the *identical* float expression
+                    # (y0 + K * ratio), so however the engine rounds logical to
+                    # device coordinates, adjacent bands round together — no
+                    # hairline gap or double-drawn seam between them.
+                    t0 = y0 + y * ratio
+                    t1 = y0 + (y + take) * ratio
+                    painter.drawImage(
+                        QRectF(x0 + (pm.x - origin.x0) * ratio, t0,
+                               img.width() * ratio, t1 - t0),
+                        img.copy(0, off, img.width(), take))
+                y += rows
 
     def open_settings(self):
         dlg = SettingsDialog(self.config, self)
@@ -1848,6 +1943,8 @@ class MainWindow(QMainWindow):
             dlg.apply()
             self.view.config = self.config
             self.ref_view.config = self.config
+            # a changed default takes effect on the next print without a restart
+            self._print_min_line_pt = self.config.print_min_line_pt
             if self.document is not None:
                 self.document.ignore_patterns = self.config.ignore_patterns()
                 self.comment_panel.refresh()
