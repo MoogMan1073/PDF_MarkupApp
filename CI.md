@@ -108,3 +108,10 @@ branch, which is the one thing the pin exists to prevent. **Build Windows** also
 takes a `pydrc_ref` input when run manually, which overrides the file for that
 one run — useful for testing a rule change against the app without committing a
 pin.
+
+The provenance line lands in the release notes whether the tag is pushed to a
+repository with no release yet or the release is drafted in the GitHub UI first
+and the tag pushed after. The second path is the common one and it is how
+`v1.5.0` shipped with an empty body: the workflow only wrote notes when it
+created the release itself. It now fills in the line either way, appending to
+whatever a human wrote rather than replacing it.

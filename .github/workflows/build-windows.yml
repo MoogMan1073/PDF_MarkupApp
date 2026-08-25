@@ -138,20 +138,49 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
         run: |
+          # This step decides everything from $LASTEXITCODE, so a non-zero exit
+          # from gh must be a value to test rather than a thrown error. PS 7.4
+          # turns those into terminating errors by default, and the runner sets
+          # ErrorActionPreference to Stop.
+          $ErrorActionPreference = 'Continue'
+          $PSNativeCommandUseErrorActionPreference = $false
+
           $assets = Get-ChildItem "dist_installer/*.exe","dist_installer/*.zip" `
             -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+
+          $drc = $env:PYDRC_BUILT
+          if (-not $drc -or $drc -eq "none") {
+            $drcNote = "Design rule checking is NOT included in this build."
+          } else {
+            $drcNote = "Design rule checking: $drc"
+          }
+
           # idempotent: works whether the tag was pushed via git (no release yet)
           # or created from the GitHub "Draft a new release" UI (release exists)
-          gh release view "$env:REF_NAME" --repo "$env:REPO" *> $null
-          if ($LASTEXITCODE -ne 0) {
-            $drc = $env:PYDRC_BUILT
-            if (-not $drc -or $drc -eq "none") {
-              $drcNote = "Design rule checking is NOT included in this build."
-            } else {
-              $drcNote = "Design rule checking: $drc"
-            }
+          $existing = gh release view "$env:REF_NAME" --repo "$env:REPO" `
+            --json body -q .body 2> $null
+          # Read the code before anything else can clobber it. Out-String
+          # because a multi-line body comes back as an *array* of lines, and
+          # -notmatch over an array filters it rather than answering yes or no
+          # -- a body that already carried the note would still test true (the
+          # non-matching lines) and get a second copy appended.
+          $noRelease = $LASTEXITCODE -ne 0
+          $existing = ($existing | Out-String).Trim()
+          if ($noRelease) {
             gh release create "$env:REF_NAME" --repo "$env:REPO" `
               --title "DSI Redline $env:REF_NAME" `
               --notes "Automated Windows build for $env:REF_NAME. Download the installer (DSI_Redline_Setup) or the portable .zip below.`n`n$drcNote"
+          } elseif ($existing -notmatch 'Design rule checking') {
+            # Drafting the release in the UI first and then pushing the tag is
+            # the common path, and it skips the branch above -- which is how
+            # v1.5.0 shipped with empty notes. Say which rules are in the build
+            # either way, and append rather than replace: whatever a human
+            # wrote in the body is theirs to keep.
+            if ([string]::IsNullOrWhiteSpace($existing)) {
+              $body = $drcNote
+            } else {
+              $body = "$existing`n`n$drcNote"
+            }
+            gh release edit "$env:REF_NAME" --repo "$env:REPO" --notes "$body"
           }
           gh release upload "$env:REF_NAME" $assets --clobber --repo "$env:REPO"
