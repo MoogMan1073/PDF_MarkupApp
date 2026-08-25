@@ -85,3 +85,33 @@ Push a `v*` tag, or run **Build Windows** manually. On a tag it also publishes a
 GitHub Release with the installer and the portable zip attached. A release built
 without `PYDRC_TOKEN` ships without design rule checking; the workflow logs a
 warning saying so rather than producing a quietly reduced build.
+
+### Which rules a release contains
+
+An installer that cannot say which rules it ships is one nobody can reproduce.
+`packaging/pydrc-ref.txt` names the PyDRC ref the build installs — a branch, a
+tag, or a commit SHA. Whatever it names is resolved to a **commit SHA** and that
+SHA is what gets installed, so a branch cannot move underneath a build in
+progress and two runs of one tag cannot quietly differ. The build log prints the
+library version, the rule pack version, and the commit; the release notes carry
+the same line.
+
+The file sits at `main` during development so the app tracks the rule library.
+Cutting a release is therefore three steps in this order:
+
+1. Tag PyDRC (`v0.2.0`).
+2. In this repository, set `packaging/pydrc-ref.txt` to that tag and commit it.
+3. Tag the app (`v1.5.0`).
+
+Tagging the app before step 2 produces a release whose notes name a moving
+branch, which is the one thing the pin exists to prevent. **Build Windows** also
+takes a `pydrc_ref` input when run manually, which overrides the file for that
+one run — useful for testing a rule change against the app without committing a
+pin.
+
+The provenance line lands in the release notes whether the tag is pushed to a
+repository with no release yet or the release is drafted in the GitHub UI first
+and the tag pushed after. The second path is the common one and it is how
+`v1.5.0` shipped with an empty body: the workflow only wrote notes when it
+created the release itself. It now fills in the line either way, appending to
+whatever a human wrote rather than replacing it.

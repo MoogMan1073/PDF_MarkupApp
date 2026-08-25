@@ -5,6 +5,11 @@ name: Build Windows
 # On a v* tag it also publishes a GitHub Release with both attached.
 on:
   workflow_dispatch:
+    inputs:
+      pydrc_ref:
+        description: "PyDRC ref to build against (blank = packaging/pydrc-ref.txt)"
+        required: false
+        default: ""
   push:
     tags:
       - "v*"
@@ -38,19 +43,62 @@ jobs:
       # CI.md). Without a PYDRC_TOKEN secret the app still builds and
       # runs -- the Audit tab reports itself unavailable -- so this does not
       # block a release, but the log says which kind of build it was.
+      # The ref is resolved to a commit SHA and *that* is installed, so a
+      # branch cannot move underneath a build in progress and two runs of one
+      # tag cannot quietly differ. The SHA is recorded for the log and the
+      # release notes: an installer that cannot say which rules it contains
+      # is one nobody can reproduce.
       - name: Install the design rule library (optional)
         if: env.PYDRC_TOKEN != ''
         shell: bash
+        env:
+          INPUT_REF: ${{ inputs.pydrc_ref }}
         run: |
-          pip install "pydrc @ git+https://x-access-token:${PYDRC_TOKEN}@github.com/MoogMan1073/PyDRC@main"
+          set -euo pipefail
+          ref="$INPUT_REF"
+          if [ -z "$ref" ]; then
+            ref=$(grep -v '^\s*#' packaging/pydrc-ref.txt | grep -v '^\s*$' | head -n1 | tr -d '[:space:]')
+          fi
+          if [ -z "$ref" ]; then
+            # An empty ref is not a harmless default: `git ls-remote <url> ""`
+            # lists *every* ref, and the resolution below would take the first
+            # one and install it. Fail loudly instead of shipping an installer
+            # built from whatever sorted first.
+            echo "::error::packaging/pydrc-ref.txt names no ref (and no pydrc_ref input was given). It must contain one git ref: a branch, a tag, or a commit SHA."
+            exit 1
+          fi
+          echo "PyDRC ref requested: $ref"
+          url="https://x-access-token:${PYDRC_TOKEN}@github.com/MoogMan1073/PyDRC"
+          # An annotated tag resolves to two lines -- the tag object, then the
+          # commit it points at as "<ref>^{}". The commit is the one to
+          # install; the tag object is not a thing pip can check out.
+          refs=$(git ls-remote "$url" "$ref" || true)
+          sha=$(printf '%s\n' "$refs" | awk '/\^\{\}$/ {print $1; found=1; exit}
+                                             END {if (!found) exit 1}' || true)
+          if [ -z "$sha" ]; then
+            sha=$(printf '%s\n' "$refs" | awk 'NF {print $1; exit}' || true)
+          fi
+          if [ -z "$sha" ]; then
+            # Names no ref on the remote, so treat it as a SHA already.
+            sha="$ref"
+          fi
+          echo "PyDRC resolved to: $sha"
+          pip install "pydrc[dxf] @ git+${url}@${sha}"
+          echo "PYDRC_REF=$ref"  >> "$GITHUB_ENV"
+          echo "PYDRC_SHA=$sha"  >> "$GITHUB_ENV"
 
       - name: Report whether design rule checking is included
         shell: bash
         run: |
           if [ -z "$PYDRC_TOKEN" ]; then
             echo "::warning::Built WITHOUT design rule checking -- no PYDRC_TOKEN secret. The Audit tab will report the rule library as unavailable. See CI.md."
+            echo "PYDRC_BUILT=none" >> "$GITHUB_ENV"
           else
             python -c "from app import audit; ok, msg = audit.status(); print(msg); raise SystemExit(0 if ok else 1)"
+            lib=$(python -c "import pydrc; print(pydrc.__version__)")
+            pack=$(python -c "from pydrc.packs import loader; print(loader.load_by_id('drc-base').ref)")
+            echo "Design rule checking: pydrc $lib, $pack, commit $PYDRC_SHA (ref $PYDRC_REF)"
+            echo "PYDRC_BUILT=pydrc $lib | $pack | ${PYDRC_SHA} (ref ${PYDRC_REF})" >> "$GITHUB_ENV"
           fi
 
       - name: Run tests
@@ -98,14 +146,49 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
         run: |
+          # This step decides everything from $LASTEXITCODE, so a non-zero exit
+          # from gh must be a value to test rather than a thrown error. PS 7.4
+          # turns those into terminating errors by default, and the runner sets
+          # ErrorActionPreference to Stop.
+          $ErrorActionPreference = 'Continue'
+          $PSNativeCommandUseErrorActionPreference = $false
+
           $assets = Get-ChildItem "dist_installer/*.exe","dist_installer/*.zip" `
             -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+
+          $drc = $env:PYDRC_BUILT
+          if (-not $drc -or $drc -eq "none") {
+            $drcNote = "Design rule checking is NOT included in this build."
+          } else {
+            $drcNote = "Design rule checking: $drc"
+          }
+
           # idempotent: works whether the tag was pushed via git (no release yet)
           # or created from the GitHub "Draft a new release" UI (release exists)
-          gh release view "$env:REF_NAME" --repo "$env:REPO" *> $null
-          if ($LASTEXITCODE -ne 0) {
+          $existing = gh release view "$env:REF_NAME" --repo "$env:REPO" `
+            --json body -q .body 2> $null
+          # Read the code before anything else can clobber it. Out-String
+          # because a multi-line body comes back as an *array* of lines, and
+          # -notmatch over an array filters it rather than answering yes or no
+          # -- a body that already carried the note would still test true (the
+          # non-matching lines) and get a second copy appended.
+          $noRelease = $LASTEXITCODE -ne 0
+          $existing = ($existing | Out-String).Trim()
+          if ($noRelease) {
             gh release create "$env:REF_NAME" --repo "$env:REPO" `
               --title "DSI Redline $env:REF_NAME" `
-              --notes "Automated Windows build for $env:REF_NAME. Download the installer (DSI_Redline_Setup) or the portable .zip below."
+              --notes "Automated Windows build for $env:REF_NAME. Download the installer (DSI_Redline_Setup) or the portable .zip below.`n`n$drcNote"
+          } elseif ($existing -notmatch 'Design rule checking') {
+            # Drafting the release in the UI first and then pushing the tag is
+            # the common path, and it skips the branch above -- which is how
+            # v1.5.0 shipped with empty notes. Say which rules are in the build
+            # either way, and append rather than replace: whatever a human
+            # wrote in the body is theirs to keep.
+            if ([string]::IsNullOrWhiteSpace($existing)) {
+              $body = $drcNote
+            } else {
+              $body = "$existing`n`n$drcNote"
+            }
+            gh release edit "$env:REF_NAME" --repo "$env:REPO" --notes "$body"
           }
           gh release upload "$env:REF_NAME" $assets --clobber --repo "$env:REPO"
