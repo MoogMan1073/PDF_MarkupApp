@@ -25,6 +25,22 @@ APP = "PDFMarkupApp"
 MAX_RECENT_FILES = 10
 MAX_RECENT_SEARCHES = 10
 
+# Minimum line weight presets for printing, as (label, PDF points).
+#
+# AutoCAD plots most schematic geometry as a hairline — width 0, or 0.1-0.15 pt.
+# A renderer cannot draw less than one device pixel, so at the 96 dpi the old
+# print path was really using, every one of those came out 1 px = 1/96 in =
+# 0.75 pt: fat, and fat is what people got used to. Rendering at 600 dpi honours
+# the true width instead, and 0.12 pt on paper is anemic (many printers drop
+# parts of it). CAD plotting has always solved this with a minimum pen width, so
+# the app applies one too, and defaults it on.
+PRINT_LINE_WEIGHTS = (
+    ("As drawn (no minimum)", 0.0),
+    ("Light — 0.25 pt", 0.25),
+    ("Medium — 0.5 pt", 0.5),
+    ("Heavy — 0.75 pt (matches older prints)", 0.75),
+)
+
 
 def _default_user() -> str:
     try:
@@ -73,6 +89,9 @@ DEFAULTS: dict = {
     "audit/oda_path": "",
     # File ▸ Open Recent (most-recent-first list of PDF paths)
     "recent/files": json.dumps([]),
+    # Minimum printed line weight, in PDF points (0 = print widths as drawn).
+    # See PRINT_LINE_WEIGHTS for why this defaults on.
+    "print/min_line_pt": 0.5,
     # in-document search (Ctrl+F): option toggles + query history
     "search/case": False,
     "search/word": False,
@@ -201,6 +220,17 @@ class AppConfig:
 
     def clear_recent_searches(self) -> None:
         self.set("search/recent", json.dumps([]))
+
+    # -- printing ------------------------------------------------------------
+
+    @property
+    def print_min_line_pt(self) -> float:
+        """Minimum line weight for printing, in PDF points (0 = as drawn)."""
+        try:
+            v = float(self.get("print/min_line_pt"))
+        except (TypeError, ValueError):
+            return 0.0
+        return v if 0.0 <= v <= 4.0 else 0.0
 
     # -- derived config objects ---------------------------------------------
 
