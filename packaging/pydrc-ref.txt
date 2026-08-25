@@ -1,0 +1,13 @@
+# Which PyDRC the Windows build installs. One git ref: a branch, a tag, or a
+# commit SHA.
+#
+# `main` while developing, so the app tracks the rule library. Set it to a
+# PyDRC tag before tagging a release, and commit that change *first* -- the
+# app's tag then captures which rules its installer contains, and rebuilding
+# that tag years later produces the same installer. Left at `main`, a rebuild
+# picks up whatever the library has become since.
+#
+# Whatever this names is resolved to a commit SHA and that SHA is installed,
+# so the ref cannot move underneath a build in progress. The SHA is printed in
+# the log and written into the release notes.
+main

@@ -5,6 +5,11 @@ name: Build Windows
 # On a v* tag it also publishes a GitHub Release with both attached.
 on:
   workflow_dispatch:
+    inputs:
+      pydrc_ref:
+        description: "PyDRC ref to build against (blank = packaging/pydrc-ref.txt)"
+        required: false
+        default: ""
   push:
     tags:
       - "v*"
@@ -38,19 +43,54 @@ jobs:
       # CI.md). Without a PYDRC_TOKEN secret the app still builds and
       # runs -- the Audit tab reports itself unavailable -- so this does not
       # block a release, but the log says which kind of build it was.
+      # The ref is resolved to a commit SHA and *that* is installed, so a
+      # branch cannot move underneath a build in progress and two runs of one
+      # tag cannot quietly differ. The SHA is recorded for the log and the
+      # release notes: an installer that cannot say which rules it contains
+      # is one nobody can reproduce.
       - name: Install the design rule library (optional)
         if: env.PYDRC_TOKEN != ''
         shell: bash
+        env:
+          INPUT_REF: ${{ inputs.pydrc_ref }}
         run: |
-          pip install "pydrc @ git+https://x-access-token:${PYDRC_TOKEN}@github.com/MoogMan1073/PyDRC@main"
+          set -euo pipefail
+          ref="$INPUT_REF"
+          if [ -z "$ref" ]; then
+            ref=$(grep -v '^\s*#' packaging/pydrc-ref.txt | grep -v '^\s*$' | head -n1 | tr -d '[:space:]')
+          fi
+          echo "PyDRC ref requested: $ref"
+          url="https://x-access-token:${PYDRC_TOKEN}@github.com/MoogMan1073/PyDRC"
+          # An annotated tag resolves to two lines -- the tag object, then the
+          # commit it points at as "<ref>^{}". The commit is the one to
+          # install; the tag object is not a thing pip can check out.
+          refs=$(git ls-remote "$url" "$ref" || true)
+          sha=$(printf '%s\n' "$refs" | awk '/\^\{\}$/ {print $1; found=1; exit}
+                                             END {if (!found) exit 1}' || true)
+          if [ -z "$sha" ]; then
+            sha=$(printf '%s\n' "$refs" | awk 'NF {print $1; exit}' || true)
+          fi
+          if [ -z "$sha" ]; then
+            # Names no ref on the remote, so treat it as a SHA already.
+            sha="$ref"
+          fi
+          echo "PyDRC resolved to: $sha"
+          pip install "pydrc[dxf] @ git+${url}@${sha}"
+          echo "PYDRC_REF=$ref"  >> "$GITHUB_ENV"
+          echo "PYDRC_SHA=$sha"  >> "$GITHUB_ENV"
 
       - name: Report whether design rule checking is included
         shell: bash
         run: |
           if [ -z "$PYDRC_TOKEN" ]; then
             echo "::warning::Built WITHOUT design rule checking -- no PYDRC_TOKEN secret. The Audit tab will report the rule library as unavailable. See CI.md."
+            echo "PYDRC_BUILT=none" >> "$GITHUB_ENV"
           else
             python -c "from app import audit; ok, msg = audit.status(); print(msg); raise SystemExit(0 if ok else 1)"
+            lib=$(python -c "import pydrc; print(pydrc.__version__)")
+            pack=$(python -c "from pydrc.packs import loader; print(loader.load_by_id('drc-base').ref)")
+            echo "Design rule checking: pydrc $lib, $pack, commit $PYDRC_SHA (ref $PYDRC_REF)"
+            echo "PYDRC_BUILT=pydrc $lib | $pack | ${PYDRC_SHA} (ref ${PYDRC_REF})" >> "$GITHUB_ENV"
           fi
 
       - name: Run tests
@@ -104,8 +144,14 @@ jobs:
           # or created from the GitHub "Draft a new release" UI (release exists)
           gh release view "$env:REF_NAME" --repo "$env:REPO" *> $null
           if ($LASTEXITCODE -ne 0) {
+            $drc = $env:PYDRC_BUILT
+            if (-not $drc -or $drc -eq "none") {
+              $drcNote = "Design rule checking is NOT included in this build."
+            } else {
+              $drcNote = "Design rule checking: $drc"
+            }
             gh release create "$env:REF_NAME" --repo "$env:REPO" `
               --title "DSI Redline $env:REF_NAME" `
-              --notes "Automated Windows build for $env:REF_NAME. Download the installer (DSI_Redline_Setup) or the portable .zip below."
+              --notes "Automated Windows build for $env:REF_NAME. Download the installer (DSI_Redline_Setup) or the portable .zip below.`n`n$drcNote"
           }
           gh release upload "$env:REF_NAME" $assets --clobber --repo "$env:REPO"
