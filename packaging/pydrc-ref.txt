@@ -10,4 +10,4 @@
 # Whatever this names is resolved to a commit SHA and that SHA is installed,
 # so the ref cannot move underneath a build in progress. The SHA is printed in
 # the log and written into the release notes.
-main
+v0.2.0

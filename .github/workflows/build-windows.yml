@@ -59,6 +59,14 @@ jobs:
           if [ -z "$ref" ]; then
             ref=$(grep -v '^\s*#' packaging/pydrc-ref.txt | grep -v '^\s*$' | head -n1 | tr -d '[:space:]')
           fi
+          if [ -z "$ref" ]; then
+            # An empty ref is not a harmless default: `git ls-remote <url> ""`
+            # lists *every* ref, and the resolution below would take the first
+            # one and install it. Fail loudly instead of shipping an installer
+            # built from whatever sorted first.
+            echo "::error::packaging/pydrc-ref.txt names no ref (and no pydrc_ref input was given). It must contain one git ref: a branch, a tag, or a commit SHA."
+            exit 1
+          fi
           echo "PyDRC ref requested: $ref"
           url="https://x-access-token:${PYDRC_TOKEN}@github.com/MoogMan1073/PyDRC"
           # An annotated tag resolves to two lines -- the tag object, then the
