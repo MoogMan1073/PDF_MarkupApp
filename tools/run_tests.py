@@ -10,11 +10,21 @@ It also reports *why* tests were skipped, grouped by reason.  A green run that
 quietly skipped the design rule checks is not the same as a green run that
 checked them, and CI should not let those two look alike.
 
-    python tools/run_tests.py [-v] [--strict] [module ...]
+    python tools/run_tests.py [-v] [--strict] [--require-drc] [module ...]
 
 ``--strict`` (used by CI) fails the run when tests were skipped because Qt was
 missing.  The workflows install Qt, so that is a broken runner, not a choice --
 and a run that skipped every GUI test must not report success.
+
+``--require-drc`` is the same rule for the optional rule library, and it is
+passed only by the workflow step that has just installed it.  A contributor
+without access to the private PyDRC still gets a clean local run; CI, which
+provides it, goes red rather than printing a banner under a green tick.
+
+That distinction was not academic.  The Tests workflow installed ``pydrc``
+without the ``[dxf]`` extra for as long as it existed, so ezdxf was absent,
+five project-import tests never ran on any runner, and every run said so in
+capital letters and passed.
 """
 
 from __future__ import annotations
@@ -65,6 +75,37 @@ def modules(argv) -> list:
     return sorted("tests." + os.path.basename(p)[:-3] for p in found)
 
 
+# The libraries a skip reason can name. Asked of the interpreter, never
+# inferred from the reason text -- see `missing_optional`.
+_OPTIONAL = {
+    "pydrc": "the design rule library (PyDRC)",
+    "ezdxf": "ezdxf, which reads AutoCAD Electrical drawings",
+}
+
+
+def missing_optional() -> list:
+    """Which optional libraries this interpreter cannot import.
+
+    The skip REASONS cannot answer this. ``"needs ezdxf and pydrc"`` is one
+    string naming two libraries, so `classify` has to attribute it to one of
+    them -- and that guess was wrong in CI for as long as the workflow
+    existed. The Tests workflow installed ``pydrc`` **without the ``[dxf]``
+    extra**, so the library that was actually absent was ezdxf, while the
+    banner said the rule library was missing and pointed at CI.md, about a
+    token that had been configured all along. Five tests never ran there and
+    the run was green.
+
+    Asking the interpreter costs one import each and cannot be wrong.
+    """
+    absent = []
+    for mod, described in _OPTIONAL.items():
+        try:
+            __import__(mod)
+        except Exception:
+            absent.append((mod, described))
+    return absent
+
+
 def drc_status() -> tuple:
     """``(available, message)`` for the optional rule library."""
     try:
@@ -78,6 +119,7 @@ def drc_status() -> tuple:
 def main(argv) -> int:
     verbose = "-v" in argv
     strict = "--strict" in argv
+    require_drc = "--require-drc" in argv
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     names = modules(argv)
 
@@ -117,9 +159,20 @@ def main(argv) -> int:
     # Loud on purpose. "No failures" must never be read as "everything was
     # checked" -- the same rule the audit itself follows about coverage.
     drc_skipped, qt_skipped = classify(reasons)
+    absent = missing_optional()
+
     gaps = []
     if drc_skipped:
-        gaps.append((drc_skipped, "the design rule library is absent",
+        # Name what is MEASURED absent, not the category the reason string
+        # was filed under. `"needs ezdxf and pydrc"` is one string for two
+        # libraries and `classify` must pick one; in CI it picked the one that
+        # was installed, and every run pointed at CI.md about a token that had
+        # been configured all along.
+        why = (
+            " and ".join(d for _, d in absent) + " could not be imported"
+            if absent else "the design rule library is absent"
+        )
+        gaps.append((drc_skipped, why,
                      "See CI.md to give the workflow access to it."))
     if qt_skipped:
         gaps.append((qt_skipped, "Qt (PySide6) could not be loaded",
@@ -133,6 +186,18 @@ def main(argv) -> int:
         print(f"!! {hint}")
         print("!" * 72)
 
+    # CI installs every optional library, so a rule-library skip THERE is a
+    # regression rather than an absent dependency -- and it is exactly the
+    # shape that hid for as long as this workflow existed: a loud banner under
+    # a green tick. A contributor without the private token still gets a clean
+    # run, because the workflow only passes this once the install step ran.
+    if require_drc and drc_skipped:
+        print(f"\n--require-drc: failing because {drc_skipped} tests were "
+              f"skipped for a missing optional library, which this run was "
+              f"supposed to provide.")
+        if absent:
+            print("Absent here: " + ", ".join(m for m, _ in absent))
+        return 1
     if strict and qt_skipped:
         print(f"\n--strict: failing because {qt_skipped} tests were skipped "
               f"for a missing Qt, which CI is supposed to provide.")

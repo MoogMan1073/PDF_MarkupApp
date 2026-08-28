@@ -53,15 +53,34 @@ jobs:
       # cannot reach it. With a PYDRC_TOKEN secret the design rule tests run;
       # without one they skip, and the runner says so loudly rather than
       # letting a green tick imply they passed. See CI.md.
+      #
+      # THE `[dxf]` EXTRA IS LOAD-BEARING and was missing here from the day
+      # this step was written. `requirements-drc.txt` installs `pydrc[dxf]`;
+      # this installed bare `pydrc`, so ezdxf was never present on any runner
+      # and the five tests guarded by `skipUnless(HAVE_EZDXF and HAVE_PYDRC)`
+      # never ran. Every run printed "5 tests were SKIPPED because the design
+      # rule library is absent" -- naming the library that WAS installed --
+      # and passed.
       - name: Install the design rule library (optional)
         if: env.PYDRC_TOKEN != ''
         shell: bash
         run: |
-          pip install "pydrc @ git+https://x-access-token:${PYDRC_TOKEN}@github.com/MoogMan1073/PyDRC@main"
+          pip install "pydrc[dxf] @ git+https://x-access-token:${PYDRC_TOKEN}@github.com/MoogMan1073/PyDRC@main"
 
       # Qt needs a display; offscreen gives it one. Each test module runs in
       # its own process -- see tools/run_tests.py for why.
+      #
+      # `--require-drc` is passed only when the install step above actually
+      # ran, so a fork without the secret still gets a clean run while THIS
+      # workflow goes red if the rule-library tests stop executing. Without it
+      # the failure mode is a banner under a green tick, which is how the
+      # missing `[dxf]` extra survived.
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python tools/run_tests.py --strict
+        shell: bash
+        run: |
+          ARGS="--strict"
+          if [ -n "$PYDRC_TOKEN" ]; then ARGS="$ARGS --require-drc"; fi
+          echo "running: python tools/run_tests.py $ARGS"
+          python tools/run_tests.py $ARGS
