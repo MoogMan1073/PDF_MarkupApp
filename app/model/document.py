@@ -18,6 +18,7 @@ from .storage import (
     SidecarDB, NullSidecar, load_pdf_annotations, write_annotations_to_pdf,
     compile_ignore_patterns, text_is_ignored,
     marked_pdf_path, sidecar_path, original_pdf_path, is_marked_pdf,
+    refuse_protected, same_path,
     strip_annotations, DEFAULT_IGNORE_PATTERNS,
 )
 
@@ -337,6 +338,20 @@ class Document:
                 "characters that can't be saved. Rename the file to something "
                 "shorter and simpler, then reopen it to enable saving.")
         out = marked_path or marked_pdf_path(self.path)
+        # THE BOUNDARY, enforced where every write funnels rather than at each
+        # caller. `marked_path` is caller-supplied -- `export_annotated_pdf`
+        # forwards whatever path a save dialog returned -- and without this an
+        # export aimed at the drawing itself REPLACED it: measured, a 3-page
+        # original came back with a mark baked in, no .marked.pdf was written at
+        # all, and every save after that wrote two copies of every mark, because
+        # the clobbered file is what `original_pdf_path` resolves to and
+        # `is_marked_pdf` says False, so `strip_annotations` is skipped.
+        #
+        # Unconditional, including the derived path: `marked_pdf_path` can never
+        # equal `original_pdf_path` (one ends `.marked.pdf`), so this is a no-op
+        # on the normal path and a guard that cannot be routed around on the
+        # other one.
+        refuse_protected(out, self.path)
         # Base the write on the PRISTINE original when it's available, so re-saving
         # never doubles the marks; if only the .marked.pdf exists, strip its
         # annotations first. Either way the store is the single source of truth.
@@ -353,7 +368,12 @@ class Document:
         # opened the .marked.pdf itself) → write a temp, RELEASE our handle (on
         # Windows an open file can't be replaced), atomically swap it in, then
         # reopen on the freshly-written file.
-        out_is_open = os.path.abspath(out) == os.path.abspath(self.path)
+        # `same_path`, not `abspath`: on Windows one file has many spellings
+        # (case, an 8.3 name, a junction), and getting this wrong takes the
+        # plain `work.save(out)` branch for a file we hold open -- which
+        # PyMuPDF then refuses with "save to original must be incremental",
+        # a library message about a path the user never typed.
+        out_is_open = same_path(out, self.path)
         if out_is_open:
             import tempfile
             d = os.path.dirname(os.path.abspath(out)) or "."
@@ -418,6 +438,11 @@ class Document:
         working file (sidecar) stays the source of truth.  Returns True if the
         marks were actually flattened (False if this PyMuPDF lacks ``bake``, in
         which case a normal annotated copy is written instead)."""
+        # This one does not go through `save()`, so it needs the guard of its
+        # own -- and it is the worst place to lose: a flattened export bakes the
+        # marks into the page CONTENT, so `strip_annotations` cannot undo it and
+        # a clobbered original would be gone with no route back.
+        refuse_protected(out_path, self.path)
         original = original_pdf_path(self.path)
         if os.path.exists(original):
             work = fitz.open(original)
@@ -448,6 +473,12 @@ class Document:
         untouched.  Returns the new ``.marked.pdf`` path.
         """
         dest = original_pdf_path(dest_pdf)          # never fork to foo.marked.pdf
+        # A fork writes a PRISTINE copy to `dest`, so aiming it at a drawing
+        # that already carries markup destroys that drawing. Forking onto this
+        # document's own original is refused by the same rule, which is right:
+        # it is a gesture with no meaning that would otherwise quietly do
+        # nothing at all.
+        refuse_protected(dest, self.path)
         src = original_pdf_path(self.path)
         if not os.path.exists(src):
             src = self.path                         # only the marked copy exists

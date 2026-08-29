@@ -4,6 +4,37 @@ All notable changes to **DSI Redline** are documented here. Versions are tagged
 `vX.Y.Z`; each tag triggers the Windows build that publishes the installer and a
 portable zip to the matching GitHub release.
 
+## v1.5.2
+
+- **Your original drawing can no longer be overwritten — and until now it
+  could.** "The original file is never overwritten" is the first thing this
+  project says about itself, and it was a sentence rather than a rule: every
+  write took its destination on trust. Pointing **Export annotated PDF…** at the
+  drawing you were marking up **replaced it**, wrote no `.marked.pdf` at all,
+  and left every later save writing *two* copies of every mark for ever — with
+  nothing on screen saying anything had happened, because the app draws the
+  clean page. Pointing an export at a *neighbouring* drawing replaced that one
+  instead: a three-page sheet became a one-page copy of the file you had open.
+  The flattened export was worse again, baking the marks into the page content
+  where nothing can strip them back off.
+
+  It reached the **PDF Tools** as well, in spite of that page promising the
+  opposite: **Extract** aimed at its own source took a four-page drawing to one
+  page, **Split** took five to two, **Combine** replaced an input with the
+  combination, and **Rotate** aimed at an unrelated drawing replaced it with a
+  rotated copy of something else.
+
+  Every one of those is now refused, by name, before a byte is written — *"…is
+  the original drawing this markup belongs to, and DSI Redline never writes over
+  an original"* — and the refusals cover the drawing you have open, any other
+  drawing that carries marks here, and any file a tool is reading from.
+  Exporting onto a previous export, onto a `.marked.pdf`, or onto any new name
+  is unchanged, and so is re-saving a `.marked.pdf` you opened directly.
+
+  **What is deliberately not refused:** a PDF this app has never opened. It is
+  indistinguishable from a stale export, and the save dialog has already asked
+  about replacing it.
+
 ## v1.5.1
 
 - **Windows prints are actually sharp now.** The v1.3.1 print fix rendered

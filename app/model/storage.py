@@ -786,6 +786,157 @@ def sidecar_path(pdf_path: str) -> str:
     return _canonical_stem(pdf_path) + ".markup.db"
 
 
+class ProtectedPathError(Exception):
+    """A write was aimed at a file this application must never overwrite.
+
+    Raised rather than returned so no caller can forget to check it, and caught
+    by the window's existing ``except Exception`` around every save/export, which
+    already shows ``str(e)`` to the user.  The message IS the user interface, so
+    it names the file, says what it is, and says what to do instead.
+    """
+
+
+def same_path(a: Optional[str], b: Optional[str]) -> bool:
+    """True when two paths name the same file, **for paths that need not exist**.
+
+    ``os.path.samefile`` is the correct answer and raises when either side is
+    missing -- and an export destination usually IS missing, which is exactly
+    the case that has to be judged.  So: ask the filesystem when it can answer,
+    and fall back to the normalised-real-path comparison ``main_window`` already
+    uses to decide "is this the same document" (main_window.py:1340).
+
+    ``os.path.abspath`` alone is NOT enough, and ``Document.save`` used it:
+    Windows paths are case-insensitive, so ``C:\\Drawings\\Foo.pdf`` and
+    ``c:\\drawings\\foo.pdf`` are one file that ``abspath`` calls two.
+    ``normcase`` handles the case, ``realpath`` handles a symlink or a junction.
+    """
+    if not a or not b:
+        return False
+    try:
+        if os.path.exists(a) and os.path.exists(b):
+            return os.path.samefile(a, b)
+    except OSError:
+        pass
+
+    def key(p: str) -> str:
+        return os.path.normcase(os.path.realpath(os.path.abspath(p)))
+
+    return key(a) == key(b)
+
+
+def protected_reason(out_path: str, doc_path: Optional[str] = None) -> str:
+    """Why ``out_path`` must not be written, or ``""`` when it may be.
+
+    The application's first boundary is *the original file is never
+    overwritten*.  That is a promise about the SOURCE DRAWING, so it is not
+    enough to protect the document currently open -- a reviewer with a folder
+    of drawings can aim an export at any of them.
+
+    Two rules, and both are about an ORIGINAL rather than about a
+    ``.marked.pdf``.  A ``.marked.pdf`` is this app's own artifact, rewritten on
+    every save by design, so overwriting one is the normal case and must keep
+    working.
+
+    1. ``out_path`` is the open document's own original.  Refused even when the
+       file is absent, because writing it would CREATE the pristine base that
+       every future open reads from -- and it would be full of marks, so the
+       next save would write them a second time on top.  Measured: after this
+       happens once, the ``.marked.pdf`` carries two copies of every mark for
+       ever.
+    2. ``out_path`` is the original of some other drawing that carries MARKS in
+       this app.  A reviewer works on a folder of drawings, and a save dialog
+       opened in that folder puts every one of them a single click away.
+
+    Rule 2 asks whether the sidecar holds ANNOTATIONS, not whether it exists,
+    and the difference is not pedantic: **merely opening a PDF creates its
+    ``.markup.db``** (the constructor builds a ``SidecarDB`` unconditionally),
+    so "a sidecar is present" means "this file has been opened here" and nothing
+    more.  Testing for existence refused an ordinary re-export onto a file the
+    user had only looked at, and broke two of this repository's own regression
+    tests, which fork onto a name whose sidecar was pre-seeded with wires and
+    waivers.  Both are cases with nothing to lose.
+
+    Where the sidecar cannot be read the answer is "not protected", which
+    UNDER-claims deliberately: rule 1 still covers the file this markup belongs
+    to, the save dialog has already asked about replacing the file, and a guard
+    that cannot be got past is worse than one that occasionally lets a
+    deliberate overwrite through.
+    """
+    if doc_path and same_path(out_path, original_pdf_path(doc_path)):
+        return (
+            f"\u201c{os.path.basename(out_path)}\u201d is the original drawing this "
+            f"markup belongs to, and DSI Redline never writes over an original. "
+            f"Choose another name \u2014 the marked-up copy is saved beside it as "
+            f"\u201c{os.path.basename(marked_pdf_path(doc_path))}\u201d."
+        )
+    n = _marks_in_sidecar(out_path)
+    if n:
+        return (
+            f"\u201c{os.path.basename(out_path)}\u201d is a drawing with {n} mark"
+            f"{'' if n == 1 else 's'} in DSI Redline, and an original is never "
+            f"written over. Choose another name."
+        )
+    return ""
+
+
+def _marks_in_sidecar(pdf_path: str) -> int:
+    """How many marks this app holds for ``pdf_path``, or 0 if it holds none.
+
+    0 for a ``.marked.pdf`` by design: that is this app's own artifact, rewritten
+    on every save, so overwriting one is the normal case rather than a loss.
+    """
+    if is_marked_pdf(pdf_path):
+        return 0
+    sc = sidecar_path(pdf_path)
+    if not os.path.exists(sc):
+        return 0
+    db = None
+    try:
+        db = SidecarDB(sc)
+        return len(db.load_annotations())
+    except Exception:
+        return 0
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+
+def refuse_protected(out_path: str, doc_path: Optional[str] = None) -> None:
+    """Raise :class:`ProtectedPathError` when ``out_path`` is an original."""
+    reason = protected_reason(out_path, doc_path)
+    if reason:
+        raise ProtectedPathError(reason)
+
+
+def refuse_overwriting_input(out_path: str, *inputs: Optional[str]) -> None:
+    """Raise when a tool would write over a file it is reading from.
+
+    Separate from :func:`refuse_protected` because it is a different question:
+    that one asks *is this an original*, this one asks *is this my own input*.
+    A page tool has no Document and no sidecar to consult; all it knows is what
+    it was handed.
+
+    PyMuPDF already refuses SOME of these with
+    ``ValueError: save to original must be incremental`` -- but only where the
+    output is saved from the very ``fitz.Document`` that opened it.  Where a
+    tool builds a NEW document from the pages it read, that check never fires
+    and the write succeeds.  Measured on this codebase: ``extract_pages`` took
+    a four-page drawing to one page, and ``combine_pdfs`` replaced its own input
+    with the combination.  So this guard is not decoration over the library's --
+    it covers the cases the library cannot see, and it turns the ones it can
+    into a sentence that names the file.
+    """
+    for src in inputs:
+        if src and same_path(out_path, src):
+            raise ProtectedPathError(
+                f"\u201c{os.path.basename(out_path)}\u201d is the file being read "
+                f"from, so writing there would destroy it. Choose another name."
+            )
+
+
 def strip_annotations(doc: "fitz.Document") -> None:
     """Remove every annotation from ``doc`` (used when a ``.marked.pdf`` is the
     only available base, so re-saving the store doesn't double the marks)."""
