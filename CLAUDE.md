@@ -167,6 +167,36 @@ Without them `import PySide6.QtGui` fails with `libEGL.so.1: cannot open shared
 object file` and about a third of the suite turns into skips. `CI.md` carries
 the package list.
 
+## An open PyMuPDF handle is a Windows file lock, and Linux cannot see it
+
+A `fitz.Document` left open holds the file. On Windows that makes `os.remove`
+raise `WinError 32` and makes a save onto that path raise *"cannot remove file
+… Permission denied"* from inside PyMuPDF; on Linux both succeed. So a test
+that leaks a handle is **green locally and red only on `windows-latest`** —
+which is what `tests/test_never_overwrite_original.py` did on its first run:
+two errors, both in the fixture, none in the code under test, on a leg the
+local suite cannot reach.
+
+The app itself is careful about this and always has been — `open_pdf` closes
+the previous document before it swaps (`main_window.py:1364-1368`) and so does
+`closeEvent`. It is **test** code that forgets.
+
+**The fix is to assert the CAUSE, which is checkable on Linux.** Waiting for
+the effect means waiting for CI. `assertNoOpenHandle(path)` walks the fixture's
+own documents and fails when one is still open on that path, so deleting a
+`close()` fails immediately on any platform. Five leaks were reintroduced in
+turn and every one goes red here.
+
+Two ways the falsification of that was wrong before it was right, both worth
+more than the fix:
+
+* **An injection that also deletes the assertion proves nothing.** Three of the
+  first four removed the `close()` *and* the check beside it, reported "0
+  failing", and read exactly like four dead gates.
+* **An assertion pointed at the wrong file reads like a live one.** One checked
+  the `.marked.pdf` where the released handle was on the original, so it was
+  vacuously true and the leak beside it fired nothing.
+
 ## A release names the rules it ships
 
 An installer that cannot say which rules it contains is one nobody can

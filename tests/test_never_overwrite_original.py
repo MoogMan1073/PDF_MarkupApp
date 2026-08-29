@@ -66,15 +66,63 @@ def _pages(path):
 
 
 class _Base(unittest.TestCase):
+    """Every Document opened here is closed in tearDown.
+
+    Not tidiness -- on Windows an open `fitz.Document` holds a lock, so a
+    leaked one makes `os.remove` raise `WinError 32` and makes a save onto that
+    path raise `cannot remove file ... Permission denied` from inside PyMuPDF.
+    Linux allows both, so a leak is INVISIBLE to a local run and fails only on
+    the `windows-latest` leg. That is exactly what happened: two tests here
+    passed on Ubuntu and errored on Windows, on the fixture rather than on the
+    code under test.
+
+    A test that needs the lock released mid-run closes explicitly and says so;
+    tearDown is the backstop, not the mechanism.
+    """
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.src = _pdf(os.path.join(self.tmp, "DWG-101.pdf"))
         self.pristine = _sha(self.src)
+        self._docs = []
+
+    def tearDown(self):
+        for doc in self._docs:
+            try:
+                doc.close()
+            except Exception:
+                pass
 
     def _open(self, path=None):
         doc = Document(path or self.src)
         doc.load()
+        self._docs.append(doc)
         return doc
+
+    def _release(self, doc):
+        """Close a document NOW, because the test is about to touch its file."""
+        doc.close()
+        if doc in self._docs:
+            self._docs.remove(doc)
+
+    def assertNoOpenHandle(self, path):
+        """No `fitz.Document` this fixture opened is still holding ``path``.
+
+        THE POINT OF THIS ASSERTION IS THAT IT RUNS ON LINUX. The consequence
+        of a leaked handle is Windows-only -- `os.remove` raises WinError 32,
+        and a save onto the path raises "cannot remove file ... Permission
+        denied" from inside PyMuPDF -- so a Linux run is green either way and
+        the defect surfaces only on the `windows-latest` leg, on the fixture
+        rather than on the code. Asserting the CAUSE rather than waiting for
+        the effect is what makes the fix checkable here: delete a `_release`
+        call and this fails immediately, on any platform.
+        """
+        held = [d for d in self._docs
+                if not d.fitz_doc.is_closed and same_path(d.path, path)]
+        self.assertEqual(
+            held, [],
+            f"{len(held)} open handle(s) on {os.path.basename(path)} -- "
+            f"Windows will refuse to remove or replace it")
 
     def _marked(self, doc, n=1):
         for _ in range(n):
@@ -108,6 +156,8 @@ class TestTheOriginalIsNeverOverwritten(_Base):
     def test_export_onto_the_original_is_refused_when_the_document_is_the_marked_copy(self):
         doc = self._marked(self._open())
         marked = doc.save()
+        self._release(doc)
+        self.assertNoOpenHandle(self.src)
         second = self._open(marked)
         with self.assertRaises(ProtectedPathError):
             second.export_annotated_pdf(self.src)
@@ -119,6 +169,10 @@ class TestTheOriginalIsNeverOverwritten(_Base):
         top of it, permanently."""
         doc = self._marked(self._open())
         marked = doc.save()
+        # Windows will not unlink a file another handle holds open, and this
+        # document holds `self.src`. The removal is the fixture, not the claim.
+        self._release(doc)
+        self.assertNoOpenHandle(self.src)
         os.remove(self.src)
         second = self._open(marked)
         with self.assertRaises(ProtectedPathError):
@@ -147,18 +201,38 @@ class TestAnotherDrawingUnderReviewIsProtectedToo(_Base):
     aimed at a neighbouring drawing replaced it wholesale -- a three-page
     drawing became a one-page copy of the acting document."""
 
+    def setUp(self):
+        super().setUp()
+        self._victims = []
+
     def _victim(self, name="DWG-102.pdf", pages=4):
         path = _pdf(os.path.join(self.tmp, name), pages=pages, label="VICTIM")
         doc = Document(path)
         doc.load()
         doc.store.add(Annotation(page=0, kind=KIND_RECT, rect=(9, 9, 90, 90)))
         doc.save()
+        doc.close()          # release the Windows lock before anyone aims at it
+        self._victims.append((path, doc))
         return path
+
+    def assertVictimsReleased(self):
+        """No handle left on a victim drawing.
+
+        Every test in this class expects a REFUSAL, so a leak here breaks
+        nothing today -- which is precisely why it needs an assertion rather
+        than luck. The day one of these tests is changed to expect a write, a
+        leaked handle turns it into a Windows-only failure in a fixture nobody
+        is looking at.
+        """
+        held = [os.path.basename(pth) for pth, doc in self._victims
+                if not doc.fitz_doc.is_closed]
+        self.assertEqual(held, [], f"open handle(s) on {held}")
 
     def test_export_onto_a_neighbouring_drawing_with_marks_is_refused(self):
         victim = self._victim()
         before, pages = _sha(victim), _pages(victim)
         doc = self._marked(self._open())
+        self.assertVictimsReleased()
         with self.assertRaises(ProtectedPathError):
             doc.export_annotated_pdf(victim)
         self.assertEqual((_sha(victim), _pages(victim)), (before, pages))
@@ -167,6 +241,7 @@ class TestAnotherDrawingUnderReviewIsProtectedToo(_Base):
         victim = self._victim()
         before = _sha(victim)
         doc = self._marked(self._open())
+        self.assertVictimsReleased()
         with self.assertRaises(ProtectedPathError):
             doc.export_flattened_pdf(victim)
         self.assertEqual(_sha(victim), before)
@@ -174,6 +249,7 @@ class TestAnotherDrawingUnderReviewIsProtectedToo(_Base):
     def test_a_page_tool_will_not_write_over_a_drawing_with_marks(self):
         victim = self._victim()
         before, pages = _sha(victim), _pages(victim)
+        self.assertVictimsReleased()
         with self.assertRaises(ProtectedPathError):
             pdf_ops.rotate_pdf(self.src, victim, 90)
         self.assertEqual((_sha(victim), _pages(victim)), (before, pages))
@@ -182,6 +258,7 @@ class TestAnotherDrawingUnderReviewIsProtectedToo(_Base):
         victim = self._victim()
         before = _sha(victim)
         doc = self._marked(self._open())
+        self.assertVictimsReleased()
         with self.assertRaises(ProtectedPathError):
             doc.save_as(victim)
         self.assertEqual(_sha(victim), before)
@@ -193,9 +270,19 @@ class TestAnotherDrawingUnderReviewIsProtectedToo(_Base):
         own regression tests; the rule asks whether the sidecar holds
         ANNOTATIONS."""
         looked_at = _pdf(os.path.join(self.tmp, "client-copy.pdf"), pages=1)
-        Document(looked_at).load()
+        # Opened and then CLOSED, which is what the app does -- `open_pdf`
+        # closes the previous document before it swaps
+        # (app/main_window.py:1364-1368). Left open, the export below fails on
+        # Windows inside PyMuPDF with "cannot remove file ... Permission
+        # denied", which is a fact about the handle rather than about the rule
+        # under test.
+        seen = Document(looked_at)
+        seen.load()
+        seen.close()
         self.assertTrue(os.path.exists(sidecar_path(looked_at)))
         self.assertEqual(protected_reason(looked_at), "")
+        self.assertTrue(seen.fitz_doc.is_closed,
+                        "the export below would fail on Windows, not here")
         doc = self._marked(self._open())
         doc.export_annotated_pdf(looked_at)          # must not raise
         self.assertEqual(_annots(looked_at), 1)
@@ -277,6 +364,14 @@ class TestTheOrdinaryWorkflowStillWorks(_Base):
         here and must keep working."""
         doc = self._marked(self._open())
         marked = doc.save()
+        self._release(doc)
+        # `self.src`, not `marked`: `_release(doc)` frees the ORIGINAL, and
+        # nothing holds the marked copy at this point (`save()` writes it
+        # through a `work` document it closes). Aimed at `marked` the assertion
+        # was vacuously true and removing the `_release` beside it fired
+        # nothing -- an assertion pointed at the wrong file reads exactly like
+        # a live one.
+        self.assertNoOpenHandle(self.src)
         second = self._open(marked)
         self.assertEqual(len(second.store.all()), 1)
         second.save()
