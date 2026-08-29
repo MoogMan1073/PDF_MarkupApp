@@ -16,10 +16,42 @@ from typing import Callable, Iterable, Optional
 
 import fitz  # PyMuPDF
 
+# The one guard, imported rather than reimplemented. A page tool has no Document
+# and no sidecar, so it can only ask "is this my own input" -- but the ANSWER has
+# to be the same everywhere, and a second same-file comparison here would be a
+# second opinion about which two paths are one file.
+from ..model.storage import refuse_overwriting_input, refuse_protected
+
 # sheet-number parse modes
 SHEET_EXACT = "exact"
 SHEET_FIRST_NUMBER = "first_number"
 SHEET_SMALLER_OF_TWO = "smaller_of_two"
+
+
+def _guard_out(out_path: str, *inputs: Optional[str]) -> None:
+    """Every write in this module goes through here first.
+
+    Two questions, and they are different:
+
+    * **Is this my own input?** Measured to destroy real files -- with the
+      output aimed at a source, ``extract_pages`` took a four-page drawing to
+      one page, ``split_ranges`` (merge=True) took five to two, and
+      ``combine_pdfs`` replaced its input with the combination. PyMuPDF refuses
+      SOME of these itself (``save to original must be incremental``) but only
+      where the write comes from the very document that opened the file; every
+      one of these builds a NEW document, so that check never fires.
+    * **Is this a drawing under review?** A page tool has no Document, but a
+      drawing that carries marks in DSI Redline is identifiable from its
+      sidecar, and destroying one is the same loss as destroying an original.
+      Measured: ``rotate_pdf(a.pdf, victim.pdf, 90)`` replaced a four-page
+      drawing with a three-page rotated copy of an unrelated file, silently.
+
+    What is NOT covered, stated rather than implied: a PDF this app has never
+    opened is indistinguishable from a stale export, and the save dialog has
+    already asked about replacing it. Redline protects what it can identify.
+    """
+    refuse_overwriting_input(out_path, *inputs)
+    refuse_protected(out_path)
 
 
 def _base_name(path: str) -> str:
@@ -255,6 +287,7 @@ def split_pdf(src: str, out_dir: str, naming: str = "page",
             out = fitz.open()
             out.insert_pdf(doc, from_page=i, to_page=i)
             path = os.path.join(out_dir, name)
+            _guard_out(path, src)
             out.save(path)
             out.close()
             written.append(path)
@@ -285,6 +318,13 @@ def extract_pages(src: str, out: str, pages, merge: bool = True,
             ordered.append(p)
     if not ordered:
         raise ValueError("No pages selected.")
+    # MEASURED to destroy its own source: extract_pages(src, src, [0]) took a
+    # four-page drawing to one page and returned normally. It builds a NEW
+    # fitz.Document from the pages it read, so PyMuPDF's own
+    # "save to original must be incremental" check never fires -- that check
+    # only sees a save from the document that opened the file.
+    if merge:
+        _guard_out(out, src)          # `out` is a FOLDER when merge=False
     doc = fitz.open(src)
     try:
         n = doc.page_count
@@ -315,6 +355,7 @@ def extract_pages(src: str, out: str, pages, merge: bool = True,
             one = fitz.open()
             one.insert_pdf(doc, from_page=p, to_page=p)
             path = os.path.join(out, f"{base}-page{(p + 1):0{width}d}.pdf")
+            _guard_out(path, src)
             one.save(path)
             one.close()
             written.append(path)
@@ -333,6 +374,11 @@ def split_ranges(src: str, out: str, ranges, merge: bool = False,
     with ``merge=True`` every range is concatenated into the single PDF ``out``
     (a file path).  Returns the written paths.
     """
+    if merge:
+        # MEASURED: split_ranges(src, src, [(1, 2)], merge=True) took a
+        # five-page drawing to two pages. `out` is a FOLDER when merge=False,
+        # and each file written into it is guarded at its own save below.
+        _guard_out(out, src)
     norm = []
     for a, b in ranges:
         a, b = int(a), int(b)
@@ -373,6 +419,7 @@ def split_ranges(src: str, out: str, ranges, merge: bool = False,
             name = (f"{base}-range{(a + 1):0{width}d}-{(b + 1):0{width}d}.pdf"
                     if b > a else f"{base}-page{(a + 1):0{width}d}.pdf")
             path = os.path.join(out, name)
+            _guard_out(path, src)
             part.save(path)
             part.close()
             written.append(path)
@@ -402,6 +449,12 @@ def combine_pdfs(items, out_path: str, progress: Optional[Callable] = None,
         files.sort(key=_numeric_key)
     else:
         files = list(items)
+    # MEASURED to destroy one of its own inputs: combine_pdfs([src, other], src)
+    # replaced a four-page drawing with the six-page combination. Same mechanism
+    # as extract_pages -- a fresh document is built, so the library check never
+    # fires. Every input is checked, not just the first: the dialog can add a
+    # whole folder, and the output is typed by hand.
+    _guard_out(out_path, *files)
     merged = fitz.open()
     try:
         total = len(files)
@@ -424,6 +477,7 @@ def combine_pdfs(items, out_path: str, progress: Optional[Callable] = None,
 
 def insert_pdf(target: str, insert: str, out_path: str, index: int) -> str:
     """Insert ``insert`` into ``target`` before 0-based ``index`` (0..len)."""
+    _guard_out(out_path, target, insert)
     doc = fitz.open(target)
     try:
         index = max(0, min(int(index), doc.page_count))
@@ -439,6 +493,7 @@ def insert_pdf(target: str, insert: str, out_path: str, index: int) -> str:
 def swap_page(src: str, new_page_pdf: str, out_path: str, index: int) -> str:
     """Replace the page at 0-based ``index`` with the (single) page of
     ``new_page_pdf``."""
+    _guard_out(out_path, src, new_page_pdf)
     doc = fitz.open(src)
     try:
         if not (0 <= index < doc.page_count):
@@ -458,6 +513,7 @@ def swap_page(src: str, new_page_pdf: str, out_path: str, index: int) -> str:
 
 def delete_pages(src: str, out_path: str, spec: str) -> str:
     """Remove the pages named by a 1-based spec like ``"1,3,5-7"``."""
+    _guard_out(out_path, src)
     doc = fitz.open(src)
     try:
         pages = parse_page_ranges(spec, max_page=doc.page_count)
@@ -475,6 +531,7 @@ def delete_pages(src: str, out_path: str, spec: str) -> str:
 def rotate_pdf(src: str, out_path: str, angle: int, pages=None) -> str:
     """Rotate pages by ``angle`` (added to current rotation). ``pages`` is an
     optional iterable of 0-based indices (default: all)."""
+    _guard_out(out_path, src)
     doc = fitz.open(src)
     try:
         targets = range(doc.page_count) if pages is None else pages
@@ -497,6 +554,7 @@ def rotate_pdf_map(src: str, out_path: str, page_angles: dict,
     current rotation).  Pages absent from the map are left untouched.  Used by
     the visual rotate tool, where each page can carry its own ↺/↻ preview.
     """
+    _guard_out(out_path, src)
     doc = fitz.open(src)
     try:
         items = [(int(i), int(a)) for i, a in page_angles.items()
@@ -539,6 +597,12 @@ def crop_regions_to_png(src: str, out_dir: str, regions_by_page: dict,
                 pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom),
                                       clip=fitz.Rect(*rect), alpha=False)
                 path = os.path.join(out_dir, f"{base}_pg{pg + 1}_r{ridx}.png")
+                # A .png cannot be a PDF this app protects and cannot be the
+                # source, so this can never fire -- present so the AST gate
+                # reads "every writer is guarded" without an exception list,
+                # which is a list that goes stale the first time somebody
+                # forgets to add to it.
+                _guard_out(path, src)
                 pix.save(path)
                 written.append(path)
                 done += 1
@@ -554,6 +618,10 @@ def crop_regions_to_png(src: str, out_dir: str, regions_by_page: dict,
 
 def pdf_to_docx(src: str, out_path: str, progress: Optional[Callable] = None) -> str:
     """Convert a PDF to .docx via pdf2docx (raises if pdf2docx is unavailable)."""
+    # A .docx destination cannot be a PDF this app protects, so only the
+    # own-input half can fire -- kept for uniformity, because the next writer
+    # added here should not have to decide which half applies.
+    _guard_out(out_path, src)
     from pdf2docx import Converter
     cv = Converter(src)
     try:

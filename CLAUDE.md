@@ -36,6 +36,91 @@ opens **view-only** rather than half-working: view, search, print and the PDF
 tools stay available and markup is turned off until it is renamed. Degrading to
 a named, explained state beats saving somewhere the user did not ask for.
 
+### ...and until 1.5.2 it was a sentence, not a rule
+
+The boundary was stated in five documents and enforced nowhere. `save()`'s own
+docstring said *"The original PDF is never overwritten"* directly above the line
+that did it: `export_annotated_pdf` forwarded a save dialog's path straight into
+`save(marked_path=...)`, and every write in the app took its destination on
+trust. Measured, not argued:
+
+| aimed at | result |
+|---|---|
+| `export_annotated_pdf(the open drawing)` | replaced, **no `.marked.pdf` written at all** |
+| ...and every save after that | wrote **two** copies of every mark, for ever |
+| `export_annotated_pdf(a neighbouring drawing)` | 3 pages → 1, replaced by the acting document |
+| `export_flattened_pdf(a neighbouring drawing)` | same, and **unrecoverable** — baked into page content |
+| `extract_pages(src, src, merge=True)` | 4 pages → 1 |
+| `split_ranges(src, src, merge=True)` | 5 pages → 2 |
+| `combine_pdfs([src, other], src)` | 4 pages → 6 |
+| `rotate_pdf(a, an unrelated drawing)` | 4 pages → a 3-page rotated copy of `a` |
+
+**PyMuPDF refuses some of this itself** — `save to original must be
+incremental` — and the two things that get past it are worth knowing, because
+they are what made a stated boundary a false one:
+
+* **The library's check only sees a save from the document that opened the
+  file.** Every page tool builds a *new* `fitz.Document` from the pages it read,
+  so the check never fires and the write lands.
+* **`save()`'s own atomicity machinery defeats it.** The `out_is_open`
+  temp-and-`os.replace` branch exists so an open `.marked.pdf` can be re-saved
+  on Windows; aimed at the original it turns a refusal the library would have
+  issued into a successful destruction. The safety net was there and the app
+  routed around it.
+
+**The doubling is the part a user could not undo.** Once the original carries a
+mark, `original_pdf_path` still resolves to it and `is_marked_pdf` says False,
+so the `strip_annotations` branch that exists to stop re-saving doubling the
+marks is unreachable — and the `.marked.pdf` carries every mark twice from then
+on, whatever you do.
+
+**What is enforced now, and where.** One guard, in `app/model/storage.py` beside
+the path helpers, called from every write:
+
+1. `refuse_protected(out, doc_path)` — never write **this document's original**.
+   Refused even when that file is absent, because writing it would *create* the
+   pristine base every later open reads from.
+2. the same rule for **another drawing that holds marks here** — a reviewer works
+   on a folder, and a save dialog opened in it puts every drawing one click away.
+3. `refuse_overwriting_input(out, *inputs)` — a page tool may not eat its own
+   input.
+
+`app/tools/pdf_ops.py` routes all eleven of its writers through one `_guard_out`,
+and `tests/test_never_overwrite_original.py` walks the module's AST and fails on
+a writer that has none — a gate over the artifact rather than over a list of the
+functions that existed when it was written.
+
+**Two things the rules deliberately do NOT do**, because measuring said so:
+
+* **Rule 2 asks whether the sidecar holds ANNOTATIONS, not whether it exists.**
+  Opening a PDF creates its `.markup.db` unconditionally, so "a sidecar is
+  present" means "seen here" and nothing more. The existence test refused an
+  ordinary second export and broke two of this repo's own regression tests,
+  which fork onto a name whose sidecar was pre-seeded with wires and waivers.
+* **A PDF this app has never opened is not protected.** It is indistinguishable
+  from a stale export, and the save dialog has already asked about replacing it.
+  Redline protects what it can identify; saying which is the point.
+
+### Two dead gates were written before the live ones
+
+Both passed on the exact defect they were written for, and both were found by
+injecting it rather than by reading them:
+
+* the AST sweep counted only `.save(`, so `pdf_to_docx` — which writes through
+  pdf2docx's `convert()` — was **not counted as a writer at all**, and removing
+  its guard changed nothing. It now takes a set of write calls and asserts the
+  scan is still *finding* at least ten writers, so a rename cannot make it match
+  nothing and go green.
+* the `same_path` test used a **symlink**, which `os.path.realpath` resolves —
+  so the fallback answered it alone and deleting the `os.path.samefile` branch
+  kept the test green. A **hard link** has two real names `realpath` does not
+  collapse, and the fixture asserts that before it asserts anything else.
+
+And the falsification loop itself was dead first: `2>/dev/null` on a
+`python -m unittest` run discards the results, so eight injections in a row
+reported *nothing fired*. **If a falsification says the gate did not fire,
+suspect the reading before the gate.**
+
 ## Three optional dependencies, one pattern
 
 `pydrc` (design rules), `ezdxf` (reading AutoCAD Electrical source drawings),
@@ -82,6 +167,36 @@ Without them `import PySide6.QtGui` fails with `libEGL.so.1: cannot open shared
 object file` and about a third of the suite turns into skips. `CI.md` carries
 the package list.
 
+## An open PyMuPDF handle is a Windows file lock, and Linux cannot see it
+
+A `fitz.Document` left open holds the file. On Windows that makes `os.remove`
+raise `WinError 32` and makes a save onto that path raise *"cannot remove file
+… Permission denied"* from inside PyMuPDF; on Linux both succeed. So a test
+that leaks a handle is **green locally and red only on `windows-latest`** —
+which is what `tests/test_never_overwrite_original.py` did on its first run:
+two errors, both in the fixture, none in the code under test, on a leg the
+local suite cannot reach.
+
+The app itself is careful about this and always has been — `open_pdf` closes
+the previous document before it swaps (`main_window.py:1364-1368`) and so does
+`closeEvent`. It is **test** code that forgets.
+
+**The fix is to assert the CAUSE, which is checkable on Linux.** Waiting for
+the effect means waiting for CI. `assertNoOpenHandle(path)` walks the fixture's
+own documents and fails when one is still open on that path, so deleting a
+`close()` fails immediately on any platform. Five leaks were reintroduced in
+turn and every one goes red here.
+
+Two ways the falsification of that was wrong before it was right, both worth
+more than the fix:
+
+* **An injection that also deletes the assertion proves nothing.** Three of the
+  first four removed the `close()` *and* the check beside it, reported "0
+  failing", and read exactly like four dead gates.
+* **An assertion pointed at the wrong file reads like a live one.** One checked
+  the `.marked.pdf` where the released handle was on the original, so it was
+  vacuously true and the leak beside it fired nothing.
+
 ## A release names the rules it ships
 
 An installer that cannot say which rules it contains is one nobody can
@@ -99,4 +214,9 @@ Cutting a release is three steps **in this order**:
 Tagging the app before step 2 produces a release whose notes name a moving
 branch, which is the one thing the pin exists to prevent.
 
-The version is declared once, in `app/__init__.py`.
+The version is declared in **three** places — `app/__init__.py`,
+`packaging/installer.iss` and a `CHANGELOG.md` section — and
+`tests/test_requirements.py::TestVersionIsStatedOnce` fails when they disagree.
+That gate is right and this line used to say "declared once", which is the
+claim it exists to disprove: it caught the 1.5.2 bump within a minute of it
+being made in one file.

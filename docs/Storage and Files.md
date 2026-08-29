@@ -20,6 +20,13 @@ Next to your PDF (`drawing.pdf`):
 Save with **File ▸ Save markup** (`Ctrl+S`). Use **Export annotated PDF…**
 (`Ctrl+Shift+E`) to write a copy anywhere.
 
+> [!warning] Exporting onto a drawing is refused
+> If you point an export — or any **PDF Tools** operation — at the drawing you
+> are marking up, or at another drawing that carries marks in DSI Redline, the
+> app refuses and says which file it is. Your originals are the one thing it
+> will not write over, so choose another name. Exporting onto a previous export,
+> or onto a `.marked.pdf`, is fine: those are copies.
+
 > [!warning] Closing with unsaved marks
 > Marks live in memory until you save. If you close the window — or open a
 > different drawing — with marks you haven't saved, the app asks first and
