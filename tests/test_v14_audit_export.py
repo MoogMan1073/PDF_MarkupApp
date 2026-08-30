@@ -147,10 +147,6 @@ class TestFormatChoice(_Base):
                         .startswith("<!doctype html"))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def _idle_run():
     """A run where nothing was skipped but a rule had nothing to look at.
 
@@ -314,3 +310,7 @@ class TestARuleTurnedOff(unittest.TestCase):
         self.assertTrue(kept)
         self.assertNotIn(rule, [f.rule_id for f in kept])
         self.assertEqual(visible_findings(doc.findings, []), doc.findings)
+
+
+if __name__ == "__main__":
+    unittest.main()

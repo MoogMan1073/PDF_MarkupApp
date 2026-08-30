@@ -99,10 +99,6 @@ class TestTodoGrouping(unittest.TestCase):
         self.assertEqual(out[0][0], "")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestSheetProvenance(unittest.TestCase):
     """Where a page's sheet number came from.
 
@@ -222,3 +218,7 @@ class TestSheetRoles(unittest.TestCase):
         again.load()
         self.assertEqual(again.sheet_role_of(1), sheet_role.LAYOUT)
         again.close()
+
+
+if __name__ == "__main__":
+    unittest.main()
