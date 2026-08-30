@@ -27,10 +27,14 @@ jobs:
       PYDRC_TOKEN: ${{ secrets.PYDRC_TOKEN }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
+          # Pinned, unlike tests.yml's matrix, and deliberately: this job
+          # freezes ONE installer and the interpreter baked into it should
+          # not vary run to run. What must work on 3.11-3.13 is running
+          # from source, and the test matrix is where that is established.
           python-version: "3.11"
 
       - name: Install dependencies
@@ -127,13 +131,13 @@ jobs:
             -DestinationPath "dist_installer/DSI-Redline-$ver-portable.zip" -Force
 
       - name: Upload portable app
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: DSI-Redline-portable
           path: "dist/DSI Redline/**"
 
       - name: Upload installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: DSI-Redline-installer
           path: "dist_installer/*.exe"

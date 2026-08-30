@@ -14,7 +14,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # CONTRIBUTING and the README both say "Python 3.11+". The matrix
+        # varied only the operating system and pinned 3.11 on both runners, so
+        # 3.12 and 3.13 -- increasingly the default on a fresh machine -- were
+        # a claim made to contributors and never checked. The frozen Windows
+        # build pins its own interpreter, so a shipped installer is unaffected;
+        # what this covers is running from source, which the README documents
+        # as a first-class way to use the app.
         os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12", "3.13"]
     runs-on: ${{ matrix.os }}
 
     # The secret is lifted to job env because the `secrets` context is not
@@ -24,11 +32,11 @@ jobs:
       PYDRC_TOKEN: ${{ secrets.PYDRC_TOKEN }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       # A bare Ubuntu runner has no Qt system libraries, so importing
