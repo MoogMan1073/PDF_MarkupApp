@@ -2,9 +2,16 @@
 
 import unittest
 
-from app.help import load_vault, vault_dir, to_markdown
+from tests._qt import QT_OK as _QT_OK, REASON as _QT_REASON
+
+# `app.help` reaches PySide6 (app/help.py:16), so this import -- not any
+# PySide6 line in this file -- is what made the whole module ERROR rather
+# than skip on a machine without Qt.
+if _QT_OK:
+    from app.help import load_vault, vault_dir, to_markdown
 
 
+@unittest.skipUnless(_QT_OK, _QT_REASON)
 class TestHelpVault(unittest.TestCase):
     def setUp(self):
         self.pages = load_vault(vault_dir())

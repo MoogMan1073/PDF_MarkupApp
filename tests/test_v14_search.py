@@ -9,19 +9,19 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import fitz
 
-from app.viewer.doc_search import (
-    DocumentSearch, SearchOptions, BadPatternError, MAX_MATCHES,
-)
-from app.model.annotations import (
-    AnnotationStore, Annotation, KIND_TEXTBOX, KIND_COMMENT,
-)
-from app.config import AppConfig, MAX_RECENT_SEARCHES
+from tests._qt import QT_OK as _QT_OK, REASON as _QT_REASON
 
-try:
+# `app.config` reaches PySide6 (QSettings), so these imports are what made
+# the module ERROR rather than skip.
+if _QT_OK:
+    from app.viewer.doc_search import (
+        DocumentSearch, SearchOptions, BadPatternError, MAX_MATCHES,
+    )
+    from app.model.annotations import (
+        AnnotationStore, Annotation, KIND_TEXTBOX, KIND_COMMENT,
+    )
+    from app.config import AppConfig, MAX_RECENT_SEARCHES
     from PySide6.QtWidgets import QApplication
-    _QT_OK = True
-except Exception:  # pragma: no cover
-    _QT_OK = False
 
 
 def _make_pdf(dirpath, name="s.pdf", pages=1, lines=None):
@@ -41,6 +41,7 @@ def _make_pdf(dirpath, name="s.pdf", pages=1, lines=None):
     return p
 
 
+@unittest.skipUnless(_QT_OK, _QT_REASON)
 class TestEngine(unittest.TestCase):
     """DocumentSearch alone — no Qt."""
 
@@ -171,6 +172,7 @@ class TestEngine(unittest.TestCase):
         self.assertTrue(all(m.source == "text" for m in r.matches))
 
 
+@unittest.skipUnless(_QT_OK, _QT_REASON)
 class TestSearchHistoryConfig(unittest.TestCase):
     def setUp(self):
         self.cfg = AppConfig()
@@ -197,7 +199,7 @@ class TestSearchHistoryConfig(unittest.TestCase):
         self.assertEqual(self.cfg.recent_searches, [])
 
 
-@unittest.skipUnless(_QT_OK, "PySide6 not available")
+@unittest.skipUnless(_QT_OK, _QT_REASON)
 class TestSearchPanel(unittest.TestCase):
     """The panel + viewer wiring."""
 
@@ -389,7 +391,7 @@ class TestSearchPanel(unittest.TestCase):
         self.assertLessEqual(right_gap, 40)
 
 
-@unittest.skipUnless(_QT_OK, "PySide6 not available")
+@unittest.skipUnless(_QT_OK, _QT_REASON)
 class TestMainWindowShortcuts(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

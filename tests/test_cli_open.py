@@ -4,7 +4,10 @@ import os
 import tempfile
 import unittest
 
+from tests._qt import QT_OK as _QT_OK, REASON as _QT_REASON
 
+
+@unittest.skipUnless(_QT_OK, _QT_REASON)  # its tests import `main`, which imports PySide6 (main.py:9)
 class TestPdfFromArgv(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

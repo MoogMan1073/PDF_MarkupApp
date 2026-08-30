@@ -4,10 +4,13 @@ import os
 import tempfile
 import unittest
 
+from tests._qt import QT_OK as _QT_OK, REASON as _QT_REASON
+
 import app.extraction.claude_api as capi
 from app.tools import region_export as rex
 
 
+@unittest.skipUnless(_QT_OK, _QT_REASON)
 class TestExtractRegionContent(unittest.TestCase):
     def setUp(self):
         self._vc = capi._vision_call
@@ -50,6 +53,7 @@ def _text(page=0, idx=1, title="Note"):
             "rows": [], "text": "Install per spec.\nTorque to 40 Nm."}
 
 
+@unittest.skipUnless(_QT_OK, _QT_REASON)
 class TestWriters(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -101,6 +105,7 @@ class TestWriters(unittest.TestCase):
         self.assertEqual(names, ["d_text.docx"])
 
 
+@unittest.skipUnless(_QT_OK, _QT_REASON)
 class TestOcrStructured(unittest.TestCase):
     """Best-effort table reconstruction from positioned OCR words (no Tesseract)."""
 
@@ -140,6 +145,7 @@ class TestOcrStructured(unittest.TestCase):
         self.assertEqual(words_to_structured([])["type"], "text")
 
 
+@unittest.skipUnless(_QT_OK, _QT_REASON)  # reaches PySide6 through app.tools.wizards (wizards.py:11)
 class TestClassifyRegion(unittest.TestCase):
     def test_ai_path(self):
         import app.tools.wizards as wiz
