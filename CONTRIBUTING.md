@@ -18,8 +18,14 @@ python tools/run_tests.py tests.test_audit
 ```
 
 **`.github/workflows/tests.yml` is the authority, not this file.** It runs on
-Ubuntu and Windows, on every push and every pull request, and its last green
-run on `main` reports **682 tests across 53 modules; 0 skipped**.
+Ubuntu and Windows, on every push and every pull request, with `--strict` and
+— whenever the PyDRC token is present — `--require-drc`, so **a skip fails the
+run** rather than hiding under a green tick.
+
+This used to quote a test count as well. It drifted: the documented 682 was
+720 when somebody next looked, and `CLAUDE.md` had three different numbers in
+it by then. The runner prints the current one; a document that repeats it is a
+copy nobody reads until it disagrees with the terminal in front of them.
 
 Two things about a local run that are not failures:
 
