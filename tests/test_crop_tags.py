@@ -4,9 +4,12 @@ import os
 import tempfile
 import unittest
 
+from tests._qt import QT_OK as _QT_OK, REASON as _QT_REASON
+
 import app.extraction.claude_api as capi
 
 
+@unittest.skipUnless(_QT_OK, _QT_REASON)  # reaches PySide6 through app.tools.wizards (wizards.py:11)
 class TestTagDescriptions(unittest.TestCase):
     def setUp(self):
         self._vc = capi._vision_call

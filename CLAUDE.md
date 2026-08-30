@@ -133,6 +133,66 @@ because that repository is **private**, and a plain
 `pip install -r requirements.txt` would otherwise fail for anyone without
 credentials, CI runners included.
 
+## ...and seven modules ERRORED rather than skipping, which is the same failure louder
+
+`CONTRIBUTING.md` calls a machine without Qt "not a failure" and the section
+above is about skips being invisible. Seven modules did neither: they **errored**
+— which is loud, and loud about the wrong thing. `No module named 'PySide6'` on
+a checkout where nobody has installed the requirements reads as a broken repo,
+and it makes a legitimately-degrading run look like a failing one. Same class as
+`TestRolledUpFindingOnScreen`, and the same class this repo fixed in PyDRC for
+`ezdxf` one repo over — *fixing a class of bug only where it was noticed.*
+
+**The guard they were missing is not the one they had.** Three of the seven
+already carried `try: from PySide6... except: _QT_OK = False` and still died,
+because what they import at module scope is `app.config` or `app.help`, and Qt
+arrives **through those**. A probe of the direct import cannot see a transitive
+one. Two shapes, one cause:
+
+| module | died at | through |
+|---|---|---|
+| `test_help` | module scope | `app/help.py:16` |
+| `test_v12_recent`, `test_v14_search` | module scope | `app/config.py:14` |
+| `test_cli_open` | inside the test | `main.py:9` |
+| `test_crop_tags`, `test_region_export` | inside the test | `app/tools/wizards.py:11` |
+| `test_v12_author` | inside the test | `app/viewer/command_stack.py:13` |
+
+- **A decorator cannot save a module that never loads**, so the three
+  module-scope cases needed their `app.*` import guarded as well. The other four
+  load fine and only needed the decorator.
+- **`tests/_qt.py` is one probe, not a twenty-ninth copy**, and it probes the
+  thing rather than a proxy: whether `PySide6` imports at all. `except
+  Exception`, not `except ImportError`, because the documented Linux failure is
+  `libEGL.so.1` raised from inside the extension module.
+- **A test that is semantically Qt-free can still need Qt to run.**
+  `TestRecentConfig` says *"the stored list itself (no GUI)"* and builds
+  `AppConfig`, which is `QSettings`. Skipping it is honest; erroring was not.
+  Making `app.config` Qt-free is a product change and is deliberately not done
+  here.
+
+**Verified in BOTH directions, which is the only way to tell a fix from a
+withdrawal.** A skip added where a test used to run is coverage lost, and it
+looks identical to a fix in the without-Qt direction alone. So PySide6 was
+installed and the suite measured before and after: **713 tests across 55
+modules, 28 skipped, identical per-module results and identical skip reasons** —
+the change is inert when Qt is present, by construction (`skipUnless(True)` is a
+no-op and every new import guard is `if _QT_OK:`).
+
+The first attempt was **not** inert: a scripted rewrite half-applied to
+`test_v12_author`, adding the decorator without the import it referenced, and
+the module died with `NameError`. 713 → **707**, and those 6 lost tests are that
+one module exactly. Caught by comparing against the baseline rather than by
+reading the diff — the third mechanical-rewrite defect this family has had, after
+Canal's two.
+
+`tests/test_qt_absent_degrades.py` is the gate, and it **sweeps the artifact**:
+every `tests/test_*.py`, loaded and run with `PySide6` blocked, asserting zero
+errors. A gate naming those seven covers what was broken the day it was written;
+the eighth module to reach Qt through a new `app.*` import fails here instead.
+6.4 s. Falsified nine ways — each of the seven guards stripped in turn (each
+caught, each naming its own module), plus the blocker neutered, plus a
+module-count floor so a sweep that finds nothing cannot read as a pass.
+
 ## A SKIP IS HOW COVERAGE EVAPORATES UNDER A GREEN TICK
 
 The audit tests skip when PyDRC is missing, so a run without it goes green

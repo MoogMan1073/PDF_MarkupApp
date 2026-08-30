@@ -10,14 +10,14 @@ import fitz
 
 from app.model.annotations import Annotation, AnnotationStore, KIND_COMMENT
 
-try:
+from tests._qt import QT_OK as _QT_OK, REASON as _QT_REASON
+
+if _QT_OK:
     from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
     from PySide6.QtCore import Qt
-    _QT_OK = True
-except Exception:  # pragma: no cover
-    _QT_OK = False
 
 
+@unittest.skipUnless(_QT_OK, _QT_REASON)  # reaches PySide6 through app.viewer.command_stack (command_stack.py:13)
 class TestAuthorSnapshot(unittest.TestCase):
     def test_capture_restore_author(self):
         from app.viewer.command_stack import capture, _restore
@@ -29,7 +29,7 @@ class TestAuthorSnapshot(unittest.TestCase):
         self.assertEqual(a.author, "Eli")
 
 
-@unittest.skipUnless(_QT_OK, "PySide6 not available")
+@unittest.skipUnless(_QT_OK, _QT_REASON)
 class TestPanelDoubleClick(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -74,7 +74,7 @@ class TestPanelDoubleClick(unittest.TestCase):
         self.assertEqual(got, [c])
 
 
-@unittest.skipUnless(_QT_OK, "PySide6 not available")
+@unittest.skipUnless(_QT_OK, _QT_REASON)
 class TestEditAuthor(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

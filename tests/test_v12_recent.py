@@ -8,13 +8,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import fitz
 
-from app.config import AppConfig, MAX_RECENT_FILES
+from tests._qt import QT_OK as _QT_OK, REASON as _QT_REASON
 
-try:
+# `app.config` reaches PySide6 (QSettings), so this import is what made the
+# module ERROR -- the direct PySide6 probe that used to sit below it never
+# got the chance to run.
+if _QT_OK:
+    from app.config import AppConfig, MAX_RECENT_FILES
     from PySide6.QtWidgets import QApplication
-    _QT_OK = True
-except Exception:  # pragma: no cover
-    _QT_OK = False
 
 
 def _make_pdf(dirpath, name):
@@ -23,8 +24,11 @@ def _make_pdf(dirpath, name):
     return p
 
 
+@unittest.skipUnless(_QT_OK, _QT_REASON)
 class TestRecentConfig(unittest.TestCase):
-    """The stored list itself (no GUI)."""
+    """The stored list itself (no GUI) -- but AppConfig is built on QSettings,
+    so it cannot be constructed at all without Qt. Skipping is the honest
+    answer; erroring was not."""
 
     def setUp(self):
         self.cfg = AppConfig()
@@ -79,7 +83,7 @@ class TestRecentConfig(unittest.TestCase):
         self.assertEqual(self.cfg.recent_files, [])
 
 
-@unittest.skipUnless(_QT_OK, "PySide6 not available")
+@unittest.skipUnless(_QT_OK, _QT_REASON)
 class TestRecentMenu(unittest.TestCase):
     """The File ▸ Open Recent menu."""
 
