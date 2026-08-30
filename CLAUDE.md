@@ -272,3 +272,38 @@ when they disagree. **A rule and a gate that contradict each other teach people
 to trust neither**, and here it was the rule that was wrong. `CLAUDE.md` was
 corrected at the 1.5.2 bump and `CONTRIBUTING.md` was not — the same
 fix-where-it-was-noticed pattern, one file over.
+
+## "Python 3.11+" was a claim to contributors, and only 3.11 ran
+
+`CONTRIBUTING.md` and `README.md` both say it. The CI matrix varied only the
+operating system and pinned `python-version: "3.11"` on both runners, so **3.12
+and 3.13 — increasingly the default on a fresh machine — were advertised and
+never checked.**
+
+The frozen Windows build pins its own interpreter, so a shipped installer is
+unaffected. What this is about is **running from source**, which the README
+documents as a first-class way to use the app, against a suite that heavily
+exercises PySide6 and PyMuPDF. `build-windows.yml` therefore stays pinned, and
+**the reason is written into the file** — an asymmetry with no stated reason
+reads as the oversight the test matrix just corrected, and somebody eventually
+"fixes" it.
+
+**And both workflows pinned Node-20 action majors.** Every run ended with
+*"Node.js 20 is deprecated. The following actions … are being forced to run on
+Node.js 24."* The forcing is GitHub's temporary accommodation; when it ends, a
+workflow pinned to those majors stops working — and here that is the Windows
+build, **the only path that produces the installer**. Bumped to `checkout@v5`,
+`setup-python@v6`, `upload-artifact@v5`.
+
+`tests/test_requirements.py::TestTheInterpreterClaimIsExercised` reads the
+minimum out of the documents and asserts the matrix covers it *and* names more
+than one version, asserts the frozen build stays pinned *with* its reason, and
+sweeps both workflows for a stale action major. Comments are stripped first —
+the comment explaining this defect necessarily names the versions the check is
+hunting, which is the dead gate this repo already paid for once with
+`--require-drc`.
+
+**What is NOT verified here**: no interpreter in this container has PySide6, so
+3.12 and 3.13 could not be exercised locally. CI is the verification, and
+`fail-fast: false` was already set, so a failure on the new legs cannot mask the
+3.11 result. Say which of the two you did.

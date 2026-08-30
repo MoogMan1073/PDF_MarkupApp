@@ -80,5 +80,91 @@ class TestVersionIsStatedOnce(unittest.TestCase):
                       "changelog is the release notes for the tag.")
 
 
+class TestTheInterpreterClaimIsExercised(unittest.TestCase):
+    """"Python 3.11+" is a claim to contributors, and only 3.11 was ever run.
+
+    `CONTRIBUTING.md` and `README.md` both say 3.11+. The CI matrix varied only
+    the operating system and pinned `python-version: "3.11"` on both runners,
+    so 3.12 and 3.13 -- increasingly the default on a fresh machine -- were
+    advertised and never checked.
+
+    The frozen Windows build pins its own interpreter, so a shipped installer
+    is unaffected. What this is about is **running from source**, which the
+    README documents as a first-class way to use the app, against a suite that
+    heavily exercises PySide6 and PyMuPDF.
+
+    Parsed by hand rather than with PyYAML, which this project does not depend
+    on -- and read with comments stripped, because the comment explaining this
+    defect necessarily names the versions the check is hunting for.
+    """
+
+    def _workflow(self, name):
+        with open(os.path.join(HERE, ".github", "workflows", name),
+                  encoding="utf-8") as fh:
+            return "\n".join(ln for ln in fh.read().splitlines()
+                              if not ln.lstrip().startswith("#"))
+
+    def _declared_minimum(self):
+        """The lowest version the documentation promises."""
+        import re
+        found = set()
+        for doc in ("CONTRIBUTING.md", "README.md"):
+            with open(os.path.join(HERE, doc), encoding="utf-8") as fh:
+                found |= set(re.findall(r"Python \*{0,2}(\d+\.\d+)\+", fh.read()))
+        self.assertTrue(found, "no document states a Python version any more")
+        self.assertEqual(len(found), 1,
+                         f"the documents promise different minimums: {found}")
+        return next(iter(found))
+
+    def test_the_test_matrix_covers_the_version_the_docs_promise(self):
+        import re
+        text = self._workflow("tests.yml")
+        m = re.search(r"python-version:\s*\[([^\]]+)\]", text)
+        self.assertIsNotNone(
+            m, "tests.yml no longer varies python-version; the docs promise a "
+               "range and a single pin cannot check one")
+        versions = re.findall(r"\d+\.\d+", m.group(1))
+        self.assertIn(self._declared_minimum(), versions,
+                      "the matrix does not include the minimum the docs promise")
+        self.assertGreater(
+            len(versions), 1,
+            "the matrix names one version, so '3.11+' is still unchecked above "
+            "the floor")
+
+    def test_the_frozen_build_stays_pinned_and_says_why(self):
+        """The asymmetry is deliberate; without the reason somebody 'fixes' it."""
+        import re
+        raw = open(os.path.join(HERE, ".github", "workflows",
+                                "build-windows.yml"), encoding="utf-8").read()
+        text = self._workflow("build-windows.yml")
+        self.assertRegex(text, r'python-version:\s*"\d+\.\d+"',
+                         "the Windows build no longer pins one interpreter")
+        self.assertIn("not vary run to run", raw,
+                      "the pin carries no stated reason, so it reads as the "
+                      "oversight the test matrix just corrected")
+
+    def test_no_workflow_pins_a_deprecated_node20_action(self):
+        """GitHub is force-running these on Node 24; the forcing is temporary.
+
+        When it ends, a workflow pinned to these majors stops working -- and for
+        this repository that is the Windows build, the only path that produces
+        the installer.
+        """
+        import glob
+        import re
+        stale = {"actions/checkout@v4", "actions/setup-python@v5",
+                 "actions/upload-artifact@v4"}
+        offenders = []
+        for path in sorted(glob.glob(
+                os.path.join(HERE, ".github", "workflows", "*.yml"))):
+            name = os.path.basename(path)
+            for i, line in enumerate(self._workflow(name).splitlines(), 1):
+                for ref in re.findall(r"uses:\s*(\S+)", line):
+                    if ref in stale:
+                        offenders.append(f"{name}: {ref}")
+        self.assertEqual(
+            offenders, [], "a Node-20 action major is pinned: " + str(offenders))
+
+
 if __name__ == "__main__":
     unittest.main()
