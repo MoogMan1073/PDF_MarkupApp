@@ -143,27 +143,94 @@ class TestTheInterpreterClaimIsExercised(unittest.TestCase):
                       "the pin carries no stated reason, so it reads as the "
                       "oversight the test matrix just corrected")
 
-    def test_no_workflow_pins_a_deprecated_node20_action(self):
-        """GitHub is force-running these on Node 24; the forcing is temporary.
+    # The lowest acceptable major per first-party action: the first one running
+    # on Node 24. A MINIMUM rather than a set of known-bad refs, and the
+    # difference is the whole point of this table existing -- see the test below.
+    MINIMUM_ACTION_MAJOR = {
+        "actions/checkout": 5,
+        "actions/setup-python": 6,
+        "actions/setup-node": 5,
+        "actions/upload-artifact": 5,
+        "actions/download-artifact": 5,
+        "actions/cache": 5,
+    }
 
-        When it ends, a workflow pinned to these majors stops working -- and for
-        this repository that is the Windows build, the only path that produces
-        the installer.
+    def _action_pins(self):
+        """Every `uses:` ref in every workflow, with where it was found.
+
+        `.yaml` as well as `.yml`: a glob that matches neither spelling returns
+        nothing, and a sweep over nothing reports no offenders. That is the
+        vacuous pass the floor assertion below exists to refuse.
         """
         import glob
         import re
-        stale = {"actions/checkout@v4", "actions/setup-python@v5",
-                 "actions/upload-artifact@v4"}
-        offenders = []
-        for path in sorted(glob.glob(
-                os.path.join(HERE, ".github", "workflows", "*.yml"))):
+        pins = []
+        for path in sorted(
+                glob.glob(os.path.join(HERE, ".github", "workflows", "*.yml"))
+                + glob.glob(os.path.join(HERE, ".github", "workflows", "*.yaml"))):
             name = os.path.basename(path)
-            for i, line in enumerate(self._workflow(name).splitlines(), 1):
+            # `_workflow` drops comment lines, so a commented-out step and a
+            # comment naming a stale ref -- including the ones in this file's
+            # own docstrings -- cannot be read as pins.
+            for line in self._workflow(name).splitlines():
                 for ref in re.findall(r"uses:\s*(\S+)", line):
-                    if ref in stale:
-                        offenders.append(f"{name}: {ref}")
+                    pins.append((name, ref))
+        return pins
+
+    def test_every_first_party_action_pin_is_at_or_above_its_minimum(self):
+        """A MINIMUM, not a list of the refs that were stale when this was written.
+
+        GitHub is force-running Node-20 actions on Node 24 and the forcing is
+        temporary. When it ends, a workflow pinned below stops working -- and
+        for this repository that is the Windows build, the only path that
+        produces the installer.
+
+        THIS REPLACED A SET-MEMBERSHIP CHECK, and the replacement is the point.
+        The first version compared each ref against `{checkout@v4,
+        setup-python@v5, upload-artifact@v4}` -- the three that were stale the
+        day it was written. That is a list of past injuries rather than a rule:
+        blind to `setup-node@v4`, blind to an older `@v3` or `@v2`, and blind to
+        the next deprecation, which is the one nobody is watching for. A gate
+        built from what went wrong last time only ever catches last time.
+
+        Scope: this repository. The same defect was portfolio-wide -- ten of
+        fourteen repos on 2026-08-30, every one of them green -- and no single
+        repo's CI can see that, so the cross-repo sweep is
+        `Pathforward/scripts/action_majors.py` rather than eleven copies of
+        this.
+        """
+        import re
+        pins = self._action_pins()
+        self.assertGreaterEqual(
+            len(pins), 6,
+            "the sweep found almost no `uses:` pins, so an empty result below "
+            "would mean the glob missed the workflows rather than that they are "
+            "current")
+
+        stale, undescribed = [], []
+        for name, ref in pins:
+            if not ref.startswith("actions/"):
+                # Third party. Nothing here knows which major of somebody
+                # else's action runs on a current runtime, and inventing a
+                # minimum would be a claim with nothing behind it.
+                continue
+            m = re.match(r"([^@]+)@v(\d+)$", ref)
+            if not m:
+                continue  # a SHA or branch pin: the stronger choice, not a stale one
+            action, major = m.group(1), int(m.group(2))
+            if action not in self.MINIMUM_ACTION_MAJOR:
+                undescribed.append(f"{name}: {ref}")
+            elif major < self.MINIMUM_ACTION_MAJOR[action]:
+                stale.append(f"{name}: {ref}")
+
+        self.assertEqual(stale, [],
+                         "an action major below its minimum is pinned: "
+                         + str(stale))
         self.assertEqual(
-            offenders, [], "a Node-20 action major is pinned: " + str(offenders))
+            undescribed, [],
+            "a first-party action has no minimum major recorded, so nothing "
+            "judged it -- add it to MINIMUM_ACTION_MAJOR with the first major "
+            "on a current runtime: " + str(undescribed))
 
 
 if __name__ == "__main__":
