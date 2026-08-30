@@ -80,7 +80,7 @@ class TestTheBlockerIsLive(unittest.TestCase):
 class TestEveryModuleSkipsRatherThanErrors(unittest.TestCase):
     def test_no_module_errors_without_qt(self):
         r = _run(f"""
-            import unittest, pathlib, json
+            import unittest, pathlib, json, io
             root = pathlib.Path({str(ROOT)!r})
             mods = sorted(p.stem for p in (root / "tests").glob("test_*.py"))
             mods = [m for m in mods if m != {Path(__file__).stem!r}]
@@ -92,14 +92,21 @@ class TestEveryModuleSkipsRatherThanErrors(unittest.TestCase):
                     bad.append((m, "failed to LOAD: %s" % exc))
                     continue
                 res = unittest.TextTestRunner(
-                    verbosity=0, stream=open("/dev/null", "w")).run(suite)
+                    verbosity=0, stream=io.StringIO()).run(suite)
                 ran += res.testsRun
                 skips += len(res.skipped)
                 for t, tb in res.errors:
                     bad.append((m, "%s: %s" % (t, tb.strip().splitlines()[-1])))
             print(json.dumps({{"bad": bad, "skips": skips, "modules": len(mods)}}))
         """)
-        self.assertEqual(r.returncode, 0, f"the sweep itself died:\n{{r.stderr[-3000:]}}")
+        self.assertEqual(
+            r.returncode, 0,
+            # NOT {{...}} -- this f-string is the TEST's, not the generated
+            # subprocess source's. Doubling the braces here printed the
+            # literal text `{r.stderr[-3000:]}` instead of the traceback,
+            # so the one message written to explain a dead sweep explained
+            # nothing, and the CI log carried no cause at all.
+            f"the sweep itself died:\n{r.stderr[-3000:]}")
         payload = json.loads(r.stdout.strip().splitlines()[-1])
 
         self.assertEqual(

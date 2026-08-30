@@ -39,6 +39,14 @@ def _modules():
                   if n.startswith("test_") and n.endswith(".py"))
 
 
+# Assembled rather than written, so this file contains no literal that matches
+# what it searches for -- which is what lets the gate below sweep its own module
+# without needing a waiver. A class-body comprehension cannot see class-level
+# names, so these are module scope.
+_DEV = "/" + "dev"
+_POSIX_ONLY = tuple(f"{_DEV}/{n}" for n in ("null", "zero", "stdout", "stderr"))
+
+
 def _tree(name):
     with open(os.path.join(HERE, name), "r", encoding="utf-8") as fh:
         return ast.parse(fh.read(), filename=name)
@@ -152,6 +160,84 @@ class TestNoClassUsesAGuardedImportWithoutSkipping(unittest.TestCase):
                         "decorator -- without that dependency it raises "
                         "NameError instead of skipping. Its siblings in the "
                         "same file show the decorator to copy.")
+
+
+class TestNoTestUsesAPosixOnlyDevicePath(unittest.TestCase):
+    """A POSIX device path does not exist on Windows, and this suite runs there.
+
+    It is a LATENT platform failure: green on every Linux leg, red on all three
+    Windows ones, and the local suite cannot reach it -- the same shape as a
+    leaked PyMuPDF handle, one aisle over. It cost a CI round. The degradation
+    gate opened one for its runner's stream; on Windows that resolves to a
+    directory that is not there, so the sweep subprocess died and the module
+    reported FAILED while the seven modules it exists to check all reported
+    `ok`.
+
+    `io.StringIO()` needs no filesystem at all and is the portable answer;
+    `os.devnull` is the other one. What fails is naming the path directly.
+
+    TWO THINGS MAKE THIS GATE NOT FIRE ON ITSELF, AND NEITHER IS AN EXEMPTION.
+    Its first draft flagged its own needle table and its own docstring, which is
+    the shape this repo has paid for repeatedly -- and the standing answer is to
+    tighten the check, never to waive the text explaining the thing.
+
+      * the needles are ASSEMBLED rather than written, so this file contains no
+        literal that matches them;
+      * a docstring is not code. Bare string expressions are excluded
+        structurally, which is a general statement about what counts rather
+        than a carve-out for this module.
+
+    Swept over the artifact, not over the one file that had it: there is exactly
+    one occurrence today, and a gate scoped to it covers only what was broken
+    the day it was written.
+    """
+
+    @staticmethod
+    def _code_literals(tree):
+        """Every string literal that is CODE -- docstrings and bare string
+        expressions excluded, since neither is executed as a value."""
+        prose = {id(n.value) for n in ast.walk(tree)
+                 if isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)}
+        return [n.value for n in ast.walk(tree)
+                if isinstance(n, ast.Constant)
+                and isinstance(n.value, str)
+                and id(n) not in prose]
+
+    def test_no_module_names_a_dev_path(self):
+        for name in _modules():
+            hits = sorted({lit for lit in self._code_literals(_tree(name))
+                           if any(d in lit for d in _POSIX_ONLY)})
+            with self.subTest(name):
+                self.assertEqual(
+                    hits, [],
+                    f"{name} names {hits} in code. That path does not exist on "
+                    f"Windows, which this suite runs on, so it is green locally "
+                    f"and red only there. Use io.StringIO() for a discarded "
+                    f"stream, or os.devnull for a real path.")
+
+    def test_the_sweep_can_see_code_literals_at_all(self):
+        """Without this, a walk that found nothing would read as a pass."""
+        found = sum(len(self._code_literals(_tree(n))) for n in _modules())
+        self.assertGreater(found, 100,
+                           "almost no code string literals found across the "
+                           "suite — the scan above cannot fail for the right "
+                           "reason")
+
+    def test_a_docstring_mentioning_one_is_not_a_finding(self):
+        """The calibration that made the first draft honest: this very module's
+        docstring describes the defect, and describing is not doing."""
+        tree = ast.parse('"""mentions %s/null in prose."""\nx = 1\n' % _DEV)
+        self.assertEqual(
+            [l for l in self._code_literals(tree)
+             if any(d in l for d in _POSIX_ONLY)], [])
+
+    def test_a_real_use_IS_a_finding(self):
+        tree = ast.parse('open("%s/null", "w")\n' % _DEV)
+        self.assertTrue(
+            [l for l in self._code_literals(tree)
+             if any(d in l for d in _POSIX_ONLY)],
+            "the scan does not see a path passed to a call, which is the "
+            "only shape this defect has ever taken")
 
 
 if __name__ == "__main__":

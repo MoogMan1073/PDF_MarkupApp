@@ -193,6 +193,47 @@ the eighth module to reach Qt through a new `app.*` import fails here instead.
 caught, each naming its own module), plus the blocker neutered, plus a
 module-count floor so a sweep that finds nothing cannot read as a pass.
 
+### ...and the gate itself was the only thing that failed on Windows
+
+The fix landed green on all three Ubuntu legs and red on all three Windows ones.
+The suite reported **716 tests across 56 modules, 16 skipped**, with every one of
+the seven repaired modules reporting `ok` — and `FAILED MODULES:
+tests.test_qt_absent_degrades`. The repair worked on Windows; the gate written to
+prove it did not.
+
+- **`/dev/null` does not exist on Windows.** The sweep gave its runner
+  `stream=open("/dev/null", "w")`, which there resolves to a directory that is
+  not present, so the subprocess died and the module failed. A latent platform
+  failure of exactly the shape this file already records for a leaked PyMuPDF
+  handle: **green locally, red only on `windows-latest`**, and unreachable from
+  the local suite. `io.StringIO()` needs no filesystem at all.
+- **The message written to explain a dead sweep explained nothing.** Its f-string
+  carried `{{r.stderr[-3000:]}}` — doubled braces, correct inside the *generated
+  subprocess source* one line above and wrong in the test's own f-string — so it
+  printed that text literally instead of the traceback. The CI log therefore
+  named no cause at all, which is why the fix had to be reproduced locally
+  before it could be diagnosed.
+
+`tests/test_suite_is_discoverable.py` gained the sweep, since this repo runs
+Windows in CI and a POSIX device path in `tests/` is a Windows-only failure by
+construction. **Two things stop it firing on itself, and neither is an
+exemption** — its first draft flagged its own needle table and its own
+docstring, which is the shape this repo keeps paying for, and the standing
+answer is to tighten the check rather than waive the text explaining it:
+
+- the needles are **assembled** (`"/" + "dev"`) rather than written, so the file
+  contains no literal matching what it searches for;
+- **a docstring is not code.** Bare string expressions are excluded
+  structurally, which is a general statement about what counts rather than a
+  carve-out for one module.
+
+Both directions are asserted in the module itself — a docstring mentioning the
+path is not a finding, a path passed to a call is. Falsified three ways: the
+POSIX path restored (caught), Windows simulated by pointing at an absent
+directory (the message fires *and now carries a real traceback*), and the
+docstring exclusion removed (the gate fires on prose, proving the exclusion is
+load-bearing).
+
 ## A SKIP IS HOW COVERAGE EVAPORATES UNDER A GREEN TICK
 
 The audit tests skip when PyDRC is missing, so a run without it goes green
