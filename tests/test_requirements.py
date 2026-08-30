@@ -41,10 +41,6 @@ class TestRequirements(unittest.TestCase):
             self.assertIn(dist, base)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestVersionIsStatedOnce(unittest.TestCase):
     """The installer carries its own copy of the version, and it must agree.
 
@@ -82,3 +78,7 @@ class TestVersionIsStatedOnce(unittest.TestCase):
         self.assertIn(f"## v{__version__}", text,
                       f"CHANGELOG.md has no section for v{__version__}; the "
                       "changelog is the release notes for the tag.")
+
+
+if __name__ == "__main__":
+    unittest.main()

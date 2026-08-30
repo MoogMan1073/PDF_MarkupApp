@@ -464,10 +464,6 @@ class TestMainWindowIntegration(unittest.TestCase):
         win.close()
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def _rolled(**kw):
     """A finding that covers three sheets, as the rule library now reports one."""
     from app.audit.findings import Place
@@ -759,6 +755,7 @@ class TestACoordinateFromTheSourceDrawing(unittest.TestCase):
         self.assertTrue(Place(sheet="232", rung=16, page=5, x=400.0).has_location)
 
 
+@unittest.skipUnless(_QT_OK, "PySide6 not available")
 class TestRolledUpFindingOnScreen(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -854,3 +851,7 @@ class TestRolledUpFindingOnScreen(unittest.TestCase):
         # Two of the three places carry a box; the third is sheet-and-rung only.
         self.assertEqual(len(drawn), 2)
         self.assertEqual({round(a[0], 1) for a in drawn}, {47.5, 107.5})
+
+
+if __name__ == "__main__":
+    unittest.main()

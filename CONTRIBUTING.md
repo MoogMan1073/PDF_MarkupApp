@@ -51,7 +51,23 @@ Two things about a local run that are not failures:
   evaporates under a green tick. `tools/run_tests.py` groups skips by their
   stated reason and prints a banner naming how many tests each one covered; a
   reason it does not recognise is counted but unexplained.
-- **A version number anywhere but `app/__init__.py`.**
+- **A version number in a fourth place.** There are three, and that is not a
+  preference to be tidied away: `app/__init__.py` is what the About box and the
+  audit report show, `packaging/installer.iss` names the setup executable and
+  what Windows records in Add/Remove Programs, and `CHANGELOG.md` carries the
+  section. `tests/test_requirements.py::TestVersionIsStatedOnce` fails when they
+  disagree — it caught the 1.5.2 bump within a minute of it being made in one
+  file. The `v*` tag is a fourth declaration no test can see; the release
+  workflow checks that one.
+
+  This bullet read *"a version number anywhere but `app/__init__.py`"* while
+  the gate three feet away proved otherwise. **A rule and a gate that
+  contradict each other teach people to trust neither**, and it is the rule
+  that was wrong.
+- **A `if __name__ == "__main__"` block anywhere but the end of the file.**
+  Everything below it is invisible to a direct run — `test_requirements.py` ran
+  3 of its 5 tests that way, and the two that vanished were the version gates
+  above. `tests/test_suite_is_discoverable.py` sweeps for it.
 
 ## What a good PR looks like here
 
