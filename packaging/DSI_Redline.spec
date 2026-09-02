@@ -11,9 +11,23 @@ import os
 ROOT = os.path.dirname(os.path.abspath(SPECPATH))  # repo root (packaging/..)
 
 # Bundle the user-manual vault and app assets (icon) so they ship with every build.
+#
+# THIRD-PARTY-NOTICES.md and licenses/ are bundled here rather than added to
+# installer.iss, and that placement is the whole point: MIT, BSD and the LGPL
+# require the notice to travel with the DISTRIBUTED FORM, and this build has two
+# of them -- the Inno installer and the portable zip, which are both packaged
+# from `dist/DSI Redline/*`. Putting the files in `datas` puts them inside that
+# directory once and both artifacts inherit them; wiring the installer alone
+# would leave the portable zip non-compliant with nothing saying so.
+#
+# A notices file that sits only in the repository satisfies nothing for somebody
+# who downloads the exe. Verified after a build by listing the artifact, not by
+# reading this comment.
 datas = [
     (os.path.join(ROOT, "docs"), "docs"),
     (os.path.join(ROOT, "app", "assets"), os.path.join("app", "assets")),
+    (os.path.join(ROOT, "THIRD-PARTY-NOTICES.md"), "."),
+    (os.path.join(ROOT, "licenses"), "licenses"),
 ]
 
 # Optionally bundle heavier optional deps only when installed, so builds without
