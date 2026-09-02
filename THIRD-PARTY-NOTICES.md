@@ -49,10 +49,25 @@ The LGPL requires the licence to accompany the distribution, so **this project
 supplies the text itself** — `licenses/LGPL-3.0.txt`, verbatim FSF text, Version
 3 of 29 June 2007.
 
-**One gap, stated rather than filled:** LGPL-3.0 incorporates the GNU General
-Public License version 3 by reference, and that text could not be retrieved in
-the environment this audit ran in. `licenses/GPL-3.0.txt` should be added from
-<https://www.gnu.org/licenses/gpl-3.0.txt> before the next release.
+**That gap is now filled.** LGPL-3.0 incorporates the GNU General Public License
+version 3 by reference, so `licenses/GPL-3.0.txt` is supplied beside it —
+verbatim FSF text, Version 3 of 29 June 2007, 674 lines, sha256
+`3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986`.
+
+**Where it came from, because a licence text is the one file that must not be
+transcribed.** `https://www.gnu.org/licenses/gpl-3.0.txt` is unreachable from
+the environment this audit runs in, which is why the earlier pass recorded the
+absence rather than filling it. What was used instead is two *independent*
+packagings of the FSF's own file — Debian's `/usr/share/common-licenses/GPL-3`
+and GNU automake's own `COPYING` — which are **byte-identical**, and one of them
+ships inside a GNU project. Two sources agreeing is a cross-check; one source is
+a copy.
+
+**A reflowed copy was found first and rejected.** The Rust toolchain ships a
+`GPL-3.0-or-later.txt` that is the same licence with its paragraphs unwrapped
+onto single lines, `©` for `(C)`, and a broken `<https: //www.gnu.org/…>` in the
+final paragraph. It is legible and it is not the document the FSF publishes,
+which is the only thing "verbatim" can mean here.
 
 ---
 
@@ -127,6 +142,7 @@ the environment this audit ran in. `licenses/GPL-3.0.txt` should be added from
 | File | Covers |
 |---|---|
 | `licenses/LGPL-3.0.txt` | PySide6, shiboken6 (elected arm) |
+| `licenses/GPL-3.0.txt` | incorporated by reference into LGPL-3.0 above; also the arm AGPL-3.0 builds on |
 | `licenses/Apache-2.0.txt` | pytesseract |
 | `licenses/MIT-CMU-Pillow.txt` | Pillow, including the libraries it bundles |
 | `licenses/BSD-3-Clause-httpx-aiohttp.txt` | `httpx_aiohttp`, vendored inside `anthropic` |
