@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import re
 import unittest
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
@@ -63,13 +64,67 @@ class TestTheNoticesAreBundled(unittest.TestCase):
         on the 6.11.2 wheels, zero LICENSE/COPYING/NOTICE entries in either
         distribution. The LGPL requires the text to accompany the binary, so
         this project supplies it; if that file goes, the installer ships LGPL
-        code with no LGPL text."""
+        code with no LGPL text.
+
+        And LGPL-3.0 incorporates GPL-3.0 **by reference**, so the LGPL text
+        alone is an incomplete notice -- which is why the pair is asserted
+        together rather than one at a time.
+        """
         self.assertTrue(LICENSES.is_dir(), "licenses/ is missing")
-        lgpl = LICENSES / "LGPL-3.0.txt"
-        self.assertTrue(lgpl.is_file(), "the LGPL text nothing else supplies is gone")
-        body = lgpl.read_text(encoding="utf-8")
-        self.assertIn("GNU LESSER GENERAL PUBLIC LICENSE", body)
-        self.assertIn("Version 3", body)
+        for name, heading in (("LGPL-3.0.txt", "GNU LESSER GENERAL PUBLIC LICENSE"),
+                              ("GPL-3.0.txt", "GNU GENERAL PUBLIC LICENSE")):
+            with self.subTest(name):
+                path = LICENSES / name
+                self.assertTrue(path.is_file(),
+                                f"{name} -- a licence text nothing else supplies is gone")
+                body = path.read_text(encoding="utf-8")
+                self.assertIn(heading, body)
+                self.assertIn("Version 3, 29 June 2007", body)
+                # Verbatim, not reflowed. The FSF ships these hard-wrapped with
+                # "(C)"; a rendered copy (paragraphs unwrapped onto single
+                # lines, "(c) 2007" as the © glyph) is the same licence and is
+                # not the document the FSF publishes, which is the only thing
+                # "verbatim" can mean on a public repository's notices.
+                self.assertIn("Copyright (C) 2007 Free Software Foundation", body,
+                              f"{name} is not the FSF's own wording")
+                self.assertGreater(len(body.splitlines()), 150,
+                                   f"{name} looks reflowed or truncated")
+
+    def test_every_licence_file_is_named_in_the_notices_and_the_reverse(self) -> None:
+        """A rule, not the four files that happened to be there.
+
+        Two ways this drifts and each is silent: a text added to `licenses/`
+        that the notices' table never lists (so a reader cannot tell what it
+        covers or why it ships), and a row naming a file that is not there (so
+        the notices promise a text the installer does not carry). Both are
+        checked, because a list gated in one direction covers half of what it
+        is for.
+
+        **It reads the TABLE, not the document**, and the first draft did not.
+        Asserting `licenses/<name>` appears anywhere in the notices passed with
+        the table row deleted, because the prose above it explains where the
+        GPL text came from and necessarily names the file -- the gate satisfied
+        by the paragraph explaining the thing, which this repository has paid
+        for more than once. A row is `| \\`licenses/X\\` | what it covers |`,
+        so that is what is parsed.
+        """
+        text = NOTICES.read_text(encoding="utf-8")
+        on_disk = {p.name for p in LICENSES.iterdir() if p.is_file()}
+        self.assertGreaterEqual(len(on_disk), 4,
+                                f"licenses/ holds only {sorted(on_disk)} -- an empty "
+                                "sweep would pass every assertion below")
+        rows = dict(re.findall(r"^\|\s*`licenses/([^`]+)`\s*\|\s*(.+?)\s*\|\s*$",
+                               text, re.M))
+        self.assertTrue(rows, "the notices' licence table has no rows at all")
+        for name in sorted(on_disk):
+            with self.subTest(name):
+                self.assertIn(name, rows,
+                              f"{name} ships and no table row says what it covers")
+                self.assertTrue(rows[name].strip(),
+                                f"{name}'s row says nothing")
+        missing = sorted(set(rows) - on_disk)
+        self.assertFalse(missing,
+                         f"the notices name {missing}, which the installer would not carry")
 
     def test_the_spec_bundles_the_notices_into_the_distributed_form(self) -> None:
         strings = _datas_strings()
