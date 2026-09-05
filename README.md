@@ -191,7 +191,9 @@ persisted between sessions. **Help ▸ About** shows the app name, version and c
 main.py                      QApplication entry
 app/
   main_window.py             Window: five movable/floatable panes (Viewer, TODO,
-                             Wire Numbers, Component Labels, PDF Tools), toolbar, Settings
+                             Wire Numbers, Component Labels, PDF Tools), toolbar
+  settings_dialog.py         The preferences dialog (five tabs)
+  dialogs.py                 Text/callout editor, fill picker, waive-a-finding
   config.py                  Persisted settings (QSettings) + defaults
   help.py                    In-app user-manual (vault) reader
   viewer/                    Continuous-scroll canvas, annotation items, tools, undo

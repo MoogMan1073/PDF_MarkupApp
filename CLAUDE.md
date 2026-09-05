@@ -512,6 +512,123 @@ What that does **not** cover is unchanged: only 3.11 is installed, so the 3.12
 and 3.13 legs are still CI's to verify, and nothing here builds the Windows
 installer.
 
+## The window held four dialogs, and the convention says where a dialog lives
+
+`app/main_window.py` was **2,506 lines** — 718 more than the next largest
+module, and 8.6% of a 29,260-line codebase — holding the preferences dialog,
+five panes, the toolbar, the menus and the file lifecycle. The README's own
+layout block described it that way (*"Window: five … panes, toolbar,
+Settings"*), so the document was right about a thing that was wrong.
+
+**The finding is not the line count, and it is not a home that was ignored
+either** — which is what a first draft of this section claimed, before the
+package was measured. The rule this repository already follows is *a dialog
+lives beside the subject it serves*: `app/tools/dialogs.py` holds
+`_ToolDialog` and seven page-operation dialogs, `app/tools/wizards.py` two
+more, and the README names both under `tools/`. That convention is intact and
+was never broken. **The four in the window are the ones with no subject
+package to go to** — preferences, the text/callout editor, the fill picker,
+waive-a-finding — so they accreted at the place they happened to be opened
+from, which is the one location the convention does not name.
+
+- **Cut by AST span, and the grouping was MEASURED rather than eyeballed.**
+  Asking which top-level names each unit references gives
+  `TextEditDialog -> {FillDialog, _swatch, _fill_swatch}`,
+  `FillDialog -> {_fill_swatch}`, and **`SettingsDialog -> {}`** — so the
+  preferences dialog is a clean standalone and gets its own file, while the
+  editor, the fill picker and their swatch icons genuinely travel together.
+  `_apply_font` and `WaiveDialog` reference nothing and travel with them
+  because they are the same subject, which is stated rather than implied.
+- **2,506 → 1,879**, and the rest is **named rather than glossed**: the five
+  panes, the toolbar, the menus and the lifecycle are all still in there. The
+  module docstring says so, and the row is recorded `partial` for that reason —
+  half the value of recording a partial is naming the other half.
+- **Eighteen imports went dead the moment the dialogs left**, and every one was
+  cross-checked with a text scan before removal: each appeared exactly once,
+  which is the import itself. `annotations` stays — it is `from __future__`.
+- **The tests were re-pointed at the new homes, and that is the half that makes
+  the split checked.** Four modules imported these names `from app.main_window`,
+  and they would have gone on passing untouched, because `main_window` legitimately
+  imports what it opens — so the names are still in its namespace. A green suite
+  there proves the window still works, not that the new module does.
+- **Verified in BOTH directions, which is the only way to tell a fix from a
+  withdrawal** — this file's own rule from the Qt-degradation round. Before:
+  **735 tests across 57 modules, 28 skipped**. After: **740 across 58, 28
+  skipped**, identical skip reasons, every module passing under `--strict`. The
+  +5 is the new gate module; no test was lost and no skip was added.
+
+### The gate is a KIND of thing, never a line count
+
+A count is a snapshot — wrong by the next commit, and this file already
+removed three of them from its own header for exactly that. What
+`tests/test_module_layout.py` asserts instead is that **no dialog class is
+defined in `app/main_window.py`**, which is permanent, is what was extracted,
+and is what an accumulation would look like on its first step.
+
+- **By base class, not by the class's own name.** A class called `FooDialog`
+  subclassing `QWidget` is not one and a `QDialog` subclass called `Prefs` is,
+  so the sweep reads the bases.
+- **...and the first draft read DIRECT bases only, which left a reachable
+  hole.** `app/tools/dialogs.py` declares `_ToolDialog(QDialog)` and seven
+  subclasses **of it**, all importable — so a `class Foo(_ToolDialog)` back in
+  `main_window` was exactly the accumulation this gate exists to catch and
+  exactly what it could not see. A base whose *name* ends in `Dialog` counts
+  too, which is not the name-check the bullet above argues against: it is a
+  claim about what the class derives from rather than about what it is called.
+  **Measured before it was taken**, because a widening that admits noise is a
+  gate people learn to dismiss: across `app/` it admits those seven and
+  **nothing else**, 7 classes over four files becoming 14, zero false
+  positives. That number is what made it a fix rather than a stated limit.
+- **Two floors, because an absence assertion agrees with an empty checkout.**
+  The extracted classes must be findable in their new homes, and the sweep must
+  still find dialogs across `app/` at all — without the second, renaming the Qt
+  base names the sweep knows switches the whole module off while every
+  assertion above it still passes. That arm fires, measured.
+- **The README block is gated against the filesystem, never against a second
+  document.** Every `.py` it names must exist, and the two new modules must be
+  named — the block described the god-object accurately for as long as it was
+  true, and a layout block that stops matching the tree sends a reader to the
+  wrong file.
+- **And one of those floors was a COUNT ASSERTION WEARING A FLOOR'S MESSAGE.**
+  The block names five modules and the floor read `> 4`, so removing any line
+  from the README fired it — reporting *"the parse is not finding module
+  names"* about a block that had parsed perfectly, which is a note carrying a
+  reason that is not its own. It is `> 2` now: what it has to catch is the
+  parse breaking, which takes it to zero or one. Caught because the arm that
+  deletes a README line fired **two** tests where one was expected, so the
+  expectation was the thing that was wrong.
+
+Falsified seven ways, each on its own arm and every one firing: a dialog moved
+back into the window, an **indirect** dialog moved back into it, each extracted
+class stripped of its Qt base in turn, the sweep's base names renamed away
+(which fires the floor **and** the new-home check, correctly — one injection,
+two things it makes vacuous), the README no longer naming a new module, and the
+README naming a module that does not exist.
+
+### The base-rename arm was net-ZERO bytes, and Python's cache could not see it
+
+That arm reported `DEAD` against a gate that fires two failures when the same
+injection is made by hand — this repository's own standing rule arriving on
+schedule: **if a falsification says nothing fired, suspect the reading before
+the gate.**
+
+The cause is arithmetic and worth keeping, because nothing about it looks like
+a trap. The rename is `QDialog`→`QNotADialog` (+4), `QMessageBox`→`QNope` (−6),
+`QFileDialog`→`QAlsoNope` (−2), `QColorDialog`→`QStillNope` (−2) and then
+`"Dialog"`→`"NoSuchSuffix"` (+6) — **exactly 0**, measured rather than noticed:
+6,899 bytes before and 6,899 after. CPython invalidates a `.pyc` on
+**`(mtime, size)`** at one-second resolution, so a restore-then-edit-then-run
+inside one second handed the subprocess **stale bytecode of the uninjected
+file**. Every other arm edited an `app/` module whose length changed, which is
+why four of seven were unaffected and the two that were not looked like dead
+gates.
+
+**A falsification loop that injects into the TEST file must purge
+`__pycache__` and run `-B`.** The arms that edit the *subject* are safe by
+luck — they change a length — and the arm that edits the *instrument* is the
+one nobody thinks to protect, which is the same shape as the snapshot rule one
+line over: it is the instrument rather than the subject.
+
 ## "Python 3.11+" was a claim to contributors, and only 3.11 ran
 
 `CONTRIBUTING.md` and `README.md` both say it. The CI matrix varied only the

@@ -36,7 +36,7 @@ class TestSettingsTabs(unittest.TestCase):
 
     def _dialog(self):
         from app.config import AppConfig
-        from app.main_window import SettingsDialog
+        from app.settings_dialog import SettingsDialog
         return SettingsDialog(AppConfig())
 
     def test_settings_split_into_tabs(self):
